@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShikiiN · 进度条 / 音量条 · 5 个预设</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0A0B0F; --bg-2:#0E1016; --panel:#14171F; --panel-2:#1A1E28;
+    --line:#242a37; --line-soft:#1c212c;
+    --ink:#EAECF2; --ink-2:#9aa0ad; --ink-3:#626a78;
+    --brand:#4C8DFF; --brand-2:#7FB0FF; --brand-soft:rgba(76,141,255,.14);
+    --maxw:1180px;
+    --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+    --disp:'Space Grotesk','Inter','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    --body:'Inter','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,rgba(76,141,255,.10),transparent 60%),var(--bg);
+    color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+  a{color:inherit;text-decoration:none}
+
+  .top{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(10,11,15,.86),rgba(10,11,15,.5));border-bottom:1px solid var(--line-soft)}
+  .top .wrap{display:flex;align-items:center;gap:14px;height:58px}
+  .logo{display:flex;align-items:center;gap:9px;font-family:var(--disp);font-weight:700}
+  .logo .mark{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+    background:linear-gradient(150deg,#1f2633,#11141b);border:1px solid var(--line);font-size:13px}
+  .logo .mark b{color:var(--brand)}
+  .top .sep{flex:1}
+  .top .lk{font-family:var(--mono);font-size:12px;color:var(--ink-2);padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel)}
+
+  .hd{padding:60px 0 14px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:2.5px;text-transform:uppercase;color:var(--brand-2);display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:"";width:26px;height:1px;background:var(--brand)}
+  .hd h1{font-family:var(--disp);font-weight:700;font-size:clamp(30px,4.6vw,50px);letter-spacing:-1px;margin:18px 0 0}
+  .hd h1 em{font-style:normal;color:var(--brand)}
+  .hd p{color:var(--ink-2);max-width:64ch;margin-top:14px}
+  .hint{margin-top:14px;font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+
+  .case{border:1px solid var(--line-soft);border-radius:16px;overflow:hidden;margin:26px 0;
+    background:linear-gradient(180deg,var(--bg-2),rgba(14,16,22,.4))}
+  .case-grid{display:grid;grid-template-columns:0.82fr 1.3fr}
+  @media(max-width:860px){.case-grid{grid-template-columns:1fr}}
+  .case-info{padding:28px 28px 26px;border-right:1px solid var(--line-soft)}
+  @media(max-width:860px){.case-info{border-right:0;border-bottom:1px solid var(--line-soft)}}
+  .case-num{font-family:var(--mono);font-size:12px;color:var(--brand-2);letter-spacing:1px}
+  .case h2{font-family:var(--disp);font-weight:600;font-size:24px;letter-spacing:-.4px;margin:8px 0 2px}
+  .case .role{font-family:var(--mono);font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:1.5px}
+  .case .desc{color:var(--ink-2);margin:14px 0 16px;font-size:14px}
+  .specs{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:7px}
+  .specs li{display:flex;gap:9px;font-size:12.5px;color:var(--ink-2);font-family:var(--mono)}
+  .specs li b{color:var(--ink);font-weight:500;min-width:52px;display:inline-block}
+
+  /* stage: a mini control bar so the bar is shown in real context */
+  .case-stage{padding:30px 26px;display:flex;flex-direction:column;justify-content:center;gap:22px;
+    background:
+      radial-gradient(60% 80% at 24% 18%, rgba(255,170,120,.10), transparent 60%),
+      radial-gradient(70% 90% at 82% 30%, rgba(120,90,210,.12), transparent 62%),
+      linear-gradient(200deg,#171c28,#0a0e16 70%)}
+  .ctrl{display:flex;flex-direction:column;gap:13px}
+  .ctrl .btns{display:flex;align-items:center;gap:14px;color:var(--ink-2)}
+  .ctrl .btns .play{width:18px;height:18px;border-radius:50%;background:var(--ink)}
+  .ctrl .btns .ic{width:15px;height:15px;border-radius:4px;background:rgba(255,255,255,.18)}
+  .ctrl .btns .t{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-left:2px}
+  .ctrl .btns .spacer{flex:1}
+  .vol-wrap{display:flex;align-items:center;gap:9px}
+  .vol-wrap .spk{width:14px;height:14px;border-radius:3px;background:rgba(255,255,255,.2)}
+
+  /* ---- shared bar scaffold ---- */
+  .bar{position:relative;width:100%;cursor:pointer}
+  .vol{position:relative;width:120px;cursor:pointer}
+
+  /* ===== 1. Hairline ===== */
+  .b1 .bar{height:14px;display:flex;align-items:center}
+  .b1 .bar .tk{position:relative;width:100%;height:2px;border-radius:2px;background:rgba(255,255,255,.14);transition:height .14s}
+  .b1 .bar .fl{position:absolute;left:0;top:0;bottom:0;width:40%;border-radius:2px;background:var(--brand)}
+  .b1 .bar .th{position:absolute;left:40%;top:50%;width:0;height:0;border-radius:50%;background:#fff;transform:translate(-50%,-50%);transition:.14s;box-shadow:0 0 0 0 var(--brand-soft)}
+  .b1 .bar:hover .tk{height:4px}
+  .b1 .bar:hover .th{width:9px;height:9px}
+  .b1 .vol{height:14px;display:flex;align-items:center}
+  .b1 .vol .tk{width:100%;height:2px;border-radius:2px;background:rgba(255,255,255,.14);position:relative}
+  .b1 .vol .fl{position:absolute;left:0;top:0;bottom:0;width:70%;background:var(--brand);border-radius:2px}
+
+  /* ===== 2. Capsule ===== */
+  .b2 .bar{height:18px;display:flex;align-items:center}
+  .b2 .bar .tk{position:relative;width:100%;height:5px;border-radius:5px;background:rgba(255,255,255,.16);transition:height .14s}
+  .b2 .bar .fl{position:absolute;left:0;top:0;bottom:0;width:40%;border-radius:5px;background:var(--brand)}
+  .b2 .bar .th{position:absolute;left:40%;top:50%;width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--brand);transform:translate(-50%,-50%);box-shadow:0 2px 6px rgba(0,0,0,.5);transition:.14s}
+  .b2 .bar:hover .tk{height:6px}
+  .b2 .bar:hover .th{width:14px;height:14px}
+  .b2 .vol{height:18px;display:flex;align-items:center}
+  .b2 .vol .tk{width:100%;height:5px;border-radius:5px;background:rgba(255,255,255,.16);position:relative}
+  .b2 .vol .fl{position:absolute;left:0;top:0;bottom:0;width:70%;background:var(--brand);border-radius:5px}
+  .b2 .vol .th{position:absolute;left:70%;top:50%;width:11px;height:11px;border-radius:50%;background:#fff;border:2px solid var(--brand);transform:translate(-50%,-50%)}
+
+  /* ===== 3. Glow ===== */
+  .b3 .bar{height:18px;display:flex;align-items:center}
+  .b3 .bar .tk{position:relative;width:100%;height:3px;border-radius:3px;background:rgba(127,176,255,.16)}
+  .b3 .bar .fl{position:absolute;left:0;top:0;bottom:0;width:40%;border-radius:3px;background:linear-gradient(90deg,var(--brand),#9ec4ff);box-shadow:0 0 10px rgba(76,141,255,.7)}
+  .b3 .bar .th{position:absolute;left:40%;top:50%;width:11px;height:11px;border-radius:50%;background:#cfe0ff;transform:translate(-50%,-50%);box-shadow:0 0 12px 2px rgba(76,141,255,.9);transition:.14s}
+  .b3 .bar:hover .th{width:13px;height:13px;box-shadow:0 0 16px 3px rgba(76,141,255,1)}
+  .b3 .vol{height:18px;display:flex;align-items:center}
+  .b3 .vol .tk{width:100%;height:3px;border-radius:3px;background:rgba(127,176,255,.16);position:relative}
+  .b3 .vol .fl{position:absolute;left:0;top:0;bottom:0;width:70%;border-radius:3px;background:linear-gradient(90deg,var(--brand),#9ec4ff);box-shadow:0 0 8px rgba(76,141,255,.7)}
+
+  /* ===== 4. Filmstrip ===== */
+  .b4 .bar{height:18px;display:flex;align-items:center}
+  .b4 .bar .tk{position:relative;width:100%;height:6px;border-radius:2px;background:rgba(255,255,255,.14);
+    background-image:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),rgba(10,11,15,.9) calc(10% - 1px) 10%)}
+  .b4 .bar .fl{position:absolute;left:0;top:0;bottom:0;width:40%;border-radius:2px;background:var(--brand);
+    background-image:repeating-linear-gradient(90deg,transparent 0 calc(25% - 1px),rgba(10,11,15,.55) calc(25% - 1px) 25%)}
+  .b4 .bar .th{position:absolute;left:40%;top:50%;width:5px;height:14px;border-radius:2px;background:#fff;transform:translate(-50%,-50%);box-shadow:0 1px 4px rgba(0,0,0,.6);transition:.14s}
+  .b4 .bar:hover .th{height:16px}
+  .b4 .vol{height:18px;display:flex;align-items:center}
+  .b4 .vol .tk{width:100%;height:6px;border-radius:2px;background:rgba(255,255,255,.14);position:relative}
+  .b4 .vol .fl{position:absolute;left:0;top:0;bottom:0;width:70%;background:var(--brand);border-radius:2px}
+
+  /* ===== 5. Lift ===== */
+  .b5 .bar{height:20px;display:flex;align-items:center}
+  .b5 .bar .tk{position:relative;width:100%;height:7px;border-radius:7px;background:rgba(255,255,255,.14);transition:.16s}
+  .b5 .bar .fl{position:absolute;left:0;top:0;bottom:0;width:40%;border-radius:7px;background:linear-gradient(90deg,#3f7ae0,var(--brand-2))}
+  .b5 .bar .buf{position:absolute;left:0;top:0;bottom:0;width:58%;border-radius:7px;background:rgba(255,255,255,.12)}
+  .b5 .bar:hover .tk{transform:translateY(-2px);box-shadow:0 6px 16px -6px rgba(76,141,255,.6)}
+  .b5 .bar:hover .fl{filter:brightness(1.15)}
+  .b5 .vol{height:20px;display:flex;align-items:center}
+  .b5 .vol .tk{width:100%;height:7px;border-radius:7px;background:rgba(255,255,255,.14);position:relative}
+  .b5 .vol .fl{position:absolute;left:0;top:0;bottom:0;width:70%;border-radius:7px;background:linear-gradient(90deg,#3f7ae0,var(--brand-2))}
+
+  footer{padding:40px 0 64px;color:var(--ink-3);font-family:var(--mono);font-size:11.5px}
+  footer .wrap{display:flex;gap:14px;flex-wrap:wrap}
+  footer .sep{flex:1}
+</style>
+</head>
+<body>
+  <div class="top"><div class="wrap">
+    <div class="logo"><span class="mark">Shikii<b>N</b></span></div>
+    <div class="sep"></div>
+    <a class="lk" href="./modes.html">编辑器方案</a>
+    <a class="lk" href="./index.html">五个方案</a>
+  </div></div>
+
+  <header class="hd"><div class="wrap">
+    <div class="eyebrow">进度条 / 音量条 · 5 个预设</div>
+    <h1>给「条」挑一个<em>更耐看</em>的样子</h1>
+    <p>现在用的是 Flutter 默认 Slider（4px 轨、圆拖钮、悬停变粗），略显朴素。下面 5 个预设都用同一套深色 + ShikiiN 蓝，进度条和音量条成对出现。</p>
+    <p class="hint">↘ 把鼠标移到每个条上，能看到真实的悬停反应。</p>
+  </div></header>
+
+  <main class="wrap">
+
+    <!-- 1 -->
+    <section class="case b1">
+      <div class="case-grid">
+        <div class="case-info">
+          <div class="case-num">预设 01</div>
+          <h2>极简细线</h2>
+          <div class="role">Hairline · 最克制</div>
+          <p class="desc">2px 细线，平时不显拖钮，鼠标移上去才升起一个小圆点。画面第一、控件退后。</p>
+          <ul class="specs">
+            <li><b>轨道</b>2px → 悬停 4px</li>
+            <li><b>拖钮</b>无 → 悬停 9px 圆点</li>
+            <li><b>填充</b>纯 accent</li>
+            <li><b>气质</b>沉浸、不抢戏</li>
+          </ul>
+        </div>
+        <div class="case-stage"><div class="ctrl">
+          <div class="bar"><div class="tk"><div class="fl"></div><div class="th"></div></div></div>
+          <div class="btns"><span class="play"></span><span class="ic"></span><span class="ic"></span><span class="t">12:04 / 24:00</span><span class="spacer"></span>
+            <span class="vol-wrap"><span class="spk"></span><span class="vol"><span class="tk"><span class="fl"></span></span></span></span>
+          </div>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="case b2">
+      <div class="case-grid">
+        <div class="case-info">
+          <div class="case-num">预设 02</div>
+          <h2>圆润胶囊</h2>
+          <div class="role">Capsule · 最亲和</div>
+          <p class="desc">5px 圆角胶囊轨，常驻一颗带蓝边的白色拖钮，好抓好拖。最通用、最安全的选择。</p>
+          <ul class="specs">
+            <li><b>轨道</b>5px 圆角 → 6px</li>
+            <li><b>拖钮</b>12px 白心蓝边</li>
+            <li><b>填充</b>纯 accent</li>
+            <li><b>气质</b>友好、易操作</li>
+          </ul>
+        </div>
+        <div class="case-stage"><div class="ctrl">
+          <div class="bar"><div class="tk"><div class="fl"></div><div class="th"></div></div></div>
+          <div class="btns"><span class="play"></span><span class="ic"></span><span class="ic"></span><span class="t">12:04 / 24:00</span><span class="spacer"></span>
+            <span class="vol-wrap"><span class="spk"></span><span class="vol"><span class="tk"><span class="fl"></span><span class="th"></span></span></span></span>
+          </div>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section class="case b3">
+      <div class="case-grid">
+        <div class="case-info">
+          <div class="case-num">预设 03</div>
+          <h2>霓虹发光</h2>
+          <div class="role">Glow · 最有动漫感</div>
+          <p class="desc">渐变填充 + 蓝光晕，拖钮像发光的星点。配二次元壁纸/暗色主题尤其抓眼，呼应 ShikiiN 的蓝。</p>
+          <ul class="specs">
+            <li><b>轨道</b>3px</li>
+            <li><b>拖钮</b>11px 发光圆</li>
+            <li><b>填充</b>渐变 + 外发光</li>
+            <li><b>气质</b>炫、有灵气</li>
+          </ul>
+        </div>
+        <div class="case-stage"><div class="ctrl">
+          <div class="bar"><div class="tk"><div class="fl"></div><div class="th"></div></div></div>
+          <div class="btns"><span class="play"></span><span class="ic"></span><span class="ic"></span><span class="t">12:04 / 24:00</span><span class="spacer"></span>
+            <span class="vol-wrap"><span class="spk"></span><span class="vol"><span class="tk"><span class="fl"></span></span></span></span>
+          </div>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="case b4">
+      <div class="case-grid">
+        <div class="case-info">
+          <div class="case-num">预设 04</div>
+          <h2>胶片刻度</h2>
+          <div class="role">Filmstrip · 最专业</div>
+          <p class="desc">轨道带等分刻度，像剪辑时间轴；竖条拖钮利落。呼应播放器的「帧」语言，找点更精准。</p>
+          <ul class="specs">
+            <li><b>轨道</b>6px + 等分刻度</li>
+            <li><b>拖钮</b>5×14 竖条</li>
+            <li><b>填充</b>accent + 分段</li>
+            <li><b>气质</b>工具感、精确</li>
+          </ul>
+        </div>
+        <div class="case-stage"><div class="ctrl">
+          <div class="bar"><div class="tk"><div class="fl"></div><div class="th"></div></div></div>
+          <div class="btns"><span class="play"></span><span class="ic"></span><span class="ic"></span><span class="t">12:04 / 24:00</span><span class="spacer"></span>
+            <span class="vol-wrap"><span class="spk"></span><span class="vol"><span class="tk"><span class="fl"></span></span></span></span>
+          </div>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="case b5">
+      <div class="case-grid">
+        <div class="case-info">
+          <div class="case-num">预设 05</div>
+          <h2>厚条抬升</h2>
+          <div class="role">Lift · 最沉浸</div>
+          <p class="desc">7px 厚圆角，含一段半透明「已缓冲」。无拖钮，悬停时整条抬升 + 提亮，干净大气，适合全屏沉浸。</p>
+          <ul class="specs">
+            <li><b>轨道</b>7px 圆角厚条</li>
+            <li><b>拖钮</b>无（悬停抬升）</li>
+            <li><b>填充</b>渐变 + 缓冲段</li>
+            <li><b>气质</b>大气、电视感</li>
+          </ul>
+        </div>
+        <div class="case-stage"><div class="ctrl">
+          <div class="bar"><div class="tk"><div class="buf"></div><div class="fl"></div></div></div>
+          <div class="btns"><span class="play"></span><span class="ic"></span><span class="ic"></span><span class="t">12:04 / 24:00</span><span class="spacer"></span>
+            <span class="vol-wrap"><span class="spk"></span><span class="vol"><span class="tk"><span class="fl"></span></span></span></span>
+          </div>
+        </div></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="wrap">
+    <span>ShikiiN · 进度条 / 音量条预设</span>
+    <span class="sep"></span>
+    <span>选一个（或混搭），我做成真实的进度条 + 音量条。</span>
+  </div></footer>
+</body>
+</html>

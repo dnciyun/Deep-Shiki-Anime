@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShikiiN · 方案 02 / 03 · 分步详览</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0A0B0F; --bg-2:#0E1016; --panel:#14171F; --panel-2:#1A1E28;
+    --line:#242a37; --line-soft:#1c212c;
+    --ink:#EAECF2; --ink-2:#9aa0ad; --ink-3:#626a78;
+    --brand:#4C8DFF; --brand-2:#7FB0FF; --brand-soft:rgba(76,141,255,.14);
+    --ok:#5BD08C; --pink:#ff7e9d;
+    --r:14px; --maxw:1180px;
+    --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+    --disp:'Space Grotesk','Inter','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    --body:'Inter','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:
+      radial-gradient(1200px 700px at 80% -10%, rgba(76,141,255,.10), transparent 60%),
+      var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+  a{color:inherit;text-decoration:none}
+
+  .top{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(10,11,15,.86),rgba(10,11,15,.5));border-bottom:1px solid var(--line-soft)}
+  .top .wrap{display:flex;align-items:center;gap:14px;height:58px}
+  .logo{display:flex;align-items:center;gap:9px;font-family:var(--disp);font-weight:700}
+  .logo .mark{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+    background:linear-gradient(150deg,#1f2633,#11141b);border:1px solid var(--line);font-size:13px}
+  .logo .mark b{color:var(--brand)}
+  .top .sep{flex:1}
+  .back{font-family:var(--mono);font-size:12px;color:var(--ink-2);padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel)}
+  .back:hover{color:var(--ink)}
+
+  .hd{padding:64px 0 18px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:2.5px;text-transform:uppercase;color:var(--brand-2);
+    display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:"";width:26px;height:1px;background:var(--brand)}
+  .hd h1{font-family:var(--disp);font-weight:700;font-size:clamp(30px,4.6vw,50px);letter-spacing:-1px;margin:18px 0 0}
+  .hd h1 em{font-style:normal;color:var(--brand)}
+  .hd p{color:var(--ink-2);max-width:64ch;margin-top:14px}
+
+  .scheme{padding:26px 0 6px}
+  .scheme-h{display:flex;align-items:baseline;gap:14px;margin:18px 0 20px;flex-wrap:wrap}
+  .scheme-h .num{font-family:var(--mono);font-size:13px;color:var(--brand-2)}
+  .scheme-h h2{font-family:var(--disp);font-weight:600;font-size:26px;letter-spacing:-.4px;margin:0}
+  .scheme-h .role{font-family:var(--mono);font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:1.5px}
+  .scheme-h .lead{flex-basis:100%;color:var(--ink-2);font-size:14px;margin-top:2px}
+
+  .stage-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:22px}
+  @media(max-width:760px){.stage-grid{grid-template-columns:1fr}}
+  .stage{}
+  .stage-cap{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .stage-cap .idx{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-family:var(--mono);
+    font-size:11px;background:var(--brand-soft);border:1px solid var(--brand);color:var(--brand-2)}
+  .stage-cap .nm{font-family:var(--disp);font-weight:600;font-size:15px}
+  .stage-cap .sub{font-size:12px;color:var(--ink-3);margin-left:auto;font-family:var(--mono)}
+
+  /* device base */
+  .screen{position:relative;aspect-ratio:16/10;width:100%;border-radius:11px;overflow:hidden;border:1px solid var(--line);
+    background:#05070c;box-shadow:0 24px 60px -38px rgba(0,0,0,.9)}
+  .frame-art{position:absolute;inset:0;background:
+      radial-gradient(60% 80% at 24% 18%, rgba(255,170,120,.34), transparent 60%),
+      radial-gradient(70% 90% at 82% 30%, rgba(120,90,210,.40), transparent 62%),
+      radial-gradient(90% 90% at 60% 100%, rgba(40,120,180,.40), transparent 60%),
+      linear-gradient(200deg,#20283a,#0a0e16 70%)}
+  .frame-art.light{background:
+      radial-gradient(60% 80% at 24% 18%, rgba(255,210,170,.5), transparent 60%),
+      radial-gradient(70% 90% at 82% 30%, rgba(180,160,255,.5), transparent 62%),
+      linear-gradient(200deg,#cfd6e6,#aeb8cf 70%)}
+  .frame-art::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 120% at 50% 40%,transparent 55%,rgba(0,0,0,.5))}
+  .scanline{position:absolute;inset:0;opacity:.45;mix-blend-mode:overlay;background:repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 1px,transparent 1px 3px)}
+  .d-title{position:absolute;top:0;left:0;right:0;height:28px;display:flex;align-items:center;gap:8px;padding:0 11px;
+    color:var(--ink);font-size:10.5px;z-index:6;background:linear-gradient(180deg,rgba(8,10,15,.7),transparent)}
+  .d-title.dark-ink{color:#10131a}
+  .d-title .n{font-family:var(--disp);font-weight:700;font-size:11px}
+  .d-title .n b{color:var(--brand)}
+  .d-title .win{margin-left:auto;display:flex;gap:6px}
+  .d-title .win i{width:9px;height:9px;border-radius:3px;background:rgba(255,255,255,.16);display:block}
+  /* control bar — docked default */
+  .d-bar{position:absolute;left:0;right:0;bottom:0;height:31px;z-index:6;display:flex;align-items:center;gap:9px;
+    padding:0 11px;background:linear-gradient(0deg,rgba(6,8,12,.82),transparent)}
+  .d-bar .play{width:15px;height:15px;border-radius:50%;background:var(--ink);flex:none}
+  .d-bar .dot{width:12px;height:12px;border-radius:4px;background:rgba(255,255,255,.16);flex:none}
+  .d-bar .track{flex:1;height:3px;border-radius:3px;background:rgba(255,255,255,.16);position:relative}
+  .d-bar .track::before{content:"";position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:3px;background:var(--accent,var(--brand))}
+  .d-bar .track::after{content:"";position:absolute;left:38%;top:50%;width:8px;height:8px;border-radius:50%;transform:translate(-50%,-50%);background:#fff}
+  .d-bar .t{font-family:var(--mono);font-size:9px;color:var(--ink-2)}
+  /* control bar — floating variant */
+  .d-bar.float{left:14%;right:14%;bottom:8px;height:28px;border-radius:13px;padding:0 12px;
+    background:rgba(14,17,23,.86);border:1px solid var(--line)}
+
+  .glass{background:linear-gradient(180deg,rgba(22,26,35,.94),rgba(16,19,26,.94));border:1px solid var(--line);border-radius:11px;backdrop-filter:blur(8px)}
+  .swatch{width:14px;height:14px;border-radius:5px;border:1px solid rgba(255,255,255,.18)}
+  .btn{font-size:10px;border-radius:7px;padding:6px 12px;border:1px solid var(--line);color:var(--ink-2);background:var(--panel)}
+  .btn.pri{background:var(--brand);border-color:var(--brand);color:#04121f;font-weight:600}
+
+  /* ===== scheme B (rail + live) ===== */
+  .b-rail{position:absolute;top:28px;bottom:31px;left:0;width:27%;z-index:7;padding:12px 10px;
+    border-right:1px solid var(--line);background:linear-gradient(180deg,rgba(14,17,23,.95),rgba(10,12,17,.95))}
+  .b-rail .h{font-family:var(--mono);font-size:8.5px;color:var(--ink-3);letter-spacing:1px;margin-bottom:11px}
+  .b-step{display:flex;gap:8px;align-items:flex-start;position:relative;padding-bottom:13px}
+  .b-step .b{width:15px;height:15px;border-radius:50%;border:1px solid var(--line);background:var(--panel);
+    font-family:var(--mono);font-size:8.5px;display:grid;place-items:center;color:var(--ink-2);flex:none;z-index:2}
+  .b-step.done .b{background:var(--ok);border-color:var(--ok);color:#06140c}
+  .b-step.cur .b{background:var(--brand);border-color:var(--brand);color:#04121f;box-shadow:0 0 0 3px var(--brand-soft)}
+  .b-step .tx{font-size:9.5px;color:var(--ink-2);line-height:1.3}
+  .b-step.cur .tx{color:var(--ink)}
+  .b-step::before{content:"";position:absolute;left:7px;top:15px;bottom:0;width:1px;background:var(--line)}
+  .b-step:last-child::before{display:none}
+  .b-step.done::before{background:var(--ok)}
+  .b-panel{position:absolute;left:27%;top:28px;width:31%;bottom:31px;z-index:7;padding:12px 11px;background:rgba(10,12,17,.6);border-right:1px solid var(--line)}
+  .b-panel .h{font-size:11px;font-weight:600;margin-bottom:11px}
+  .b-opt{font-size:9.5px;color:var(--ink-2);border:1px solid var(--line);border-radius:7px;padding:8px 9px;margin-bottom:7px;background:rgba(0,0,0,.22)}
+  .b-opt.sel{border-color:var(--brand);background:var(--brand-soft);color:var(--ink)}
+  .b-fieldrow{display:flex;align-items:center;gap:7px;margin-bottom:8px;font-size:9.5px;color:var(--ink-2)}
+  .b-fieldrow .lab{width:34px;color:var(--ink-3)}
+  .b-fieldrow .bar{flex:1;height:5px;border-radius:5px;background:rgba(255,255,255,.1);position:relative}
+  .b-fieldrow .bar::before{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--w,60%);border-radius:5px;background:var(--brand)}
+  .b-live{position:absolute;right:8px;top:34px;z-index:8;font-family:var(--mono);font-size:8.5px;
+    color:var(--brand-2);border:1px solid var(--brand);background:rgba(76,141,255,.16);border-radius:999px;padding:3px 8px}
+  .b-save{position:absolute;left:27%;right:0;bottom:31px;z-index:8;display:flex;gap:7px;justify-content:center;padding:8px}
+
+  /* ===== scheme C (spotlight) ===== */
+  .c-dim{position:absolute;inset:0;z-index:6;background:rgba(5,7,12,.62);backdrop-filter:blur(3px)}
+  .c-dim.soft{background:rgba(5,7,12,.28);backdrop-filter:blur(1px)}
+  .c-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:62%;z-index:7;padding:18px 18px 15px;text-align:center}
+  .c-card .k{font-family:var(--mono);font-size:9px;color:var(--brand-2);letter-spacing:1.4px}
+  .c-card h4{font-family:var(--disp);font-weight:600;font-size:15px;margin:7px 0 3px}
+  .c-card p{font-size:9.5px;color:var(--ink-2);margin:0 0 13px}
+  .c-blocks{display:flex;justify-content:center;gap:8px;margin-bottom:14px}
+  .c-blocks .bk{flex:1;border:1px solid var(--line);border-radius:8px;padding:11px 6px;font-size:9.5px;color:var(--ink-2);background:rgba(0,0,0,.2)}
+  .c-blocks .bk.sel{border-color:var(--brand);background:var(--brand-soft);color:var(--ink)}
+  .c-pal{display:flex;justify-content:center;gap:8px;margin-bottom:14px}
+  .c-pal .sw{width:27px;height:27px;border-radius:8px;border:1px solid rgba(255,255,255,.14)}
+  .c-dots{display:flex;justify-content:center;gap:5px;margin-bottom:12px}
+  .c-dots i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);display:block}
+  .c-dots i.on{width:16px;border-radius:3px;background:var(--brand)}
+  .c-dots i.done{background:var(--ok)}
+  .c-go{display:inline-flex;gap:8px;align-items:center;justify-content:center}
+  .c-go .g{font-size:10px;background:var(--brand);color:#04121f;font-weight:600;border-radius:7px;padding:7px 18px}
+  .c-go .g.ghost{background:transparent;border:1px solid var(--line);color:var(--ink-2)}
+
+  .note{margin:22px 0 4px;color:var(--ink-2);font-size:13.5px;border-left:2px solid var(--brand);padding-left:14px}
+  .note b{color:var(--ink)}
+  .divider{height:1px;background:var(--line-soft);margin:40px 0}
+  footer{padding:46px 0 64px;color:var(--ink-3);font-family:var(--mono);font-size:11.5px}
+  footer .wrap{display:flex;gap:14px;flex-wrap:wrap}
+  footer .sep{flex:1}
+</style>
+</head>
+<body>
+  <div class="top"><div class="wrap">
+    <div class="logo"><span class="mark">Shikii<b>N</b></span></div>
+    <div class="sep"></div>
+    <a class="back" href="./index.html">← 回到五个方案</a>
+  </div></div>
+
+  <header class="hd"><div class="wrap">
+    <div class="eyebrow">方案 02 / 03 · 分步详览</div>
+    <h1>看看<em>每个阶段</em>长什么样</h1>
+    <p>统一四步：<b style="color:var(--ink)">① 基调 → ② 配色 → ③ 布局 → ④ 预览</b>。下面把方案 02 与 03 的四步逐屏画出来，左到右、上到下就是真实推进顺序。</p>
+  </div></header>
+
+  <!-- ================= Scheme B ================= -->
+  <section class="scheme"><div class="wrap">
+    <div class="scheme-h">
+      <span class="num">方案 02</span>
+      <h2>侧栏向导 + 实时预览</h2>
+      <span class="role">Rail &amp; Live</span>
+      <span class="lead">左侧步骤、中间选项、右侧真实播放器。每一步右侧预览都同步变化。</span>
+    </div>
+
+    <div class="stage-grid">
+      <!-- B1 基调 -->
+      <div class="stage">
+        <div class="stage-cap"><span class="idx">1</span><span class="nm">基调</span><span class="sub">明暗 / 整体气质</span></div>
+        <div class="screen">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b> · 编辑</span><span class="win"><i></i><i></i><i></i></span></div>
+          <div class="b-rail">
+            <div class="h">步骤</div>
+            <div class="b-step cur"><span class="b">1</span><span class="tx">基调</span></div>
+            <div class="b-step"><span class="b">2</span><span class="tx">配色</span></div>
+            <div class="b-step"><span class="b">3</span><span class="tx">布局</span></div>
+            <div class="b-step"><span class="b">4</span><span class="tx">预览</span></div>
+          </div>
+          <div class="b-panel">
+            <div class="h">选明暗基调</div>
+            <div class="b-opt sel">● 暗色（默认）</div>
+            <div class="b-opt">○ 亮色</div>
+            <div class="b-opt">○ 跟随系统</div>
+          </div>
+          <div class="b-live">● 实时预览</div>
+          <div class="d-bar"><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04</span></div>
+        </div>
+      </div>
+
+      <!-- B2 配色 -->
+      <div class="stage">
+        <div class="stage-cap"><span class="idx">2</span><span class="nm">配色</span><span class="sub">强调 / 背景 / 文字</span></div>
+        <div class="screen" style="--accent:#4c8dff">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b> · 编辑</span><span class="win"><i></i><i></i><i></i></span></div>
+          <div class="b-rail">
+            <div class="h">步骤</div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">基调</span></div>
+            <div class="b-step cur"><span class="b">2</span><span class="tx">配色</span></div>
+            <div class="b-step"><span class="b">3</span><span class="tx">布局</span></div>
+            <div class="b-step"><span class="b">4</span><span class="tx">预览</span></div>
+          </div>
+          <div class="b-panel">
+            <div class="h">配色</div>
+            <div class="b-fieldrow"><span class="lab">强调</span><span class="swatch" style="background:#4c8dff"></span><span class="bar" style="--w:70%"></span></div>
+            <div class="b-fieldrow"><span class="lab">背景</span><span class="swatch" style="background:#14171f"></span><span class="bar" style="--w:30%"></span></div>
+            <div class="b-fieldrow"><span class="lab">文字</span><span class="swatch" style="background:#eaecf2"></span><span class="bar" style="--w:88%"></span></div>
+            <div class="b-fieldrow"><span class="lab">透明</span><span class="bar" style="--w:50%"></span></div>
+          </div>
+          <div class="b-live">● 实时预览</div>
+          <div class="d-bar"><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04</span></div>
+        </div>
+      </div>
+
+      <!-- B3 布局 -->
+      <div class="stage">
+        <div class="stage-cap"><span class="idx">3</span><span class="nm">布局</span><span class="sub">控制栏 / 标题栏</span></div>
+        <div class="screen" style="--accent:#4c8dff">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b> · 编辑</span><span class="win"><i></i><i></i><i></i></span></div>
+          <div class="b-rail">
+            <div class="h">步骤</div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">基调</span></div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">配色</span></div>
+            <div class="b-step cur"><span class="b">3</span><span class="tx">布局</span></div>
+            <div class="b-step"><span class="b">4</span><span class="tx">预览</span></div>
+          </div>
+          <div class="b-panel">
+            <div class="h">控制栏</div>
+            <div class="b-opt">贴边停靠</div>
+            <div class="b-opt sel">● 悬浮胶囊</div>
+            <div class="b-fieldrow" style="margin-top:9px"><span class="lab">圆角</span><span class="bar" style="--w:64%"></span></div>
+            <div class="b-fieldrow"><span class="lab">标题栏</span><span class="bar" style="--w:100%"></span></div>
+          </div>
+          <div class="b-live">● 实时预览</div>
+          <!-- 预览里控制栏已变悬浮胶囊 -->
+          <div class="d-bar float"><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04</span></div>
+        </div>
+      </div>
+
+      <!-- B4 预览 -->
+      <div class="stage">
+        <div class="stage-cap"><span class="idx">4</span><span class="nm">预览 / 保存</span><span class="sub">命名 · 保存 / 另存</span></div>
+        <div class="screen" style="--accent:#4c8dff">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b> · 编辑</span><span class="win"><i></i><i></i><i></i></span></div>
+          <div class="b-rail">
+            <div class="h">步骤</div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">基调</span></div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">配色</span></div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">布局</span></div>
+            <div class="b-step cur"><span class="b">4</span><span class="tx">预览</span></div>
+          </div>
+          <div class="b-panel">
+            <div class="h">命名并保存</div>
+            <div class="b-opt" style="display:flex;justify-content:space-between;color:var(--ink)">霓夜蓝 <span style="color:var(--ink-3)">|</span></div>
+            <div style="font-size:9px;color:var(--ink-3);margin:8px 0 4px">改动会即时套用到当前播放器</div>
+          </div>
+          <div class="b-live">完成 ✓</div>
+          <div class="b-save"><span class="btn">另存为</span><span class="btn pri">保存并应用</span></div>
+          <div class="d-bar float"><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04</span></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">方案 02 的关键：<b>右侧那块画面是真的播放器</b>，第 3 步把控制栏切到「悬浮胶囊」时，预览里的控制栏当场内缩成圆角胶囊（看第 3、4 屏底部）。</p>
+  </div></section>
+
+  <div class="wrap"><div class="divider"></div></div>
+
+  <!-- ================= Scheme C ================= -->
+  <section class="scheme"><div class="wrap">
+    <div class="scheme-h">
+      <span class="num">方案 03</span>
+      <h2>聚光卡片</h2>
+      <span class="role">Spotlight</span>
+      <span class="lead">画面压暗虚化，中央一张卡片一次问一件事；底部圆点是进度。最后一步「揭幕」露出成品。</span>
+    </div>
+
+    <div class="stage-grid">
+      <!-- C1 基调 -->
+      <div class="stage">
+        <div class="stage-cap"><span class="idx">1</span><span class="nm">基调</span><span class="sub">先定明暗</span></div>
+        <div class="screen">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="c-dim"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+          <div class="glass c-card">
+            <div class="k">第 1 步 / 共 4 步</div>
+            <h4>先定明暗基调</h4>
+            <p>它决定整体气质，之后都能回来改。</p>
+            <div class="c-blocks">
+              <div class="bk sel">🌙 暗色</div>
+              <div class="bk">☀ 亮色</div>
+              <div class="bk">◐ 跟随</div>
+            </div>
+            <div class="c-dots"><i class="on"></i><i></i><i></i><i></i></div>
+            <div class="c-go"><span class="g">开始 →</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- C2 配色 -->
+      <div class="stage">
+        <div class="stage-cap"><span class="idx">2</span><span class="nm">配色</span><span class="sub">挑一组主色</span></div>
+        <div class="screen">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="c-dim"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+          <div class="glass c-card">
+            <div class="k">第 2 步 / 共 4 步</div>
+            <h4>挑一组配色</h4>
+            <p>之后每一处颜色都从这里生成。</p>
+            <div class="c-pal">
+              <span class="sw" style="background:#4c8dff;outline:2px solid #7fb0ff;outline-offset:2px"></span>
+              <span class="sw" style="background:#ff7e9d"></span>
+              <span class="sw" style="background:#5bd08c"></span>
+              <span class="sw" style="background:#ffba55"></span>
+            </div>
+            <div class="c-dots"><i class="done"></i><i class="on"></i><i></i><i></i></div>
+            <div class="c-go"><span class="g ghost">上一步</span><span class="g">下一步 →</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- C3 布局 -->
+      <div class="stage">
+        <div class="stage-cap"><span class="idx">3</span><span class="nm">布局</span><span class="sub">控制栏怎么放</span></div>
+        <div class="screen">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="c-dim"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+          <div class="glass c-card">
+            <div class="k">第 3 步 / 共 4 步</div>
+            <h4>控制栏怎么放？</h4>
+            <p>贴边更沉稳，悬浮更轻盈。</p>
+            <div class="c-blocks">
+              <div class="bk">贴边</div>
+              <div class="bk sel">悬浮</div>
+              <div class="bk">自动隐</div>
+            </div>
+            <div class="c-dots"><i class="done"></i><i class="done"></i><i class="on"></i><i></i></div>
+            <div class="c-go"><span class="g ghost">上一步</span><span class="g">下一步 →</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- C4 预览（揭幕） -->
+      <div class="stage">
+        <div class="stage-cap"><span class="idx">4</span><span class="nm">预览 / 保存</span><span class="sub">揭幕 · 露出成品</span></div>
+        <div class="screen" style="--accent:#4c8dff">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="c-dim soft"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+          <!-- 成品控制栏露出（悬浮胶囊） -->
+          <div class="d-bar float"><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04</span></div>
+          <div class="glass c-card" style="top:42%">
+            <div class="k">就这样？</div>
+            <h4>霓夜蓝 · 已套用</h4>
+            <p>背景里就是成品，满意就保存。</p>
+            <div class="c-dots"><i class="done"></i><i class="done"></i><i class="done"></i><i class="on"></i></div>
+            <div class="c-go"><span class="g ghost">另存为</span><span class="g">保存并应用 ✓</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">方案 03 的关键：前三步把画面压暗、聚焦卡片；<b>到第 4 步「揭幕」</b>——虚化减弱、成品控制栏浮现，让你在按下保存前先看清效果（看第 4 屏）。</p>
+  </div></section>
+
+  <footer><div class="wrap">
+    <span>ShikiiN · 02 / 03 分步详览</span>
+    <span class="sep"></span>
+    <span>定了就告诉我，我把它做成真实 Flutter 编辑器。</span>
+  </div></footer>
+</body>
+</html>

@@ -1,0 +1,980 @@
+{
+ "torrents": [
+  {
+   "_id": "6acca0a7992853e4c9bf050a",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "【悠哈璃羽字幕社】[脑洞学生会 / 学生会也有洞 / Seitokai ni mo Ana wa Aru][规制解除版][02][1080p HEVC][CHS&CHT][简繁内封]",
+   "tag_ids": [
+    "575446452165b9ba0c485d13",
+    "548ee2ce4ab7379536f56358",
+    "549ef207fe682f7549f1ea90",
+    "55c3024a7030f8c855f992ed",
+    "6abdf91298d9339c5c7431dc",
+    "548ee1204ab7379536f56357",
+    "548ee0ea4ab7379536f56354"
+   ],
+   "comments": 0,
+   "downloads": 5,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "6770e72369861b00070d61aa",
+   "team_id": "5753dd362165b9ba0c485cd2",
+   "publish_time": "2026-10-12T08:56:07.065Z",
+   "magnet": "magnet:?xt=urn:btih:4d357004893937cc8467e8e5a0533afadc77aef2",
+   "infoHash": "4d357004893937cc8467e8e5a0533afadc77aef2",
+   "file_id": "6acca0a3992853e4c9bf04b5",
+   "teamsync": null,
+   "size": "436.12 MB",
+   "btskey": "",
+   "uploader": {
+    "_id": "6770e72369861b00070d61aa",
+    "username": "望月",
+    "emailHash": "77a3dcc9c1416ac549957715f7f6efd2"
+   },
+   "team": {
+    "_id": "5753dd362165b9ba0c485cd2",
+    "icon": "data/images/2016/06/54je77t9ucytyqchu1d.jpg",
+    "name": "悠哈璃羽字幕社",
+    "tag_id": "575446452165b9ba0c485d13",
+    "tag": {
+     "_id": "575446452165b9ba0c485d13",
+     "activity": 0,
+     "locale": {},
+     "name": "悠哈璃羽字幕社",
+     "syn_lowercase": [
+      "悠哈璃羽字幕社",
+      "uha"
+     ],
+     "synonyms": [
+      "悠哈璃羽字幕社",
+      "UHA"
+     ],
+     "type": "team"
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6acca090992853e4c9bf02fa",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "【悠哈璃羽字幕社】[脑洞学生会 / 学生会也有洞 / Seitokai ni mo Ana wa Aru][规制解除版][02][1080p HEVC][CHS][简体内嵌]",
+   "tag_ids": [
+    "548ee2ce4ab7379536f56358",
+    "548ee0ea4ab7379536f56354",
+    "55c3024a7030f8c855f992ed",
+    "575446452165b9ba0c485d13",
+    "6abdf91298d9339c5c7431dc",
+    "549ef207fe682f7549f1ea90"
+   ],
+   "comments": 0,
+   "downloads": 5,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "6770e72369861b00070d61aa",
+   "team_id": "5753dd362165b9ba0c485cd2",
+   "publish_time": "2026-10-12T08:55:44.030Z",
+   "magnet": "magnet:?xt=urn:btih:4a674f30c6f2ea40418f0e3ef73e7a90836579a2",
+   "infoHash": "4a674f30c6f2ea40418f0e3ef73e7a90836579a2",
+   "file_id": "6acca088992853e4c9bf0248",
+   "teamsync": null,
+   "size": "342.74 MB",
+   "btskey": "",
+   "uploader": {
+    "_id": "6770e72369861b00070d61aa",
+    "username": "望月",
+    "emailHash": "77a3dcc9c1416ac549957715f7f6efd2"
+   },
+   "team": {
+    "_id": "5753dd362165b9ba0c485cd2",
+    "icon": "data/images/2016/06/54je77t9ucytyqchu1d.jpg",
+    "name": "悠哈璃羽字幕社",
+    "tag_id": "575446452165b9ba0c485d13",
+    "tag": {
+     "_id": "575446452165b9ba0c485d13",
+     "activity": 0,
+     "locale": {},
+     "name": "悠哈璃羽字幕社",
+     "syn_lowercase": [
+      "悠哈璃羽字幕社",
+      "uha"
+     ],
+     "synonyms": [
+      "悠哈璃羽字幕社",
+      "UHA"
+     ],
+     "type": "team"
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6aca8efb992853e4c9800212",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[TV版&无修版] 学生会也有洞！ - EP02 [简／繁] (1080p H.264 AAC SRTx2) {生徒会にも穴はある！ | 脑洞学生会 | Even the Student Council Has Its Holes!}",
+   "tag_ids": [
+    "548ee2ce4ab7379536f56358",
+    "55c3036c7030f8c855f992ee",
+    "6abdf91298d9339c5c7431dc",
+    "548ee0ea4ab7379536f56354",
+    "548ee1204ab7379536f56357",
+    "5ed5f6ad306f1a0007da8779",
+    "549ef207fe682f7549f1ea90"
+   ],
+   "comments": 0,
+   "downloads": 17,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "677cf05c69861b000773ce81",
+   "team_id": null,
+   "publish_time": "2026-10-10T19:16:11.841Z",
+   "magnet": "magnet:?xt=urn:btih:50eca7363f3dcadd86834ff0eac9c85b576db1ad",
+   "infoHash": "50eca7363f3dcadd86834ff0eac9c85b576db1ad",
+   "file_id": "6aca8efb992853e4c9800211",
+   "teamsync": null,
+   "size": "1.07 GB",
+   "btskey": "",
+   "uploader": {
+    "_id": "677cf05c69861b000773ce81",
+    "username": "掉打入添",
+    "emailHash": "1ddc90eae648d2b6bb3661d187c5ff8f"
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac95364992853e4c95c695e",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[桜都字幕组] 学生会也有洞！ / Seitokai ni mo Ana wa Aru！ [01v2][1080P][简繁内封]",
+   "tag_ids": [
+    "549ef207fe682f7549f1ea90",
+    "548ee2ce4ab7379536f56358",
+    "548ee0ea4ab7379536f56354",
+    "548ee1204ab7379536f56357",
+    "548ee00b4ab7379536f56353",
+    "5ed5f6ad306f1a0007da8779",
+    "55c3024a7030f8c855f992ed",
+    "57a034ee5cc0696f1ce1a1b2"
+   ],
+   "comments": 0,
+   "downloads": 9,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "57a031235cc0696f1ce1a1af",
+   "team_id": "57a034aa5cc0696f1ce1a1b1",
+   "publish_time": "2026-10-09T20:49:40.913Z",
+   "magnet": "magnet:?xt=urn:btih:c1295b3e7cea068fb67e9b8f5beb13665d4609e7",
+   "infoHash": "c1295b3e7cea068fb67e9b8f5beb13665d4609e7",
+   "file_id": "6ac95364992853e4c95c695d",
+   "teamsync": null,
+   "size": "170.42 MB",
+   "btskey": "undefined",
+   "uploader": {
+    "_id": "57a031235cc0696f1ce1a1af",
+    "username": "sakurato",
+    "emailHash": "81fdc7e33f7d6f2cec3bfb344f8e7051"
+   },
+   "team": {
+    "_id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组",
+    "tag_id": "57a034ee5cc0696f1ce1a1b2",
+    "icon": "data/images/2026/02/3xpfqpdxw7lqs1oapko.jpg",
+    "tag": {
+     "_id": "57a034ee5cc0696f1ce1a1b2",
+     "name": "桜都字幕组",
+     "type": "team",
+     "synonyms": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "locale": {},
+     "syn_lowercase": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "activity": 0
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac9535b992853e4c95c685e",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[桜都字幕组] 学生会也有洞！ / Seitokai ni mo Ana wa Aru！ [01v2][1080P][繁体内嵌]",
+   "tag_ids": [
+    "549ef207fe682f7549f1ea90",
+    "548ee2ce4ab7379536f56358",
+    "548ee1204ab7379536f56357",
+    "548edffb4ab7379536f56352",
+    "55c3036c7030f8c855f992ee",
+    "57a034ee5cc0696f1ce1a1b2"
+   ],
+   "comments": 0,
+   "downloads": 10,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "57a031235cc0696f1ce1a1af",
+   "team_id": "57a034aa5cc0696f1ce1a1b1",
+   "publish_time": "2026-10-09T20:49:31.402Z",
+   "magnet": "magnet:?xt=urn:btih:3fcc1919f4ab8ae7683f94ce8af86db02c2e44c1",
+   "infoHash": "3fcc1919f4ab8ae7683f94ce8af86db02c2e44c1",
+   "file_id": "6ac9535b992853e4c95c685d",
+   "teamsync": null,
+   "size": "203.35 MB",
+   "btskey": "undefined",
+   "uploader": {
+    "_id": "57a031235cc0696f1ce1a1af",
+    "username": "sakurato",
+    "emailHash": "81fdc7e33f7d6f2cec3bfb344f8e7051"
+   },
+   "team": {
+    "_id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组",
+    "tag_id": "57a034ee5cc0696f1ce1a1b2",
+    "icon": "data/images/2026/02/3xpfqpdxw7lqs1oapko.jpg",
+    "tag": {
+     "_id": "57a034ee5cc0696f1ce1a1b2",
+     "name": "桜都字幕组",
+     "type": "team",
+     "synonyms": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "locale": {},
+     "syn_lowercase": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "activity": 0
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac95352992853e4c95c6782",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[桜都字幕组] 学生会也有洞！ / Seitokai ni mo Ana wa Aru！ [01v2][1080P][简体内嵌]",
+   "tag_ids": [
+    "549ef207fe682f7549f1ea90",
+    "548ee2ce4ab7379536f56358",
+    "548ee0ea4ab7379536f56354",
+    "548edffb4ab7379536f56352",
+    "55c3036c7030f8c855f992ee",
+    "57a034ee5cc0696f1ce1a1b2"
+   ],
+   "comments": 0,
+   "downloads": 8,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "57a031235cc0696f1ce1a1af",
+   "team_id": "57a034aa5cc0696f1ce1a1b1",
+   "publish_time": "2026-10-09T20:49:22.678Z",
+   "magnet": "magnet:?xt=urn:btih:1894e11cc341ebfeecdc33d2063d582fb88834cc",
+   "infoHash": "1894e11cc341ebfeecdc33d2063d582fb88834cc",
+   "file_id": "6ac95352992853e4c95c6781",
+   "teamsync": null,
+   "size": "203.3 MB",
+   "btskey": "undefined",
+   "uploader": {
+    "_id": "57a031235cc0696f1ce1a1af",
+    "username": "sakurato",
+    "emailHash": "81fdc7e33f7d6f2cec3bfb344f8e7051"
+   },
+   "team": {
+    "_id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组",
+    "tag_id": "57a034ee5cc0696f1ce1a1b2",
+    "icon": "data/images/2026/02/3xpfqpdxw7lqs1oapko.jpg",
+    "tag": {
+     "_id": "57a034ee5cc0696f1ce1a1b2",
+     "name": "桜都字幕组",
+     "type": "team",
+     "synonyms": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "locale": {},
+     "syn_lowercase": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "activity": 0
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac66b21992853e4c90ac9a7",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[北宇治字幕组] 学生会也有洞！ / 脑洞学生会 / Seitokai ni mo Ana wa Aru! [01][无修版][WebRip][HEVC_AAC][简中内嵌]",
+   "tag_ids": [
+    "549ef207fe682f7549f1ea90",
+    "635566656b7b6500073810ca"
+   ],
+   "comments": 0,
+   "downloads": 10,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "6491fefc215b6f000800f8e9",
+   "team_id": "6352bdbf6b7b65000731860b",
+   "publish_time": "2026-10-07T15:54:09.321Z",
+   "magnet": "magnet:?xt=urn:btih:2f492ebf2f9b0207c063e36641296b9f26ab4b22",
+   "infoHash": "2f492ebf2f9b0207c063e36641296b9f26ab4b22",
+   "file_id": "6ac66b21992853e4c90ac9a6",
+   "teamsync": null,
+   "size": "416.07 MB",
+   "btskey": "undefined",
+   "uploader": {
+    "_id": "6491fefc215b6f000800f8e9",
+    "username": "KitaujiSub",
+    "emailHash": "56a3571fa83aed7cfbd10ff794905311"
+   },
+   "team": {
+    "_id": "6352bdbf6b7b65000731860b",
+    "name": "北宇治字幕组",
+    "tag_id": "635566656b7b6500073810ca",
+    "icon": null,
+    "tag": {
+     "_id": "635566656b7b6500073810ca",
+     "name": "北宇治字幕组",
+     "type": "team",
+     "synonyms": [
+      "北宇治字幕组"
+     ],
+     "locale": {},
+     "syn_lowercase": [
+      "北宇治字幕组"
+     ],
+     "activity": 0
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac66515992853e4c90a2d60",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[桜都字幕组] 学生会也有洞！ / 生徒会にも穴はある！ [01][1080P][简繁内封]",
+   "tag_ids": [
+    "549ef207fe682f7549f1ea90",
+    "548ee2ce4ab7379536f56358",
+    "548ee0ea4ab7379536f56354",
+    "548ee1204ab7379536f56357",
+    "548ee00b4ab7379536f56353",
+    "5ed5f6ad306f1a0007da8779",
+    "55c3024a7030f8c855f992ed",
+    "57a034ee5cc0696f1ce1a1b2"
+   ],
+   "comments": 0,
+   "downloads": 9,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "57a031235cc0696f1ce1a1af",
+   "team_id": "57a034aa5cc0696f1ce1a1b1",
+   "publish_time": "2026-10-07T15:28:21.522Z",
+   "magnet": "magnet:?xt=urn:btih:ff7b1a88b5d16e94adc598e3d52b92439bc9d20c",
+   "infoHash": "ff7b1a88b5d16e94adc598e3d52b92439bc9d20c",
+   "file_id": "6ac66515992853e4c90a2d5f",
+   "teamsync": null,
+   "size": "177.26 MB",
+   "btskey": "undefined",
+   "uploader": {
+    "_id": "57a031235cc0696f1ce1a1af",
+    "username": "sakurato",
+    "emailHash": "81fdc7e33f7d6f2cec3bfb344f8e7051"
+   },
+   "team": {
+    "_id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组",
+    "tag_id": "57a034ee5cc0696f1ce1a1b2",
+    "icon": "data/images/2026/02/3xpfqpdxw7lqs1oapko.jpg",
+    "tag": {
+     "_id": "57a034ee5cc0696f1ce1a1b2",
+     "name": "桜都字幕组",
+     "type": "team",
+     "synonyms": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "locale": {},
+     "syn_lowercase": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "activity": 0
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac6650e992853e4c90a2ca7",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[桜都字幕组] 学生会也有洞！ / 生徒会にも穴はある！ [01][1080P][简体内嵌]",
+   "tag_ids": [
+    "549ef207fe682f7549f1ea90",
+    "548ee2ce4ab7379536f56358",
+    "548ee0ea4ab7379536f56354",
+    "548edffb4ab7379536f56352",
+    "55c3036c7030f8c855f992ee",
+    "57a034ee5cc0696f1ce1a1b2"
+   ],
+   "comments": 0,
+   "downloads": 4,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "57a031235cc0696f1ce1a1af",
+   "team_id": "57a034aa5cc0696f1ce1a1b1",
+   "publish_time": "2026-10-07T15:28:14.353Z",
+   "magnet": "magnet:?xt=urn:btih:0b55e3714caef39527ef9205c1af4c2a27ba32f7",
+   "infoHash": "0b55e3714caef39527ef9205c1af4c2a27ba32f7",
+   "file_id": "6ac6650e992853e4c90a2ca6",
+   "teamsync": null,
+   "size": "179.94 MB",
+   "btskey": "undefined",
+   "uploader": {
+    "_id": "57a031235cc0696f1ce1a1af",
+    "username": "sakurato",
+    "emailHash": "81fdc7e33f7d6f2cec3bfb344f8e7051"
+   },
+   "team": {
+    "_id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组",
+    "tag_id": "57a034ee5cc0696f1ce1a1b2",
+    "icon": "data/images/2026/02/3xpfqpdxw7lqs1oapko.jpg",
+    "tag": {
+     "_id": "57a034ee5cc0696f1ce1a1b2",
+     "name": "桜都字幕组",
+     "type": "team",
+     "synonyms": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "locale": {},
+     "syn_lowercase": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "activity": 0
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac66502992853e4c90a2b9d",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[桜都字幕组] 学生会也有洞！ / 生徒会にも穴はある！ [01][1080P][繁体内嵌]",
+   "tag_ids": [
+    "549ef207fe682f7549f1ea90",
+    "548ee2ce4ab7379536f56358",
+    "548ee1204ab7379536f56357",
+    "548edffb4ab7379536f56352",
+    "55c3036c7030f8c855f992ee",
+    "57a034ee5cc0696f1ce1a1b2"
+   ],
+   "comments": 0,
+   "downloads": 9,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "57a031235cc0696f1ce1a1af",
+   "team_id": "57a034aa5cc0696f1ce1a1b1",
+   "publish_time": "2026-10-07T15:28:02.867Z",
+   "magnet": "magnet:?xt=urn:btih:710bea34370a812284c7199f9f7bfdb08bcb9612",
+   "infoHash": "710bea34370a812284c7199f9f7bfdb08bcb9612",
+   "file_id": "6ac66502992853e4c90a2b9c",
+   "teamsync": null,
+   "size": "180.04 MB",
+   "btskey": "undefined",
+   "uploader": {
+    "_id": "57a031235cc0696f1ce1a1af",
+    "username": "sakurato",
+    "emailHash": "81fdc7e33f7d6f2cec3bfb344f8e7051"
+   },
+   "team": {
+    "_id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组",
+    "tag_id": "57a034ee5cc0696f1ce1a1b2",
+    "icon": "data/images/2026/02/3xpfqpdxw7lqs1oapko.jpg",
+    "tag": {
+     "_id": "57a034ee5cc0696f1ce1a1b2",
+     "name": "桜都字幕组",
+     "type": "team",
+     "synonyms": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "locale": {},
+     "syn_lowercase": [
+      "桜都字幕组",
+      "樱都字幕组",
+      "櫻都字幕組"
+     ],
+     "activity": 0
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac4f198992853e4c9e1e69f",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "【悠哈璃羽字幕社】[脑洞学生会 / 学生会也有洞 / Seitokai ni mo Ana wa Aru][规制解除版][01][1080p HEVC][CHS&CHT][简繁内封]",
+   "tag_ids": [
+    "575446452165b9ba0c485d13",
+    "548ee2ce4ab7379536f56358",
+    "549ef207fe682f7549f1ea90",
+    "55c3024a7030f8c855f992ed",
+    "6abdf91298d9339c5c7431dc",
+    "548ee1204ab7379536f56357",
+    "548ee0ea4ab7379536f56354"
+   ],
+   "comments": 0,
+   "downloads": 12,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "6770e72369861b00070d61aa",
+   "team_id": "5753dd362165b9ba0c485cd2",
+   "publish_time": "2026-10-06T13:03:20.568Z",
+   "magnet": "magnet:?xt=urn:btih:6e4e35db1d7096965c051bc32797a561e772c1f2",
+   "infoHash": "6e4e35db1d7096965c051bc32797a561e772c1f2",
+   "file_id": "6ac4f186992853e4c9e1e45a",
+   "teamsync": null,
+   "size": "450.31 MB",
+   "btskey": "",
+   "uploader": {
+    "_id": "6770e72369861b00070d61aa",
+    "username": "望月",
+    "emailHash": "77a3dcc9c1416ac549957715f7f6efd2"
+   },
+   "team": {
+    "_id": "5753dd362165b9ba0c485cd2",
+    "icon": "data/images/2016/06/54je77t9ucytyqchu1d.jpg",
+    "name": "悠哈璃羽字幕社",
+    "tag_id": "575446452165b9ba0c485d13",
+    "tag": {
+     "_id": "575446452165b9ba0c485d13",
+     "activity": 0,
+     "locale": {},
+     "name": "悠哈璃羽字幕社",
+     "syn_lowercase": [
+      "悠哈璃羽字幕社",
+      "uha"
+     ],
+     "synonyms": [
+      "悠哈璃羽字幕社",
+      "UHA"
+     ],
+     "type": "team"
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac4f162992853e4c9e1e01b",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "【悠哈璃羽字幕社】[脑洞学生会 / 学生会也有洞 / Seitokai ni mo Ana wa Aru][规制解除版][01][1080p HEVC][CHS][简体内嵌]",
+   "tag_ids": [
+    "548ee2ce4ab7379536f56358",
+    "548ee0ea4ab7379536f56354",
+    "55c3024a7030f8c855f992ed",
+    "575446452165b9ba0c485d13",
+    "6abdf91298d9339c5c7431dc",
+    "549ef207fe682f7549f1ea90"
+   ],
+   "comments": 0,
+   "downloads": 10,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "6770e72369861b00070d61aa",
+   "team_id": "5753dd362165b9ba0c485cd2",
+   "publish_time": "2026-10-06T13:02:26.964Z",
+   "magnet": "magnet:?xt=urn:btih:1e9c42474f27fee2788363bd42841ee4a584384f",
+   "infoHash": "1e9c42474f27fee2788363bd42841ee4a584384f",
+   "file_id": "6ac4f13c992853e4c9e1d9fd",
+   "teamsync": null,
+   "size": "356.45 MB",
+   "btskey": "",
+   "uploader": {
+    "_id": "6770e72369861b00070d61aa",
+    "username": "望月",
+    "emailHash": "77a3dcc9c1416ac549957715f7f6efd2"
+   },
+   "team": {
+    "_id": "5753dd362165b9ba0c485cd2",
+    "icon": "data/images/2016/06/54je77t9ucytyqchu1d.jpg",
+    "name": "悠哈璃羽字幕社",
+    "tag_id": "575446452165b9ba0c485d13",
+    "tag": {
+     "_id": "575446452165b9ba0c485d13",
+     "activity": 0,
+     "locale": {},
+     "name": "悠哈璃羽字幕社",
+     "syn_lowercase": [
+      "悠哈璃羽字幕社",
+      "uha"
+     ],
+     "synonyms": [
+      "悠哈璃羽字幕社",
+      "UHA"
+     ],
+     "type": "team"
+    }
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  },
+  {
+   "_id": "6ac3d805992853e4c9c30514",
+   "category_tag_id": "549ef207fe682f7549f1ea90",
+   "title": "[TV版&无修版] 学生会也有洞！ - EP01 [简／繁] (1080p H.264 AAC SRTx2) {生徒会にも穴はある！ | 脑洞学生会 | Even the Student Council Has Its Holes!}",
+   "tag_ids": [
+    "548ee2ce4ab7379536f56358",
+    "55c3036c7030f8c855f992ee",
+    "548ee0ea4ab7379536f56354",
+    "548ee1204ab7379536f56357",
+    "5ed5f6ad306f1a0007da8779",
+    "6abdf91298d9339c5c7431dc",
+    "549ef207fe682f7549f1ea90"
+   ],
+   "comments": 0,
+   "downloads": 17,
+   "finished": 0,
+   "leechers": 0,
+   "seeders": 0,
+   "uploader_id": "677cf05c69861b000773ce81",
+   "team_id": null,
+   "publish_time": "2026-10-05T17:01:57.596Z",
+   "magnet": "magnet:?xt=urn:btih:a7e3aebc44a54c921a45e77ba9c75061666a29d3",
+   "infoHash": "a7e3aebc44a54c921a45e77ba9c75061666a29d3",
+   "file_id": "6ac3d805992853e4c9c30512",
+   "teamsync": null,
+   "size": "1.25 GB",
+   "btskey": "",
+   "uploader": {
+    "_id": "677cf05c69861b000773ce81",
+    "username": "掉打入添",
+    "emailHash": "1ddc90eae648d2b6bb3661d187c5ff8f"
+   },
+   "category_tag": {
+    "_id": "549ef207fe682f7549f1ea90",
+    "activity": 0,
+    "locale": {
+     "zh_tw": "動畫",
+     "zh_cn": "动画",
+     "ja": "アニメ",
+     "en": "Animation"
+    },
+    "name": "Donga",
+    "syn_lowercase": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "animation"
+    ],
+    "synonyms": [
+     "動畫",
+     "动画",
+     "アニメ",
+     "Animation"
+    ],
+    "type": "misc"
+   }
+  }
+ ],
+ "count": 13,
+ "page_count": 1,
+ "success": true
+}

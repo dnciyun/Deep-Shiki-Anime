@@ -1,0 +1,84 @@
+# DSAnima —— 上传 GitHub 时**不该进仓库**的东西。
+#
+# 三类的理由各不相同：
+# ① 构建产物 / 缓存：几十 GB，别人 clone 下来会自己重新生成（`flutter pub get` /
+#    `cargo build` / `flutter build windows`）；
+# ② 运行期用户数据（`DSAnima-data/`）：那是**某一台机器上的**设置、队列、观看记录、
+#    封面缓存和日志 —— 便携式的代价就是它会出现在程序目录里，但绝不能进仓库；
+# ③ 发布包（`dist/`）：发布包走 **GitHub Releases 的附件**，不进 git 历史
+#    （39MB 一份、每版一份，塞进 git 就再也删不掉了）。
+
+# ── ① Dart / Flutter ─────────────────────────────────────────────────────────
+.dart_tool/
+.packages
+build/
+app/build/
+core/build/
+ShikiiN/build/
+app/windows/flutter/ephemeral/
+ShikiiN/windows/flutter/ephemeral/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# ── ① Rust 边车（rqbit）──────────────────────────────────────────────────────
+# 目标目录 4.9GB；**只有** release 里的 exe 是打包要用的，它平时放在 dist 里。
+engine/target/
+# `tool/probe_*` 是几个一次性 Rust 探针，它们的 target 也是几百 MB 级构建产物。
+tool/probe_*/target/
+# `cargo`/`rustc` 的中间产物（万一漏在别处）
+*.pdb
+*.d
+CACHEDIR.TAG
+
+# ── ② 运行期用户数据 ─────────────────────────────────────────────────────────
+DSAnima-data/
+**/DSAnima-data/
+# 数据目录可能在别处（`DSANIMA_DATA_DIR`），这几个常见残留也排掉
+store/
+player-store/
+*.lock
+# 例外：**真锁文件要进仓库**（依赖必须可复现）。上面那条 `*.lock` 本意是挡 Hive 运行期
+# 的 `<box>.lock`，这里把两个真锁文件放回来：
+#   * `app/pubspec.lock` —— 应用的完整依赖树，连 ShikiiN / core（path 依赖）一起钉住；
+#   * `engine/Cargo.lock` —— 二进制 crate（Rust 惯例：可执行程序提交锁文件）。
+# `ShikiiN/` 与 `core/` 是**库**，按 pub 惯例不提交各自的 lock（app 的 lock 已覆盖）。
+!app/pubspec.lock
+!engine/Cargo.lock
+
+# ── ③ 发布产物 ───────────────────────────────────────────────────────────────
+dist/
+
+# ── ④ 开发用的文档与工具：只在本地保留，不进仓库（2026-10-16 按要求）────────────
+# 公开仓库 = **产品 + 源码**：四个包的代码 / 测试 / 配置 / 测试 fixture，
+# 加根 README（产品说明）、LICENSE、本文件。其余一律不出门：
+#   * `docs/` —— 逐轮交接（HANDOFF）、设计 spec、发布流程、早期主题预览素材（HTML/截图/封面）；
+#   * `tool/`、`app/tool/`、`ShikiiN/tool/` —— 打包/冒烟/发布脚本、一次性探针、codemod 脚本；
+#   * `*.ps1` —— 各种本机脚本（引擎冒烟、截图、诊断…）；
+#   * `*_probe.dart` —— 真机探针（`flutter test` 本来也不会自动跑它们）；
+#   * 除根 README 之外的 `.md` —— 各包 README / CHANGELOG、Windows 崩溃排查笔记、计划与设计稿。
+# 撤出方式都是 `git rm --cached`：**文件都还在本地**，只是不跟着仓库走。
+docs/
+/tool/
+/app/tool/
+/ShikiiN/tool/
+**/*.ps1
+**/*_probe.dart
+**/*.md
+!/README.md
+
+# ── 杂项：日志 / 探针 / 编辑器 ────────────────────────────────────────────────
+*.log
+logs/
+_mikan_home.html
+analyze_*.txt
+.verify-out/
+.acl-recovery/
+# `docs/theme-preview/` 里跑过一次 Edge 无头截图：那是个浏览器 profile（7MB 缓存/配置），
+# 要重跑截图脚本会自己重建。
+.edgeprofile/
+**/.edgeprofile/
+.vscode/
+.idea/
+*.iml
+Thumbs.db
+desktop.ini

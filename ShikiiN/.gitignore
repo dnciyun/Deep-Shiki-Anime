@@ -1,0 +1,9 @@
+/build/
+.dart_tool/
+*.log
+.flutter-plugins
+.flutter-plugins-dependencies
+.idea/
+*.iml
+.pub-cache/
+.superpowers/

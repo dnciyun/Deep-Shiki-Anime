@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>非法日期（边界样本）</title>
+    <item><guid>bad-1</guid><title>[组] 日期是自然语言 - 01</title><pubDate>昨天下午</pubDate></item>
+    <item><guid>bad-2</guid><title>[组] 日期越界 - 02</title><pubDate>2026-13-45T99:99:99</pubDate></item>
+    <item><guid>bad-3</guid><title>[组] 日期是空串 - 03</title><pubDate></pubDate></item>
+    <item><guid>bad-4</guid><title>[组] 日期是 RFC822 但月份非法 - 04</title><pubDate>Thu, 08 Xxx 2026 13:18:50 -0000</pubDate></item>
+    <item><guid>bad-5</guid><title>[组] 合法日期对照 - 05</title><pubDate>Thu, 08 Oct 2026 13:18:50 +0800</pubDate></item>
+  </channel>
+</rss>

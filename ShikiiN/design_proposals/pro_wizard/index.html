@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>专业向导 · 样子</title>
+<style>
+  :root{--ink:#eaecf2;--ink2:#9aa0ad;--ink3:#626a78;--card:#161a22;--line:#242a37;--accent:#4c8dff;--bg:#0b0d12}
+  *{box-sizing:border-box}
+  body{margin:0;background:#06080d;color:var(--ink);font:14px/1.5 "Microsoft YaHei UI",system-ui,sans-serif;padding:22px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--ink2);font-size:12.5px;margin:0 0 16px}
+  .stage{display:flex;gap:0;height:520px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--bg)}
+  /* 左：真实画面预览 */
+  .preview{flex:1;position:relative;background:
+     radial-gradient(60% 80% at 30% 20%,rgba(120,90,210,.32),transparent),
+     radial-gradient(70% 90% at 80% 60%,rgba(40,120,180,.30),transparent),
+     linear-gradient(200deg,#20283a,#0a0e16)}
+  .topbar{position:absolute;top:0;left:0;right:0;height:38px;background:#14171fdd;display:flex;align-items:center;gap:10px;padding:0 12px;color:var(--ink2);font-size:12px;border-bottom:1px solid var(--line);z-index:6}
+  .pill{display:inline-flex;background:#0c0f15aa;border:1px solid #ffffff14;border-radius:999px;padding:2px}
+  .pill span{padding:3px 10px;border-radius:999px;color:var(--ink2);font-size:11px}
+  .pill .on{background:var(--accent);color:#04121f;font-weight:600}
+  .save{margin-left:auto;background:#2f7d4a;color:#eafff0;padding:5px 14px;border-radius:999px;font-size:12px}
+  .exit{color:var(--ink2);font-size:12px}
+  /* 视频 16:9 居中 */
+  .frame{position:absolute;inset:50px 16px 16px;display:flex;align-items:center;justify-content:center}
+  .video{aspect-ratio:16/9;width:100%;max-height:100%;background:#000;border-radius:8px;position:relative;box-shadow:0 10px 40px -10px #000a}
+  .vlabel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ffffff30;font-size:15px}
+  /* 真实标题栏(被选中) */
+  .title-real{position:absolute;top:8px;left:8px;right:8px;height:26px;display:flex;align-items:center;padding:0 8px;color:var(--ink);font-size:11px;background:#0c0f1577;border-radius:7px}
+  .sel{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px;box-shadow:0 0 0 6px #4c8dff22}
+  .seltag{position:absolute;top:-9px;left:8px;background:var(--accent);color:#04121f;font-size:9px;padding:1px 7px;border-radius:5px;font-weight:600}
+  /* 真实控制栏(贴边) */
+  .ctrl{position:absolute;left:0;right:0;bottom:0;background:#14171fcc;border-radius:9px 9px 0 0;padding:8px 12px}
+  .track{height:3px;background:#ffffff22;border-radius:2px;position:relative;margin-bottom:8px}
+  .track .fill{position:absolute;left:0;top:0;bottom:0;width:42%;background:var(--accent);box-shadow:0 0 6px #4c8dff88;border-radius:2px}
+  .row{display:flex;gap:11px;align-items:center;color:#cfd6e6}
+  .row .t{font-size:10px;color:var(--ink2);margin-left:4px}
+  .grow{flex:1}
+  .vol{width:54px;height:3px;background:#ffffff22;border-radius:2px;position:relative}
+  .vol .vf{position:absolute;left:0;top:0;bottom:0;width:60%;background:var(--accent);border-radius:2px}
+  /* 右：检查器 */
+  .insp{width:288px;background:#10131a;border-left:1px solid var(--line);display:flex;flex-direction:column}
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tabs div{flex:1;text-align:center;padding:10px 0;font-size:12.5px;color:var(--ink2);cursor:default}
+  .tabs .act{color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+  .body{padding:14px;overflow:auto}
+  .lab{color:var(--ink3);font-size:10px;letter-spacing:1px;margin:14px 0 7px}
+  .lab:first-child{margin-top:0}
+  .sw-row{display:flex;gap:16px;margin-bottom:6px}
+  .sw{text-align:center}
+  .sw i{display:block;width:26px;height:26px;border-radius:7px;border:1px solid #ffffff22;margin:0 auto 4px}
+  .sw small{font-size:9px;color:var(--ink2)}
+  .field{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+  .field span{color:var(--ink2);font-size:11px}
+  .slider{width:120px;height:4px;background:#ffffff14;border-radius:3px;position:relative}
+  .slider b{position:absolute;left:45%;top:-3px;width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg em{font-style:normal;font-size:10px;border:1px solid var(--line);color:var(--ink2);border-radius:6px;padding:3px 9px}
+  .seg em.on{border-color:var(--accent);color:#7fb0ff;background:#4c8dff1c}
+  .toggle{width:34px;height:18px;border-radius:9px;background:var(--accent);position:relative}
+  .toggle i{position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+  .hint{color:var(--ink3);font-size:10px;margin-top:2px}
+  .divider{height:1px;background:var(--line);margin:14px 0}
+  .note{margin-top:16px;color:var(--ink2);font-size:12.5px;line-height:1.7}
+  .note b{color:var(--ink)}
+  .k{color:#7fb0ff}
+</style>
+</head>
+<body>
+  <h1>专业向导 · 真实画面 + 逐部件精调（草图，给你看作用）</h1>
+  <p class="sub">和简易的区别：<b style="color:var(--ink)">不分步</b>，一屏直接在<b style="color:var(--ink)">真实画面</b>上点任意部件 → 右侧改它<b style="color:var(--ink)">自己</b>的颜色/大小/圆角/动效/显隐；外加全局圆角·字体·动效，这些简易给不了。</p>
+
+  <div class="stage">
+    <!-- 预览 -->
+    <div class="preview">
+      <div class="topbar">
+        <span class="exit">‹ 退出</span>
+        <span style="color:var(--ink3)">基调</span>
+        <span class="pill"><span class="on">自定义</span><span>高级黑</span><span>纯洁白</span></span>
+        <span class="save">保存</span>
+      </div>
+      <div class="frame">
+        <div class="video">
+          <div class="vlabel">预览（真实画面）</div>
+          <!-- 标题栏：当前选中 -->
+          <div class="title-real sel">ShikiiN · 示例视频.mkv
+            <span class="seltag">标题栏</span>
+          </div>
+          <!-- 控制栏 -->
+          <div class="ctrl">
+            <div class="track"><div class="fill"></div></div>
+            <div class="row">
+              <span>⏮</span><span>⏯</span><span>⏭</span><span class="t">12:04 / 24:30</span>
+              <span class="grow"></span>
+              <span class="vol"><span class="vf"></span></span><span>⛶</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- 检查器 -->
+    <div class="insp">
+      <div class="tabs"><div class="act">部件</div><div>全局</div><div>布局</div></div>
+      <div class="body">
+        <div style="font-weight:600;font-size:13px;margin-bottom:2px">标题栏</div>
+        <div class="hint">点画面里别的部件可切换（控制栏 / 每个按钮 / 进度条 / 面板…）</div>
+
+        <div class="lab">颜色（这一个部件单独）</div>
+        <div class="sw-row">
+          <div class="sw"><i style="background:#1b212c"></i><small>底色</small></div>
+          <div class="sw"><i style="background:#eaecf2"></i><small>文字</small></div>
+          <div class="sw"><i style="background:#4c8dff"></i><small>强调</small></div>
+        </div>
+
+        <div class="lab">尺寸 / 圆角</div>
+        <div class="field"><span>高度</span><div class="slider"><b></b></div></div>
+        <div class="field"><span>字号</span><div class="slider"><b style="left:35%"></b></div></div>
+        <div class="field"><span>圆角</span><div class="slider"><b style="left:20%"></b></div></div>
+
+        <div class="lab">弹出动效</div>
+        <div class="seg"><em class="on">淡入</em><em>滑入</em><em>缩放</em><em>下沉</em></div>
+
+        <div class="divider"></div>
+        <div class="field"><span style="color:var(--ink);font-size:12px">显示该部件</span><div class="toggle"><i></i></div></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note">
+    <b>「全局」标签页</b>里放：五色调（主/副/栏底/图标/文字，跟简易同口径）+ <b>全局圆角 · 字体 · 动效人格(节奏)</b>。<br>
+    <b>「布局」标签页</b>：控制栏贴边/悬浮、进度条样式、界面繁简——和简易一致。<br>
+    <span class="k">核心价值</span> = 简易做不到的两件事：① <b>逐部件</b>（让某一个按钮/某条栏跟别人不一样、单独调大小/圆角/动效/显隐）；② <b>全局几何与排版</b>（圆角/字体/动效）。<br>
+    如果你用不到这两层，<b>专业向导可以直接砍掉</b>，只留简易、入口也不用再问「简易/专业」。
+  </p>
+</body>
+</html>

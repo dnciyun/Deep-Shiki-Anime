@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel>
+  <title>缺 enclosure（边界样本）</title>
+  <item>
+    <guid>no-enc-1</guid>
+    <title>[组] 既没有 enclosure 也没有 magnet - 01</title>
+    <link>https://example.invalid/detail/1</link>
+    <description>这是一条只有详情页的条目，没有种子直链</description>
+  </item>
+  <item>
+    <guid>no-enc-2</guid>
+    <title>[组] enclosure 类型不对 - 02</title>
+    <enclosure url="https://example.invalid/cover.jpg" type="image/jpeg" length="2048"/>
+  </item>
+</channel></rss>

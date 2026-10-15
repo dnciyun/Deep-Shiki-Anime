@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShikiiN · 编辑模式重设计 · 五个分步向导方案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0A0B0F; --bg-2:#0E1016; --panel:#14171F; --panel-2:#1A1E28;
+    --line:#242a37; --line-soft:#1c212c;
+    --ink:#EAECF2; --ink-2:#9aa0ad; --ink-3:#626a78;
+    --brand:#4C8DFF; --brand-2:#7FB0FF; --brand-soft:rgba(76,141,255,.14);
+    --ok:#5BD08C; --warn:#FFC255;
+    --r:14px; --maxw:1180px;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --disp:'Space Grotesk','Inter',-apple-system,'PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    --body:'Inter',-apple-system,'PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:
+      radial-gradient(1200px 700px at 78% -8%, rgba(76,141,255,.10), transparent 60%),
+      radial-gradient(900px 600px at 8% 4%, rgba(127,176,255,.05), transparent 55%),
+      var(--bg);
+    color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:inherit}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+
+  /* ---------- top bar ---------- */
+  .top{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(10,11,15,.86),rgba(10,11,15,.5));
+    border-bottom:1px solid var(--line-soft);}
+  .top .wrap{display:flex;align-items:center;gap:14px;height:60px}
+  .logo{display:flex;align-items:center;gap:9px;font-family:var(--disp);font-weight:700;letter-spacing:.2px}
+  .logo .mark{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+    background:linear-gradient(150deg,#1f2633,#11141b);border:1px solid var(--line);
+    font-size:14px;color:var(--ink)}
+  .logo .mark b{color:var(--brand)}
+  .top .sep{flex:1}
+  .top .meta{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+  .nav{display:flex;gap:4px}
+  .nav a{font-size:12.5px;color:var(--ink-2);text-decoration:none;padding:6px 10px;border-radius:8px;
+    font-family:var(--mono)}
+  .nav a:hover{color:var(--ink);background:var(--panel)}
+  @media(max-width:840px){.nav{display:none}}
+
+  /* ---------- hero ---------- */
+  .hero{padding:74px 0 30px;position:relative}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:2.5px;text-transform:uppercase;
+    color:var(--brand-2);display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:"";width:26px;height:1px;background:var(--brand)}
+  .hero h1{font-family:var(--disp);font-weight:700;font-size:clamp(34px,5.4vw,62px);
+    line-height:1.02;letter-spacing:-1.2px;margin:20px 0 0;max-width:15ch}
+  .hero h1 em{font-style:normal;color:var(--brand)}
+  .hero .lede{margin-top:20px;max-width:62ch;color:var(--ink-2);font-size:clamp(15px,1.6vw,17px)}
+  .hero .lede b{color:var(--ink);font-weight:600}
+  .facts{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+  .fact{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+    border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 13px}
+  .fact b{color:var(--ink)}
+
+  /* shared device base used by every mockup */
+  .screen{position:relative;aspect-ratio:16/10;width:100%;border-radius:12px;overflow:hidden;
+    border:1px solid var(--line);background:#05070c;
+    box-shadow:0 30px 70px -40px rgba(0,0,0,.9), inset 0 0 0 1px rgba(255,255,255,.02)}
+  /* the "anime frame" behind everything — abstract, no characters */
+  .frame-art{position:absolute;inset:0;
+    background:
+      radial-gradient(60% 80% at 24% 18%, rgba(255,170,120,.34), transparent 60%),
+      radial-gradient(70% 90% at 82% 30%, rgba(120,90,210,.40), transparent 62%),
+      radial-gradient(90% 90% at 60% 100%, rgba(40,120,180,.40), transparent 60%),
+      linear-gradient(200deg,#20283a,#0a0e16 70%);}
+  .frame-art::after{content:"";position:absolute;inset:0;
+    background:radial-gradient(120% 120% at 50% 40%,transparent 55%,rgba(0,0,0,.55));}
+  .scanline{position:absolute;inset:0;opacity:.5;mix-blend-mode:overlay;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 1px,transparent 1px 3px)}
+  /* title bar inside device */
+  .d-title{position:absolute;top:0;left:0;right:0;height:30px;display:flex;align-items:center;
+    gap:8px;padding:0 12px;color:var(--ink);font-size:11px;z-index:6;
+    background:linear-gradient(180deg,rgba(8,10,15,.7),transparent)}
+  .d-title .n{font-family:var(--disp);font-weight:700;font-size:11.5px;letter-spacing:.3px}
+  .d-title .n b{color:var(--brand)}
+  .d-title .win{margin-left:auto;display:flex;gap:7px;color:var(--ink-3)}
+  .d-title .win i{width:10px;height:10px;border-radius:3px;background:rgba(255,255,255,.14);display:block}
+  /* control bar inside device */
+  .d-bar{position:absolute;left:0;right:0;bottom:0;height:34px;z-index:6;display:flex;align-items:center;
+    gap:10px;padding:0 12px;background:linear-gradient(0deg,rgba(6,8,12,.82),transparent)}
+  .d-bar .play{width:17px;height:17px;border-radius:50%;background:var(--ink);
+    -webkit-mask:linear-gradient(#000 0 0);position:relative;flex:none}
+  .d-bar .dot{width:14px;height:14px;border-radius:5px;background:rgba(255,255,255,.16);flex:none}
+  .d-bar .track{flex:1;height:3px;border-radius:3px;background:rgba(255,255,255,.16);position:relative}
+  .d-bar .track::before{content:"";position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:3px;background:var(--brand)}
+  .d-bar .track::after{content:"";position:absolute;left:38%;top:50%;width:9px;height:9px;border-radius:50%;
+    transform:translate(-50%,-50%);background:#fff}
+  .d-bar .t{font-family:var(--mono);font-size:9.5px;color:var(--ink-2)}
+
+  /* generic glass panel used by wizards */
+  .glass{background:linear-gradient(180deg,rgba(22,26,35,.92),rgba(16,19,26,.92));
+    border:1px solid var(--line);border-radius:12px;backdrop-filter:blur(8px)}
+  .pill{font-family:var(--mono);font-size:9px;letter-spacing:.4px;color:var(--ink-2);
+    border:1px solid var(--line);border-radius:999px;padding:3px 8px;background:rgba(0,0,0,.25)}
+  .swatch{width:15px;height:15px;border-radius:5px;border:1px solid rgba(255,255,255,.18)}
+
+  /* ---------- proposal block ---------- */
+  .section{padding:30px 0}
+  .case{border:1px solid var(--line-soft);border-radius:var(--r);overflow:hidden;
+    background:linear-gradient(180deg,var(--bg-2),rgba(14,16,22,.4));margin-bottom:26px}
+  .case-grid{display:grid;grid-template-columns:0.92fr 1.25fr;gap:0}
+  @media(max-width:880px){.case-grid{grid-template-columns:1fr}}
+  .case-info{padding:30px 30px 28px;border-right:1px solid var(--line-soft);min-width:0}
+  @media(max-width:880px){.case-info{border-right:0;border-bottom:1px solid var(--line-soft)}}
+  .case-num{font-family:var(--mono);font-size:12px;color:var(--brand-2);letter-spacing:1px}
+  .case h2{font-family:var(--disp);font-weight:600;font-size:25px;letter-spacing:-.4px;margin:8px 0 2px}
+  .case .role{font-family:var(--mono);font-size:11px;color:var(--ink-3);text-transform:uppercase;letter-spacing:1.5px}
+  .case .desc{color:var(--ink-2);margin:16px 0 18px;font-size:14.5px}
+  .case .desc b{color:var(--ink);font-weight:600}
+  .feats{list-style:none;padding:0;margin:0 0 18px;display:flex;flex-direction:column;gap:9px}
+  .feats li{display:flex;gap:10px;font-size:13.5px;color:var(--ink)}
+  .feats li span{color:var(--ink-2)}
+  .feats li::before{content:"";flex:none;width:7px;height:7px;border-radius:2px;background:var(--brand);margin-top:7px;
+    box-shadow:0 0 0 3px var(--brand-soft)}
+  .fit{display:flex;align-items:flex-start;gap:9px;font-size:12.5px;color:var(--ink-2);
+    border-top:1px dashed var(--line);padding-top:14px}
+  .fit b{color:var(--ink);font-weight:600}
+  .case-stage{padding:24px;display:grid;place-items:center;min-width:0;
+    background:radial-gradient(120% 120% at 70% 0%,rgba(76,141,255,.05),transparent 60%)}
+
+  /* ===== A. top stepper ===== */
+  .stepbar{position:absolute;top:30px;left:0;right:0;z-index:7;display:flex;align-items:center;
+    justify-content:center;gap:0;padding:10px 0}
+  .stepbar .st{display:flex;align-items:center;gap:7px;color:var(--ink-3);font-size:10.5px}
+  .stepbar .st .b{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;
+    font-family:var(--mono);font-size:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink-2)}
+  .stepbar .st.done .b{background:var(--ok);border-color:var(--ok);color:#06140c}
+  .stepbar .st.cur{color:var(--ink)}
+  .stepbar .st.cur .b{background:var(--brand);border-color:var(--brand);color:#04121f;box-shadow:0 0 0 4px var(--brand-soft)}
+  .stepbar .ln{width:34px;height:1px;background:var(--line);margin:0 8px}
+  .stepbar .ln.on{background:var(--ok)}
+  .a-card{position:absolute;left:50%;top:54%;transform:translate(-50%,-50%);width:62%;z-index:7;padding:16px}
+  .a-card h4{margin:0 0 12px;font-size:13px;font-weight:600}
+  .a-row{display:flex;gap:9px}
+  .a-row .opt{flex:1;border:1px solid var(--line);border-radius:9px;padding:10px 8px;text-align:center;
+    font-size:10.5px;color:var(--ink-2);background:rgba(0,0,0,.2)}
+  .a-row .opt.sel{border-color:var(--brand);background:var(--brand-soft);color:var(--ink)}
+  .a-nav{position:absolute;right:14px;bottom:44px;z-index:7;display:flex;gap:8px}
+  .btn{font-size:10.5px;border-radius:8px;padding:7px 13px;border:1px solid var(--line);color:var(--ink-2);background:var(--panel)}
+  .btn.pri{background:var(--brand);border-color:var(--brand);color:#04121f;font-weight:600}
+
+  /* ===== B. side rail + live ===== */
+  .b-rail{position:absolute;top:30px;bottom:34px;left:0;width:30%;z-index:7;padding:14px 12px;
+    border-right:1px solid var(--line);background:linear-gradient(180deg,rgba(14,17,23,.94),rgba(10,12,17,.94))}
+  .b-rail .h{font-family:var(--mono);font-size:9px;color:var(--ink-3);letter-spacing:1px;margin-bottom:12px}
+  .b-step{display:flex;gap:9px;align-items:flex-start;position:relative;padding-bottom:14px}
+  .b-step .b{width:16px;height:16px;border-radius:50%;border:1px solid var(--line);background:var(--panel);
+    font-family:var(--mono);font-size:9px;display:grid;place-items:center;color:var(--ink-2);flex:none;z-index:2}
+  .b-step.done .b{background:var(--ok);border-color:var(--ok);color:#06140c}
+  .b-step.cur .b{background:var(--brand);border-color:var(--brand);color:#04121f;box-shadow:0 0 0 3px var(--brand-soft)}
+  .b-step .tx{font-size:10.5px;color:var(--ink-2);line-height:1.35}
+  .b-step.cur .tx{color:var(--ink)}
+  .b-step::before{content:"";position:absolute;left:7.5px;top:16px;bottom:0;width:1px;background:var(--line)}
+  .b-step:last-child::before{display:none}
+  .b-step.done::before{background:var(--ok)}
+  .b-panel{position:absolute;left:30%;top:30px;width:30%;bottom:34px;z-index:7;padding:14px 12px;
+    background:rgba(10,12,17,.62);border-right:1px solid var(--line)}
+  .b-panel .h{font-size:11.5px;font-weight:600;margin-bottom:12px}
+  .b-fieldrow{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:10px;color:var(--ink-2)}
+  .b-fieldrow .lab{width:38px;color:var(--ink-3)}
+  .b-fieldrow .bar{flex:1;height:5px;border-radius:5px;background:rgba(255,255,255,.1);position:relative}
+  .b-fieldrow .bar::before{content:"";position:absolute;left:0;top:0;bottom:0;width:60%;border-radius:5px;background:var(--brand)}
+  .b-live{position:absolute;right:9px;top:36px;z-index:8}
+  .b-live .pill{background:rgba(76,141,255,.18);border-color:var(--brand);color:var(--brand-2)}
+
+  /* ===== C. spotlight card ===== */
+  .c-dim{position:absolute;inset:0;z-index:6;background:rgba(5,7,12,.62);backdrop-filter:blur(3px)}
+  .c-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:56%;z-index:7;
+    padding:22px 22px 18px;text-align:center}
+  .c-card .k{font-family:var(--mono);font-size:9.5px;color:var(--brand-2);letter-spacing:1.5px}
+  .c-card h4{font-family:var(--disp);font-weight:600;font-size:17px;margin:8px 0 4px}
+  .c-card p{font-size:10.5px;color:var(--ink-2);margin:0 0 16px}
+  .c-pal{display:flex;justify-content:center;gap:9px;margin-bottom:18px}
+  .c-pal .sw{width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,255,255,.14)}
+  .c-dots{display:flex;justify-content:center;gap:6px;margin-bottom:14px}
+  .c-dots i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);display:block}
+  .c-dots i.on{width:18px;border-radius:3px;background:var(--brand)}
+  .c-go{display:inline-block;font-size:10.5px;background:var(--brand);color:#04121f;font-weight:600;
+    border-radius:8px;padding:8px 22px}
+
+  /* ===== D. filmstrip ===== */
+  .d-content{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);width:60%;z-index:7;text-align:center}
+  .d-content .k{font-family:var(--mono);font-size:9.5px;color:var(--brand-2);letter-spacing:1.5px}
+  .d-content h4{font-family:var(--disp);font-weight:600;font-size:16px;margin:7px 0 14px}
+  .d-content .opts{display:flex;justify-content:center;gap:8px}
+  .d-content .opts .o{font-size:10px;color:var(--ink-2);border:1px solid var(--line);border-radius:8px;padding:9px 14px;background:rgba(0,0,0,.25)}
+  .d-content .opts .o.sel{border-color:var(--brand);background:var(--brand-soft);color:var(--ink)}
+  .filmstrip{position:absolute;left:0;right:0;bottom:34px;z-index:7;display:flex;justify-content:center;
+    gap:8px;padding:10px 0;background:linear-gradient(0deg,rgba(6,8,12,.7),transparent)}
+  .filmstrip .cell{width:62px;height:38px;border-radius:7px;border:1px solid var(--line);position:relative;
+    overflow:hidden;opacity:.55;flex:none}
+  .filmstrip .cell .lab{position:absolute;left:0;right:0;bottom:0;font-family:var(--mono);font-size:7.5px;
+    text-align:center;color:var(--ink);background:rgba(0,0,0,.55);padding:1px 0}
+  .filmstrip .cell .art{position:absolute;inset:0}
+  .filmstrip .cell.cur{opacity:1;transform:scale(1.16);border-color:var(--brand);
+    box-shadow:0 0 0 3px var(--brand-soft),0 8px 18px -8px #000;z-index:2}
+  .filmstrip .cell.done{opacity:.85}
+  .filmstrip .cell .art.a1{background:radial-gradient(circle at 40% 30%,#ffae7e,#3a2540)}
+  .filmstrip .cell .art.a2{background:linear-gradient(120deg,#4c8dff,#16203a)}
+  .filmstrip .cell .art.a3{background:linear-gradient(120deg,#6a5ad2,#160f2a)}
+  .filmstrip .cell .art.a4{background:linear-gradient(120deg,#2a85b8,#0a1822)}
+
+  /* ===== E. coach marks ===== */
+  .e-ring{position:absolute;z-index:7;border:2px solid var(--brand);border-radius:8px;
+    box-shadow:0 0 0 4px var(--brand-soft),0 0 0 9999px rgba(5,7,12,.45)}
+  .e-ring.r1{top:30px;left:9px;right:9px;height:24px;border-radius:6px}
+  .e-bubble{position:absolute;z-index:8;width:46%;padding:13px 14px}
+  .e-bubble.b1{top:66px;left:9px}
+  .e-bubble .k{font-family:var(--mono);font-size:9px;color:var(--brand-2);letter-spacing:1px}
+  .e-bubble h4{font-size:12.5px;font-weight:600;margin:6px 0 4px}
+  .e-bubble p{font-size:10px;color:var(--ink-2);margin:0 0 11px;line-height:1.5}
+  .e-bubble .actions{display:flex;align-items:center;gap:8px}
+  .e-bubble .prog{font-family:var(--mono);font-size:9px;color:var(--ink-3);margin-left:auto}
+  .e-bubble::after{content:"";position:absolute;top:-7px;left:34px;width:12px;height:12px;
+    background:var(--panel-2);border-left:1px solid var(--line);border-top:1px solid var(--line);transform:rotate(45deg)}
+
+  /* compare table */
+  .compare{margin-top:8px}
+  .compare h3{font-family:var(--disp);font-weight:600;font-size:21px;letter-spacing:-.3px;margin:0 0 18px}
+  .ctable{width:100%;border-collapse:collapse;font-size:13px;border:1px solid var(--line-soft);border-radius:var(--r);overflow:hidden}
+  .ctable th,.ctable td{padding:13px 14px;text-align:left;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  .ctable thead th{font-family:var(--mono);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;
+    color:var(--ink-3);background:var(--bg-2)}
+  .ctable td:first-child{font-weight:600;color:var(--ink);white-space:nowrap}
+  .ctable td{color:var(--ink-2)}
+  .ctable tr:last-child td{border-bottom:0}
+  .tag{font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:6px;border:1px solid var(--line);color:var(--ink-2)}
+  .tag.hi{color:var(--brand-2);border-color:var(--brand);background:var(--brand-soft)}
+
+  footer{padding:50px 0 70px;color:var(--ink-3);font-family:var(--mono);font-size:11.5px}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  footer .sep{flex:1}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="wrap">
+      <div class="logo"><span class="mark">Shikii<b>N</b></span></div>
+      <div class="sep"></div>
+      <nav class="nav">
+        <a href="#a">① 顶部步骤条</a>
+        <a href="#b">② 侧栏实时</a>
+        <a href="#c">③ 聚光卡片</a>
+        <a href="#d">④ 胶片格</a>
+        <a href="#e">⑤ 教练气泡</a>
+        <a href="#compare">对比</a>
+      </nav>
+      <div class="meta">5 / 提案</div>
+    </div>
+  </div>
+
+  <header class="hero">
+    <div class="wrap">
+      <div class="eyebrow">编辑模式 · 重设计提案</div>
+      <h1>同一块画面，<em>五种</em>分步向导。</h1>
+      <p class="lede">现在的编辑器是「列表 + 检查器」，一上来就把所有元素铺给你。这五个方案都改成<b>分步向导</b>——把换肤拆成<b>基调 → 配色 → 布局 → 预览</b>四步，一次只问一件事。下面每个方案都叠在<b>同一块播放器画面</b>上，方便你只盯交互形态做横向对比。</p>
+      <div class="facts">
+        <span class="fact">统一四步：<b>基调·配色·布局·预览</b></span>
+        <span class="fact">深黑 + <b>ShikiiN 蓝</b></span>
+        <span class="fact">每步可<b>撤销 / 跳回</b></span>
+        <span class="fact">最后一屏<b>实时预览 + 保存 / 另存</b></span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- ===================== A ===================== -->
+    <section class="section" id="a">
+      <div class="case">
+        <div class="case-grid">
+          <div class="case-info">
+            <div class="case-num">方案 01</div>
+            <h2>顶部步骤条</h2>
+            <div class="role">Stepper · 最稳妥</div>
+            <p class="desc">经典横向步骤条钉在顶部，<b>走到哪一步一眼可见</b>。中间是当前步的内容，右下角「上一步 / 下一步」推进。零学习成本，谁都会用。</p>
+            <ul class="feats">
+              <li>① 基调 ② 配色 ③ 布局 ④ 预览，<span>完成的步骤打勾、可点回</span></li>
+              <li>内容区始终居中，<span>每屏只聚焦一类选择</span></li>
+              <li>顶/底栏保留真实画面，<span>改动隔着内容也能瞥见</span></li>
+            </ul>
+            <div class="fit"><b>适合：</b>&nbsp;想要最不会迷路、最像「设置向导」的稳妥路线。</div>
+          </div>
+          <div class="case-stage">
+            <div class="screen">
+              <div class="frame-art"></div><div class="scanline"></div>
+              <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+              <div class="stepbar">
+                <div class="st done"><span class="b">✓</span>基调</div><span class="ln on"></span>
+                <div class="st cur"><span class="b">2</span>配色</div><span class="ln"></span>
+                <div class="st"><span class="b">3</span>布局</div><span class="ln"></span>
+                <div class="st"><span class="b">4</span>预览</div>
+              </div>
+              <div class="glass a-card">
+                <h4>选一组主色</h4>
+                <div class="a-row">
+                  <div class="opt sel"><div class="swatch" style="background:#4c8dff;margin:0 auto 6px"></div>霓夜蓝</div>
+                  <div class="opt"><div class="swatch" style="background:#ff7e9d;margin:0 auto 6px"></div>樱粉</div>
+                  <div class="opt"><div class="swatch" style="background:#5bd08c;margin:0 auto 6px"></div>苔绿</div>
+                  <div class="opt"><div class="swatch" style="background:#ffba55;margin:0 auto 6px"></div>暖橙</div>
+                </div>
+              </div>
+              <div class="a-nav">
+                <span class="btn">上一步</span><span class="btn pri">下一步 →</span>
+              </div>
+              <div class="d-bar"><span class="dot"></span><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04 / 24:00</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== B ===================== -->
+    <section class="section" id="b">
+      <div class="case">
+        <div class="case-grid">
+          <div class="case-info">
+            <div class="case-num">方案 02</div>
+            <h2>侧栏向导 + 实时预览</h2>
+            <div class="role">Rail &amp; Live · 最专业</div>
+            <p class="desc">左侧竖向步骤导航，中间是当前步的选项，<b>右侧大半屏是真实播放器</b>——每改一下，预览立刻变。所见即所得，信息密度高。</p>
+            <ul class="feats">
+              <li>竖向步骤带连接线，<span>进度像时间轴一样直观</span></li>
+              <li>改色 / 调布局<span>右侧实时刷新，不用来回切</span></li>
+              <li>步骤、选项、预览<span>三栏分工清楚</span></li>
+            </ul>
+            <div class="fit"><b>适合：</b>&nbsp;爱折腾细节、想边调边看效果的进阶用户。</div>
+          </div>
+          <div class="case-stage">
+            <div class="screen">
+              <div class="frame-art"></div><div class="scanline"></div>
+              <div class="d-title"><span class="n">Shikii<b>N</b> · 编辑</span><span class="win"><i></i><i></i><i></i></span></div>
+              <div class="b-rail">
+                <div class="h">步骤</div>
+                <div class="b-step done"><span class="b">✓</span><span class="tx">基调<br>暗色</span></div>
+                <div class="b-step cur"><span class="b">2</span><span class="tx">配色<br>强调 / 背景</span></div>
+                <div class="b-step"><span class="b">3</span><span class="tx">布局</span></div>
+                <div class="b-step"><span class="b">4</span><span class="tx">预览</span></div>
+              </div>
+              <div class="b-panel">
+                <div class="h">配色</div>
+                <div class="b-fieldrow"><span class="lab">强调</span><span class="swatch" style="background:#4c8dff"></span><span class="bar"></span></div>
+                <div class="b-fieldrow"><span class="lab">背景</span><span class="swatch" style="background:#14171f"></span><span class="bar"></span></div>
+                <div class="b-fieldrow"><span class="lab">文字</span><span class="swatch" style="background:#eaecf2"></span><span class="bar"></span></div>
+                <div class="b-fieldrow"><span class="lab">圆角</span><span class="bar"></span></div>
+              </div>
+              <div class="b-live"><span class="pill">● 实时预览</span></div>
+              <div class="d-bar"><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== C ===================== -->
+    <section class="section" id="c">
+      <div class="case">
+        <div class="case-grid">
+          <div class="case-info">
+            <div class="case-num">方案 03</div>
+            <h2>聚光卡片</h2>
+            <div class="role">Spotlight · 最沉浸</div>
+            <p class="desc">画面整体压暗虚化，<b>中央只浮一张卡片</b>，一次问一件事。底部圆点显示进度，像 App 第一次打开的引导。干净、专注、不被打扰。</p>
+            <ul class="feats">
+              <li>背景虚化真实画面，<span>注意力全在当前选择上</span></li>
+              <li>大色块 / 大按钮，<span>触屏与远距离也好点</span></li>
+              <li>圆点进度 + 「开始 / 下一步」，<span>节奏轻快</span></li>
+            </ul>
+            <div class="fit"><b>适合：</b>&nbsp;追求简洁仪式感、不想看到一堆控件的人。</div>
+          </div>
+          <div class="case-stage">
+            <div class="screen">
+              <div class="frame-art"></div><div class="scanline"></div>
+              <div class="c-dim"></div>
+              <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+              <div class="glass c-card">
+                <div class="k">第 2 步 / 共 4 步</div>
+                <h4>挑一组配色</h4>
+                <p>之后每一处颜色都会从这里生成，随时能回来改。</p>
+                <div class="c-pal">
+                  <span class="sw" style="background:#4c8dff;outline:2px solid #7fb0ff;outline-offset:2px"></span>
+                  <span class="sw" style="background:#ff7e9d"></span>
+                  <span class="sw" style="background:#5bd08c"></span>
+                  <span class="sw" style="background:#ffba55"></span>
+                </div>
+                <div class="c-dots"><i class="done"></i><i class="on"></i><i></i><i></i></div>
+                <span class="c-go">下一步</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== D ===================== -->
+    <section class="section" id="d">
+      <div class="case">
+        <div class="case-grid">
+          <div class="case-info">
+            <div class="case-num">方案 04</div>
+            <h2>胶片格进度</h2>
+            <div class="role">Filmstrip · 最契合主题</div>
+            <p class="desc">底部一条<b>胶片格</b>当进度，每格是一步的缩略效果，当前格放大高亮。呼应播放器 / 动漫的「帧」语言，<b>任意格可点击跳转</b>，自由度高。</p>
+            <ul class="feats">
+              <li>胶片隐喻贴合 ShikiiN，<span>编辑像在剪辑时间轴</span></li>
+              <li>每格预览该步成品，<span>跳步不靠记忆</span></li>
+              <li>当前格放大 + 蓝描边，<span>位置感强</span></li>
+            </ul>
+            <div class="fit"><b>适合：</b>&nbsp;喜欢非线性、想随时跳回某一步微调的人。</div>
+          </div>
+          <div class="case-stage">
+            <div class="screen">
+              <div class="frame-art"></div><div class="scanline"></div>
+              <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+              <div class="d-content">
+                <div class="k">第 3 步 · 布局</div>
+                <h4>控制栏怎么放？</h4>
+                <div class="opts">
+                  <div class="o sel">贴边停靠</div>
+                  <div class="o">悬浮胶囊</div>
+                  <div class="o">自动隐藏</div>
+                </div>
+              </div>
+              <div class="filmstrip">
+                <div class="cell done"><div class="art a1"></div><div class="lab">基调</div></div>
+                <div class="cell done"><div class="art a2"></div><div class="lab">配色</div></div>
+                <div class="cell cur"><div class="art a3"></div><div class="lab">布局</div></div>
+                <div class="cell"><div class="art a4"></div><div class="lab">预览</div></div>
+              </div>
+              <div class="d-bar"><span class="play"></span><span class="track"></span><span class="t">12:04</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== E ===================== -->
+    <section class="section" id="e">
+      <div class="case">
+        <div class="case-grid">
+          <div class="case-info">
+            <div class="case-num">方案 05</div>
+            <h2>教练气泡</h2>
+            <div class="role">Coach Marks · 最上下文</div>
+            <p class="desc">不离开真实界面，向导用<b>引导气泡逐个指向</b>要改的部件：先框住标题栏、再框控制栏……气泡里就地改，<b>边走边所见即所得</b>，几乎没有模式切换。</p>
+            <ul class="feats">
+              <li>高亮当前部件、压暗其余，<span>明确「现在改这里」</span></li>
+              <li>气泡内嵌选项，<span>改完点「下一处」</span></li>
+              <li>始终站在成品上，<span>没有抽象的元素列表</span></li>
+            </ul>
+            <div class="fit"><b>适合：</b>&nbsp;想直接在真实播放器上、被手把手领着改的人。</div>
+          </div>
+          <div class="case-stage">
+            <div class="screen">
+              <div class="frame-art"></div><div class="scanline"></div>
+              <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+              <div class="e-ring r1"></div>
+              <div class="glass e-bubble b1">
+                <div class="k">第 1 处 · 标题栏</div>
+                <h4>调一下标题栏</h4>
+                <p>改它的文字色和透明度，效果直接落在上面这条。</p>
+                <div class="actions">
+                  <span class="swatch" style="background:#eaecf2"></span>
+                  <span class="swatch" style="background:#4c8dff"></span>
+                  <span class="btn pri">下一处 →</span>
+                  <span class="prog">1 / 6</span>
+                </div>
+              </div>
+              <div class="d-bar"><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== compare ===================== -->
+    <section class="section compare" id="compare">
+      <h3>一眼对比</h3>
+      <table class="ctable">
+        <thead>
+          <tr><th>方案</th><th>一句话</th><th>上手难度</th><th>实时预览</th><th>自由跳步</th><th>实现量</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>01 顶部步骤条</td><td>最稳妥的设置向导</td><td><span class="tag hi">最低</span></td><td><span class="tag">弱</span></td><td><span class="tag">点回</span></td><td><span class="tag hi">小</span></td></tr>
+          <tr><td>02 侧栏 + 实时</td><td>边调边看的专业台</td><td><span class="tag">中</span></td><td><span class="tag hi">强</span></td><td><span class="tag">点回</span></td><td><span class="tag">中</span></td></tr>
+          <tr><td>03 聚光卡片</td><td>沉浸式仪式引导</td><td><span class="tag hi">低</span></td><td><span class="tag">中</span></td><td><span class="tag">顺序</span></td><td><span class="tag hi">小</span></td></tr>
+          <tr><td>04 胶片格</td><td>主题感最强、可跳步</td><td><span class="tag">中</span></td><td><span class="tag">中</span></td><td><span class="tag hi">强</span></td><td><span class="tag">中</span></td></tr>
+          <tr><td>05 教练气泡</td><td>真界面手把手</td><td><span class="tag">中</span></td><td><span class="tag hi">最强</span></td><td><span class="tag">顺序</span></td><td><span class="tag">中大</span></td></tr>
+        </tbody>
+      </table>
+      <p style="color:var(--ink-2);font-size:13.5px;margin-top:18px;max-width:70ch">
+        我的建议：若想快、稳就选 <b style="color:var(--ink)">01</b>；想要又能用又有「所见即所得」的，<b style="color:var(--ink)">02</b> 性价比最高；想要 ShikiiN 独有气质就 <b style="color:var(--ink)">04</b>。也可以混：<b style="color:var(--ink)">02 的实时预览</b> + <b style="color:var(--ink)">01 的顶部步骤条</b>。
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>ShikiiN · 编辑模式重设计</span>
+      <span class="sep"></span>
+      <span>告诉我选哪个（或哪几个混搭），我就开始做成真实 Flutter 界面。</span>
+    </div>
+  </footer>
+</body>
+</html>

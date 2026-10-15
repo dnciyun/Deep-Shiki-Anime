@@ -1,0 +1,28 @@
+# 行尾与二进制：仓库里一律存 LF，检出也一律 LF（2026-10-16 加）
+#
+# 为什么要有这个文件：以前只有本机的 `core.autocrlf=true` 在起作用 —— 它让同一份文件在
+# 我这台机器上是 CRLF、在别人机器上是 LF（或反过来），于是"内容相同、字节不同"，
+# 对 md5 / 校验 / 二进制对比全是干扰（我第一次 clone 校验时就被这个绊了一下）。
+# 现在由仓库自己说了算，跟每个人的 git 配置无关。
+#
+# 为什么敢统一成 LF：本项目在 Windows 上要编的东西都吃 LF ——
+# Dart / Rust / CMake / MSVC 的 .cpp/.h/.rc/.manifest / JSON / YAML 都是如此；
+# 仓库里也没有 `.bat` / `.cmd` 这种真需要 CRLF 的文件。
+# （注意：发布出去的 `dsanima.exe` 是编译产物，跟源码行尾无关。）
+* text=auto eol=lf
+
+# 二进制：任何行尾/编码转换都不要碰
+*.png     -text
+*.jpg     -text
+*.jpeg    -text
+*.webp    -text
+*.ico     -text
+*.zip     -binary
+*.torrent -binary
+*.exe     -binary
+*.dll     -binary
+
+# 这几个虽然算文本，但对差异/合并没意义，别让 git 去 diff 它们
+*.lock    -diff
+pubspec.lock -diff
+Cargo.lock   -diff

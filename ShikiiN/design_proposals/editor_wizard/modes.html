@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShikiiN · 简易 / 专业 两风格 + 主题信息步</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0A0B0F; --bg-2:#0E1016; --panel:#14171F; --panel-2:#1A1E28;
+    --line:#242a37; --line-soft:#1c212c;
+    --ink:#EAECF2; --ink-2:#9aa0ad; --ink-3:#626a78;
+    --brand:#4C8DFF; --brand-2:#7FB0FF; --brand-soft:rgba(76,141,255,.14);
+    --ok:#5BD08C;
+    --maxw:1180px;
+    --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+    --disp:'Space Grotesk','Inter','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    --body:'Inter','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 700px at 80% -10%,rgba(76,141,255,.10),transparent 60%),var(--bg);
+    color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+  a{color:inherit;text-decoration:none}
+
+  .top{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(10,11,15,.86),rgba(10,11,15,.5));border-bottom:1px solid var(--line-soft)}
+  .top .wrap{display:flex;align-items:center;gap:14px;height:58px}
+  .logo{display:flex;align-items:center;gap:9px;font-family:var(--disp);font-weight:700}
+  .logo .mark{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+    background:linear-gradient(150deg,#1f2633,#11141b);border:1px solid var(--line);font-size:13px}
+  .logo .mark b{color:var(--brand)}
+  .top .sep{flex:1}
+  .top .lk{font-family:var(--mono);font-size:12px;color:var(--ink-2);padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel)}
+  .top .lk:hover{color:var(--ink)}
+
+  .hd{padding:62px 0 16px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:2.5px;text-transform:uppercase;color:var(--brand-2);display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:"";width:26px;height:1px;background:var(--brand)}
+  .hd h1{font-family:var(--disp);font-weight:700;font-size:clamp(30px,4.6vw,50px);letter-spacing:-1px;margin:18px 0 0}
+  .hd h1 em{font-style:normal;color:var(--brand)}
+  .hd p{color:var(--ink-2);max-width:66ch;margin-top:14px}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .flow .s{font-family:var(--mono);font-size:11px;color:var(--ink-2);border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:6px 12px}
+  .flow .s.add{border-color:var(--brand);color:var(--brand-2);background:var(--brand-soft)}
+  .flow .arw{color:var(--ink-3);align-self:center;font-family:var(--mono)}
+
+  .section{padding:34px 0 6px}
+  .sh{display:flex;align-items:baseline;gap:13px;margin:8px 0 20px;flex-wrap:wrap}
+  .sh .num{font-family:var(--mono);font-size:13px;color:var(--brand-2)}
+  .sh h2{font-family:var(--disp);font-weight:600;font-size:25px;letter-spacing:-.4px;margin:0}
+  .sh .lead{flex-basis:100%;color:var(--ink-2);font-size:14px}
+
+  .one{max-width:760px;margin:0 auto}
+  .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:22px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .cap{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .cap .idx{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-family:var(--mono);font-size:11px;background:var(--brand-soft);border:1px solid var(--brand);color:var(--brand-2)}
+  .cap .nm{font-family:var(--disp);font-weight:600;font-size:15px}
+  .cap .sub{font-size:12px;color:var(--ink-3);margin-left:auto;font-family:var(--mono)}
+
+  /* device base */
+  .screen{position:relative;aspect-ratio:16/10;width:100%;border-radius:11px;overflow:hidden;border:1px solid var(--line);
+    background:#05070c;box-shadow:0 24px 60px -38px rgba(0,0,0,.9)}
+  .frame-art{position:absolute;inset:0;background:
+      radial-gradient(60% 80% at 24% 18%, rgba(255,170,120,.34), transparent 60%),
+      radial-gradient(70% 90% at 82% 30%, rgba(120,90,210,.40), transparent 62%),
+      radial-gradient(90% 90% at 60% 100%, rgba(40,120,180,.40), transparent 60%),
+      linear-gradient(200deg,#20283a,#0a0e16 70%)}
+  .frame-art::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 120% at 50% 40%,transparent 55%,rgba(0,0,0,.5))}
+  .scanline{position:absolute;inset:0;opacity:.45;mix-blend-mode:overlay;background:repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 1px,transparent 1px 3px)}
+  .d-title{position:absolute;top:0;left:0;right:0;height:28px;display:flex;align-items:center;gap:8px;padding:0 11px;color:var(--ink);font-size:10.5px;z-index:6;background:linear-gradient(180deg,rgba(8,10,15,.7),transparent)}
+  .d-title .n{font-family:var(--disp);font-weight:700;font-size:11px}
+  .d-title .n b{color:var(--brand)}
+  .d-title .win{margin-left:auto;display:flex;gap:6px}
+  .d-title .win i{width:9px;height:9px;border-radius:3px;background:rgba(255,255,255,.16);display:block}
+  .d-bar{position:absolute;left:0;right:0;bottom:0;height:31px;z-index:6;display:flex;align-items:center;gap:9px;padding:0 11px;background:linear-gradient(0deg,rgba(6,8,12,.82),transparent)}
+  .d-bar .play{width:15px;height:15px;border-radius:50%;background:var(--ink);flex:none}
+  .d-bar .dot{width:12px;height:12px;border-radius:4px;background:rgba(255,255,255,.16);flex:none}
+  .d-bar .track{flex:1;height:3px;border-radius:3px;background:rgba(255,255,255,.16);position:relative}
+  .d-bar .track::before{content:"";position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:3px;background:var(--brand)}
+  .d-bar .t{font-family:var(--mono);font-size:9px;color:var(--ink-2)}
+
+  .glass{background:linear-gradient(180deg,rgba(22,26,35,.94),rgba(16,19,26,.94));border:1px solid var(--line);border-radius:11px;backdrop-filter:blur(8px)}
+  .btn{font-size:10px;border-radius:7px;padding:6px 12px;border:1px solid var(--line);color:var(--ink-2);background:var(--panel)}
+  .btn.pri{background:var(--brand);border-color:var(--brand);color:#04121f;font-weight:600}
+  .btn.ghost{background:transparent}
+
+  /* gradient avatar ball (default theme head) */
+  .ball{border-radius:50%;background:conic-gradient(from 210deg,#4c8dff,#7a5ad2,#ff7e9d,#ffba55,#4c8dff);
+    box-shadow:inset 0 0 10px rgba(0,0,0,.35),0 4px 12px -4px rgba(0,0,0,.6)}
+
+  /* ===== entry: choose mode ===== */
+  .entry{position:absolute;inset:0;z-index:7;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:16px;background:rgba(5,7,12,.55);backdrop-filter:blur(3px)}
+  .entry .et{font-family:var(--disp);font-weight:600;font-size:17px}
+  .entry .esub{font-size:11px;color:var(--ink-2);margin-top:-10px}
+  .entry .cards{display:flex;gap:16px}
+  .ecard{width:172px;border:1px solid var(--line);border-radius:12px;padding:16px 16px 15px;background:linear-gradient(180deg,rgba(22,26,35,.96),rgba(15,18,25,.96))}
+  .ecard.sel{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+  .ecard .ic{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:17px;margin-bottom:11px;
+    border:1px solid var(--line);background:rgba(0,0,0,.25)}
+  .ecard h5{font-family:var(--disp);font-weight:600;font-size:15px;margin:0 0 5px}
+  .ecard p{font-size:10.5px;color:var(--ink-2);margin:0;line-height:1.5}
+  .ecard .tagline{margin-top:11px;font-family:var(--mono);font-size:9px;color:var(--ink-3)}
+  .ecard.sel .ic{border-color:var(--brand);color:var(--brand-2);background:var(--brand-soft)}
+  .entry .foot{font-size:10px;color:var(--ink-3);font-family:var(--mono)}
+
+  /* ===== scheme C info step (simple) ===== */
+  .c-dim{position:absolute;inset:0;z-index:6;background:rgba(5,7,12,.62);backdrop-filter:blur(3px)}
+  .c-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:64%;z-index:7;padding:17px 18px 15px;text-align:center}
+  .c-card .k{font-family:var(--mono);font-size:9px;color:var(--brand-2);letter-spacing:1.4px}
+  .c-card h4{font-family:var(--disp);font-weight:600;font-size:15px;margin:7px 0 12px}
+  .c-avatar{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:13px}
+  .c-avatar .ball{width:48px;height:48px}
+  .c-avatar .pick{font-family:var(--mono);font-size:8.5px;color:var(--brand-2);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+  .c-input{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:rgba(0,0,0,.25);font-size:10.5px}
+  .c-input .lab{color:var(--ink-3);width:34px;text-align:left;font-family:var(--mono);font-size:9px}
+  .c-input .val{color:var(--ink);text-align:left;flex:1}
+  .c-input .val.ph{color:var(--ink-3)}
+  .c-dots{display:flex;justify-content:center;gap:5px;margin:13px 0 12px}
+  .c-dots i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);display:block}
+  .c-dots i.on{width:16px;border-radius:3px;background:var(--brand)}
+  .c-dots i.done{background:var(--ok)}
+  .c-actions{display:flex;align-items:center;justify-content:center;gap:9px}
+  .c-actions .skip{font-family:var(--mono);font-size:10px;color:var(--ink-3)}
+
+  /* ===== scheme B info step (pro) ===== */
+  .b-rail{position:absolute;top:28px;bottom:31px;left:0;width:27%;z-index:7;padding:12px 10px;border-right:1px solid var(--line);background:linear-gradient(180deg,rgba(14,17,23,.95),rgba(10,12,17,.95))}
+  .b-rail .h{font-family:var(--mono);font-size:8.5px;color:var(--ink-3);letter-spacing:1px;margin-bottom:11px}
+  .b-step{display:flex;gap:8px;align-items:flex-start;position:relative;padding-bottom:12px}
+  .b-step .b{width:15px;height:15px;border-radius:50%;border:1px solid var(--line);background:var(--panel);font-family:var(--mono);font-size:8.5px;display:grid;place-items:center;color:var(--ink-2);flex:none;z-index:2}
+  .b-step.done .b{background:var(--ok);border-color:var(--ok);color:#06140c}
+  .b-step.cur .b{background:var(--brand);border-color:var(--brand);color:#04121f;box-shadow:0 0 0 3px var(--brand-soft)}
+  .b-step .tx{font-size:9.5px;color:var(--ink-2);line-height:1.3}
+  .b-step.cur .tx{color:var(--ink)}
+  .b-step::before{content:"";position:absolute;left:7px;top:15px;bottom:0;width:1px;background:var(--line)}
+  .b-step:last-child::before{display:none}
+  .b-step.done::before{background:var(--ok)}
+  .b-panel{position:absolute;left:27%;top:28px;width:34%;bottom:31px;z-index:7;padding:12px 12px;background:rgba(10,12,17,.6);border-right:1px solid var(--line)}
+  .b-panel .h{font-size:11px;font-weight:600;margin-bottom:11px;display:flex;align-items:center;gap:7px}
+  .b-panel .h .opt{margin-left:auto;font-family:var(--mono);font-size:8.5px;color:var(--ink-3);font-weight:400}
+  .b-avatar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .b-avatar .ball{width:38px;height:38px;flex:none}
+  .b-avatar .pk{font-family:var(--mono);font-size:8.5px;color:var(--brand-2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
+  .b-field{margin-bottom:9px}
+  .b-field .l{font-family:var(--mono);font-size:8.5px;color:var(--ink-3);margin-bottom:4px}
+  .b-field .box{font-size:10px;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:7px 9px;background:rgba(0,0,0,.25)}
+  .b-field .box.ph{color:var(--ink-3)}
+  .b-live{position:absolute;right:8px;top:34px;z-index:8;font-family:var(--mono);font-size:8.5px;color:var(--brand-2);border:1px solid var(--brand);background:rgba(76,141,255,.16);border-radius:999px;padding:3px 8px}
+  .b-save{position:absolute;left:27%;right:0;bottom:31px;z-index:8;display:flex;gap:7px;justify-content:center;padding:8px}
+
+  .note{margin:22px auto 4px;color:var(--ink-2);font-size:13.5px;border-left:2px solid var(--brand);padding-left:14px;max-width:760px}
+  .note b{color:var(--ink)}
+  .divider{height:1px;background:var(--line-soft);margin:40px 0}
+  footer{padding:46px 0 64px;color:var(--ink-3);font-family:var(--mono);font-size:11.5px}
+  footer .wrap{display:flex;gap:14px;flex-wrap:wrap}
+  footer .sep{flex:1}
+</style>
+</head>
+<body>
+  <div class="top"><div class="wrap">
+    <div class="logo"><span class="mark">Shikii<b>N</b></span></div>
+    <div class="sep"></div>
+    <a class="lk" href="./stages.html">分步详览</a>
+    <a class="lk" href="./index.html">五个方案</a>
+  </div></div>
+
+  <header class="hd"><div class="wrap">
+    <div class="eyebrow">最终形态 · 两种风格 + 主题信息步</div>
+    <h1>进编辑器先选：<em>简易</em> 还是 <em>专业</em></h1>
+    <p>两种风格走同一套流程，只是繁简不同。两者都新增一步「主题信息」——命名、头像、作者，<b style="color:var(--ink)">这一步可跳过</b>，跳过就用默认名和渐变头像。</p>
+    <div class="flow">
+      <span class="s">基调</span><span class="arw">→</span>
+      <span class="s">配色</span><span class="arw">→</span>
+      <span class="s">布局</span><span class="arw">→</span>
+      <span class="s add">主题信息 · 可跳过</span><span class="arw">→</span>
+      <span class="s">预览 / 保存</span>
+    </div>
+  </div></header>
+
+  <!-- ============ entry ============ -->
+  <section class="section"><div class="wrap">
+    <div class="sh"><span class="num">入口</span><h2>选择编辑风格</h2>
+      <span class="lead">点「编辑主题」后先出这一屏；选过的风格会记住，也能随时在设置里改。</span></div>
+    <div class="one">
+      <div class="cap"><span class="idx">·</span><span class="nm">风格选择屏</span><span class="sub">editor entry</span></div>
+      <div class="screen">
+        <div class="frame-art"></div><div class="scanline"></div>
+        <div class="d-title"><span class="n">Shikii<b>N</b></span><span class="win"><i></i><i></i><i></i></span></div>
+        <div class="entry">
+          <div class="et">想怎么编辑这套主题？</div>
+          <div class="esub">两种风格随时能切换</div>
+          <div class="cards">
+            <div class="ecard sel">
+              <div class="ic">🍃</div>
+              <h5>简易</h5>
+              <p>一次一步、最少选择。压暗画面、聚焦一张卡片，跟着走完就好。</p>
+              <div class="tagline">≈ 聚光卡片</div>
+            </div>
+            <div class="ecard">
+              <div class="ic">🛠</div>
+              <h5>专业</h5>
+              <p>左步骤 / 中选项 / 右实时预览。每个部件都能细调，改完即所见。</p>
+              <div class="tagline">≈ 侧栏 + 实时</div>
+            </div>
+          </div>
+          <div class="foot">之后：设置 → 编辑主题风格 可改</div>
+        </div>
+      </div>
+    </div>
+  </div></section>
+
+  <div class="wrap"><div class="divider"></div></div>
+
+  <!-- ============ the new step in both styles ============ -->
+  <section class="section"><div class="wrap">
+    <div class="sh"><span class="num">第 4 步</span><h2>主题信息（可跳过）</h2>
+      <span class="lead">命名、头像、作者。左边是简易风格的样子，右边是专业风格的样子。</span></div>
+
+    <div class="grid2">
+      <!-- simple -->
+      <div>
+        <div class="cap"><span class="idx">🍃</span><span class="nm">简易风格</span><span class="sub">spotlight</span></div>
+        <div class="screen">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="c-dim"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b></span></div>
+          <div class="glass c-card">
+            <div class="k">第 4 步 / 共 5 步 · 可跳过</div>
+            <h4>给主题起个名</h4>
+            <div class="c-avatar">
+              <span class="ball"></span>
+              <span class="pick">＋ 换头像</span>
+            </div>
+            <div class="c-input"><span class="lab">名称</span><span class="val">霓夜蓝</span></div>
+            <div class="c-input"><span class="lab">作者</span><span class="val ph">你的名字（可空）</span></div>
+            <div class="c-dots"><i class="done"></i><i class="done"></i><i class="done"></i><i class="on"></i><i></i></div>
+            <div class="c-actions"><span class="skip">跳过</span><span class="btn pri">下一步 →</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- pro -->
+      <div>
+        <div class="cap"><span class="idx">🛠</span><span class="nm">专业风格</span><span class="sub">rail + live</span></div>
+        <div class="screen">
+          <div class="frame-art"></div><div class="scanline"></div>
+          <div class="d-title"><span class="n">Shikii<b>N</b> · 编辑</span><span class="win"><i></i><i></i><i></i></span></div>
+          <div class="b-rail">
+            <div class="h">步骤</div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">基调</span></div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">配色</span></div>
+            <div class="b-step done"><span class="b">✓</span><span class="tx">布局</span></div>
+            <div class="b-step cur"><span class="b">4</span><span class="tx">主题信息</span></div>
+            <div class="b-step"><span class="b">5</span><span class="tx">预览</span></div>
+          </div>
+          <div class="b-panel">
+            <div class="h">主题信息 <span class="opt">可跳过</span></div>
+            <div class="b-avatar"><span class="ball"></span><span class="pk">＋ 换头像</span></div>
+            <div class="b-field"><div class="l">名称</div><div class="box">霓夜蓝</div></div>
+            <div class="b-field"><div class="l">作者</div><div class="box ph">你的名字（可空）</div></div>
+          </div>
+          <div class="b-live">● 实时预览</div>
+          <div class="b-save"><span class="btn ghost">跳过</span><span class="btn pri">下一步 →</span></div>
+          <div class="d-bar"><span class="play"></span><span class="dot"></span><span class="track"></span><span class="t">12:04</span></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">头像默认就是主题的<b>渐变球</b>（和主题卡片一致），点「换头像」可换成自定义图片。名称 / 作者留空也能完成——<b>「跳过」直接进预览</b>，用默认名。</p>
+  </div></section>
+
+  <footer><div class="wrap">
+    <span>ShikiiN · 简易 / 专业 + 主题信息步</span>
+    <span class="sep"></span>
+    <span>这个形态 OK 的话，我就开始做成真实 Flutter 编辑器。</span>
+  </div></footer>
+</body>
+</html>

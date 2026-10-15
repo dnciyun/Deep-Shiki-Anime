@@ -1,0 +1,7 @@
+# Rust 构建产物（不要提交）
+/target
+**/*.rs.bk
+
+# 本地冒烟产物（smoke.ps1 会在仓库外写，这里兜底）
+*.tmp
+probe.bin

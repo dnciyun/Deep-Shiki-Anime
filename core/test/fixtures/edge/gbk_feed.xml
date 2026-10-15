@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="gb2312"?>
+<rss version="2.0"><channel>
+<title>测试订阅（GBK 编码）</title>
+<link>https://example.invalid/gbk.xml</link>
+<item>
+  <guid>gbk-0001</guid>
+  <title>[字幕组] 中文番剧 - 01 [1080p][简繁内封]</title>
+  <pubDate>Thu, 08 Oct 2026 10:00:00 +0800</pubDate>
+  <enclosure url="https://example.invalid/gbk-0001.torrent" type="application/x-bittorrent" length="123456"/>
+</item>
+</channel></rss>

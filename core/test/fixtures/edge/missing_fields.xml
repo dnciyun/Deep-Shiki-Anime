@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>字段缺失（边界样本）</title>
+    <link>https://example.invalid/missing.xml</link>
+    <item>
+      <title>只有标题的一条：没有 guid / link / enclosure / pubDate</title>
+    </item>
+    <item>
+      <description>连标题都没有的一条，identity 只能靠 description</description>
+    </item>
+    <item>
+      <guid>stable-guid-3</guid>
+      <title>[组] 有 guid 但没 enclosure - 03</title>
+    </item>
+    <item>
+      <link>https://example.invalid/only-link-4</link>
+      <enclosure url="https://example.invalid/only-link-4.torrent" type="application/x-bittorrent" length="4096"/>
+      <title>[组] 只有 link 的一条 - 04</title>
+    </item>
+  </channel>
+</rss>
