@@ -220,6 +220,23 @@ void main() {
       expect(releaseApiUrl('abc/DSAnima'), 'https://api.github.com/repos/abc/DSAnima/releases/latest');
       expect(releasePageUrl('abc/DSAnima'), 'https://github.com/abc/DSAnima/releases/latest');
     });
+
+    test('内置更新源（第四十一轮）：留空就用它，填了就用填的', () {
+      expect(kBuiltinUpdateRepo, 'ciciyouxihao-source/DSAnima');
+      expect(
+        normalizeRepoSlug(kBuiltinUpdateRepo),
+        kBuiltinUpdateRepo,
+        reason: '内置值本身必须是合法 slug，否则"留空"这条路一上来就报错',
+      );
+      expect(effectiveUpdateRepo(''), kBuiltinUpdateRepo);
+      expect(effectiveUpdateRepo('   '), kBuiltinUpdateRepo, reason: '只有空白也算留空');
+      expect(effectiveUpdateRepo(' me/DSAnima '), 'me/DSAnima', reason: '填了就听填的（不许偷偷覆盖）');
+      // 留空 → 内置 → 请求地址：设置页显示的就是这条。
+      expect(
+        releaseApiUrl(normalizeRepoSlug(effectiveUpdateRepo(''))!),
+        'https://api.github.com/repos/ciciyouxihao-source/DSAnima/releases/latest',
+      );
+    });
   });
 
   group('ReleaseAsset：apiUrl（第四十轮：带令牌下载走 API 资产地址）', () {

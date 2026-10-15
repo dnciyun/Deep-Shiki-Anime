@@ -250,9 +250,10 @@ class AppSettings {
 
   /// 「更新源」：`owner/repo`（第三十九轮：检查更新走 GitHub Releases）。
   ///
-  /// **默认空 = 还没配**：设置页会明确写「没填更新源」并给出该填哪两段
-  /// （仓库页面地址栏里的 `<用户名>/<仓库名>`），绝不拿一个编造的仓库去请求
-  /// —— 那只会得到 404，让用户以为网络坏了。
+  /// **默认空 = 用内置仓库**（第四十一轮）：`dsanima_core` 的 `effectiveUpdateRepo`
+  /// 会把空值换成 `kBuiltinUpdateRepo` —— 从哪更新是产品的一部分，不该要求用户去仓库
+  /// 页面抄 `<用户名>/<仓库名>`。所以这一格是**覆盖**入口：想换成自己的 fork 或别的
+  /// 仓库才填，清空就回到内置（老设置里存的空串因此自动享受到内置值，不用迁移）。
   ///
   /// 用户粘整条地址也行（`https://github.com/owner/repo`、`.git`、发布页、
   /// 甚至 API 地址），由 `dsanima_core` 的 `normalizeRepoSlug` 收成 `owner/repo`。

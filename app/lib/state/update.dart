@@ -194,21 +194,23 @@ class UpdateController extends Notifier<UpdateState> {
     );
   }
 
-  /// 检查更新。[repoRaw] 是设置里那一格（整条地址也认）。
+  /// 检查更新。[repoRaw] 是设置里那一格（整条地址也认；**留空 = 用内置仓库**）。
   ///
   /// [tokenRaw] 是可选的访问令牌（第四十轮）：私有仓库、账号被 GitHub 限制可见性
   ///（匿名读什么都是 404）、以及匿名 60 次/小时的额度，三种情况都靠它。空 = 匿名。
   Future<void> check(String repoRaw, {String tokenRaw = ''}) async {
     _token = tokenRaw.trim();
-    final String? slug = core_update.normalizeRepoSlug(repoRaw);
+    // 留空就用内置的更新源（第四十一轮）：从哪更新是产品的一部分，
+    // 不该要求用户去仓库页面抄 `owner/repo`；那一格只是"换成别的仓库"的覆盖入口。
+    final String? slug = core_update.normalizeRepoSlug(core_update.effectiveUpdateRepo(repoRaw));
     if (slug == null) {
       state = const UpdateState(
         phase: UpdatePhase.problem,
         failure: DsFailure(
-          '「更新源」还没填对：要的是 `用户名/仓库名` 两段',
-          hint: '在浏览器打开你的仓库，地址栏里 github.com/ 后面的两段就是它'
-              '（例如 github.com/abc/DSAnima → 填 abc/DSAnima）；'
-              '整条地址直接粘进来也认。',
+          '「更新源」填的不是仓库地址：要的是 `用户名/仓库名` 两段',
+          hint: '**留空**就用内置的更新源（不用填）；只有想换成自己的仓库时才需要写：'
+              '在浏览器打开仓库，地址栏里 github.com/ 后面的两段就是它'
+              '（例如 github.com/abc/DSAnima → 填 abc/DSAnima）；整条地址直接粘也认。',
         ),
       );
       return;

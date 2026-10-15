@@ -135,15 +135,26 @@ Future<void> _settle() async {
 
 void main() {
   group('检查', () {
-    test('更新源没填对：不请求网络，直接说清要填哪两段', () async {
+    test('更新源留空 = 用内置仓库（不用填也能检查）', () async {
       final _FakeUpdatePort port = _FakeUpdatePort(release: _release());
       final ProviderContainer container = _container(port);
-      await container.read(updateProvider.notifier).check('   ');
+      await container.read(updateProvider.notifier).check('');
+
+      expect(port.checkCalls, 1, reason: '留空不是"没配"，而是用内置的更新源');
+      expect(port.seenSlug, core_update.kBuiltinUpdateRepo);
+      expect(container.read(updateProvider).phase, UpdatePhase.available);
+    });
+
+    test('填了个不是地址的东西：不请求网络，直接说清"留空也行"', () async {
+      final _FakeUpdatePort port = _FakeUpdatePort(release: _release());
+      final ProviderContainer container = _container(port);
+      await container.read(updateProvider.notifier).check('  不是地址  ');
 
       expect(port.checkCalls, 0, reason: '填错了就别去打网络 —— 只会白挨一次 404');
       final UpdateState state = container.read(updateProvider);
       expect(state.phase, UpdatePhase.problem);
       expect(state.failure!.message, contains('两段'));
+      expect(state.failure!.hint, contains('留空'));
       expect(state.failure!.hint, contains('github.com'));
     });
 

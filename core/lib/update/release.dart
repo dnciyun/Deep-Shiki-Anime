@@ -259,6 +259,19 @@ String? normalizeRepoSlug(String? raw) {
 /// 检查更新真正请求的接口地址（**把这条显示在设置页**：用户问的就是"api 在哪"）。
 String releaseApiUrl(String slug) => 'https://api.github.com/repos/$slug/releases/latest';
 
+/// **内置的更新源**（第四十一轮）：这一格留空就用它 —— 用户不用去仓库页面抄那两段。
+const String kBuiltinUpdateRepo = 'ciciyouxihao-source/DSAnima';
+
+/// 真正拿去请求的那个 slug：填了就用填的，留空（或只有空白）就用 [kBuiltinUpdateRepo]。
+///
+/// 为什么把"留空"解释成"用内置"、而不是"没配"：**从哪更新是产品的一部分**，不该要求用户
+/// 自己去找 `owner/repo`。所以设置里那一格是**覆盖**入口 —— 想换成自己的 fork 或别的仓库
+/// 就填上，清空就回到内置。老设置里存的空串也因此自动享受到内置值（不用迁移）。
+String effectiveUpdateRepo(String raw) {
+  final String trimmed = raw.trim();
+  return trimmed.isEmpty ? kBuiltinUpdateRepo : trimmed;
+}
+
 /// 发布页地址（手动下载的兜底入口）。
 String releasePageUrl(String slug) => 'https://github.com/$slug/releases/latest';
 

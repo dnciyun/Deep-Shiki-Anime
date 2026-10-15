@@ -32,13 +32,15 @@ class _FakeUpdatePort implements UpdatePort {
   int checkCalls = 0;
   int downloadCalls = 0;
 
-  /// 第四十轮：端口收到的那份令牌。
+  /// 第四十轮：端口收到的那份令牌。第四十一轮：收到的是哪个仓库（留空要走内置）。
   String? seenToken;
   String? seenDownloadToken;
+  String? seenSlug;
 
   @override
   Future<core_update.ReleaseInfo> latestRelease(String repoSlug, {String token = ''}) async {
     checkCalls++;
+    seenSlug = repoSlug;
     seenToken = token;
     return core_update.ReleaseInfo.tryParse(<String, Object?>{
       'tag_name': 'v1.0.3',
@@ -137,7 +139,7 @@ void main() {
     expect(find.textContaining('更新 · 版本'), findsOneWidget);
     expect(find.text('软件更新'), findsOneWidget);
     expect(find.textContaining('当前 v'), findsOneWidget);
-    expect(find.text('更新源：用户名/仓库名'), findsOneWidget);
+    expect(find.text('更新源（留空 = 内置）'), findsOneWidget);
     expect(find.text('检查更新'), findsOneWidget);
     // 接口地址（用户问的就是"api 在哪"）：填好更新源之后就显示真正会请求的那条。
     expect(
@@ -227,7 +229,7 @@ void main() {
     expect(find.text('立即重启并更新'), findsOneWidget);
   });
 
-  testWidgets('更新源没填：不去请求，直接说清要填地址栏里那两段', (WidgetTester tester) async {
+  testWidgets('更新源留空：用内置仓库去检查，页面上写清用的是哪个', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1500, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -237,12 +239,12 @@ void main() {
     await tester.pumpAndSettle();
     await _scrollToUpdateSection(tester);
 
-    expect(find.textContaining('地址栏里那两段'), findsOneWidget);
-    await _tapVisible(tester, '检查更新');
+    // 留空 = 用内置的（第四十一轮）：页面上要把内置的那个仓库写出来，别让人以为"没配"。
+    expect(find.textContaining('用内置的'), findsWidgets);
 
-    expect(port.checkCalls, 0);
-    expect(find.textContaining('还没填对'), findsOneWidget);
-    expect(find.textContaining('怎么办'), findsWidgets);
+    await _tapVisible(tester, '检查更新');
+    expect(port.checkCalls, 1, reason: '留空不再拦着不让检查');
+    expect(port.seenSlug, core_update.kBuiltinUpdateRepo);
   });
 
   testWidgets('改了更新源：草稿变脏（要保存才记得住），检查用的是草稿里的值', (WidgetTester tester) async {
@@ -257,7 +259,7 @@ void main() {
 
     await tester.enterText(
       find.ancestor(
-        of: find.text('更新源：用户名/仓库名'),
+        of: find.text('更新源（留空 = 内置）'),
         matching: find.byType(TextFormField),
       ),
       'abc/DSAnima',

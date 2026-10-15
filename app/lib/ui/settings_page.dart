@@ -1659,9 +1659,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     return Consumer(
       builder: (BuildContext context, WidgetRef ref, Widget? child) {
         final UpdateState update = ref.watch(updateProvider);
-        // 用户问过的就是"仓库建了在哪找 api"：这里把**真正会请求的地址**显示出来，
-        // 没填/填错时给的是"去哪找那两段"。
-        final String? slug = core_update.normalizeRepoSlug(_draft.updateRepo);
+        // 更新源**内置**（第四十一轮）：这一格是"覆盖"入口 —— 留空就用内置仓库。
+        // 用户问过的"仓库建了在哪找 api"照旧：把**真正会请求的接口**显示出来。
+        final bool usingBuiltin = _draft.updateRepo.trim().isEmpty;
+        final String? slug = core_update.normalizeRepoSlug(
+          core_update.effectiveUpdateRepo(_draft.updateRepo),
+        );
         return DsSection(
           title: '软件更新',
           subtitle: '从 GitHub 的 Release 里取新版本，直接下载整个发布包覆盖本目录并重启'
@@ -1679,8 +1682,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     key: _fieldKey('updateRepo'),
                     initialValue: _draft.updateRepo,
                     decoration: const InputDecoration(
-                      labelText: '更新源：用户名/仓库名',
-                      hintText: 'abc/DSAnima（也可以直接粘 https://github.com/abc/DSAnima）',
+                      labelText: '更新源（留空 = 内置）',
+                      hintText: 'abc/DSAnima（留空就用内置仓库；整条地址也能直接粘）',
                     ),
                     style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
                     onChanged: (String v) {
@@ -1701,11 +1704,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               const SizedBox(height: 8),
               Text(
                 slug == null
-                    ? '更新源就是**仓库页面地址栏里那两段**：打开 github.com/<用户名>/<仓库名>，'
-                        '把 `<用户名>/<仓库名>` 填进来（整条地址也能直接粘）。'
-                        '要让它记到下一版，填完点底部的「保存并生效」。'
+                    ? '这一格填的东西不是仓库地址。**留空**就用内置的 '
+                        '`${core_update.kBuiltinUpdateRepo}`；要换成别的仓库，把 '
+                        '`github.com/<用户名>/<仓库名>` 里那两段填进来（整条地址也能直接粘）。'
                     : '真正请求的接口：${core_update.releaseApiUrl(slug)}'
-                        '　（GitHub 匿名额度 60 次/小时；改了更新源要点底部的「保存并生效」才会记住）',
+                        '${usingBuiltin ? '　（这一格留空 = 用内置的 ${core_update.kBuiltinUpdateRepo}）' : ''}'
+                        '　GitHub 匿名额度 60 次/小时；改了这一格要点底部的「保存并生效」才会记住',
                 style: TextStyle(color: t.text3, fontSize: kSettingsCaptionSize, height: 1.6),
               ),
               const SizedBox(height: 8),
