@@ -367,6 +367,46 @@ void main() {
     expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsNothing, reason: '点段抬头不会把组名列表也撑开');
   });
 
+  testWidgets('露一部分的时候也收得回来（「收起」不用先展开完）', (WidgetTester tester) async {
+    // 用户第四十八轮·补四第二句：「必须要展开完才能收起」—— 这颗按钮是按**当前宽度**说的，
+    // 只要比首屏那 4 个宽（哪怕只点过一次「显示更多字幕组」），它就已经是「收起字幕组」了。
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[
+          for (int i = 1; i <= 20; i++) _item(i, group: '组$i', day: 21 - i),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+
+    expect(find.byKey(dsDetailSeedsGroupKey('组4')), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsGroupKey('组5')), findsNothing);
+    expect(find.textContaining('还有 16 个'), findsOneWidget);
+    expect(find.text('展开全部字幕组'), findsOneWidget);
+
+    // 只点一次「显示更多字幕组」（4 → 12，一共 20 段）：**没展开完**。
+    await tester.tap(find.byKey(dsDetailSeedsMoreKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsGroupKey('组13')), findsNothing, reason: '只露到第 12 段');
+    expect(find.textContaining('还有 8 个'), findsOneWidget);
+    expect(
+      find.text('收起字幕组'),
+      findsOneWidget,
+      reason: '只要比首屏宽，就是"收起"这一半 —— 不用等展开完',
+    );
+
+    await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(dsDetailSeedsGroupKey('组5')), findsNothing);
+    expect(find.textContaining('还有 16 个'), findsOneWidget, reason: '收回首屏那 4 个');
+    expect(find.text('展开全部字幕组'), findsOneWidget);
+  });
+
   testWidgets('跨站同名合并成一条：行尾带「别的站也有」的小标记', (WidgetTester tester) async {
     final _Harness h = _Harness(
       source: _FakeSources(<String, List<SourceItemView>>{
