@@ -719,7 +719,7 @@ void main() {
       expect(source.searched, isEmpty);
     });
 
-    test('字幕组先露 4 段，「显示更多字幕组」一次加 8 段', () async {
+    test('字幕组先露 4 段；showMoreGroups 一次加 8 段（界面上现在只有"全露/全收"两颗图标）', () async {
       final _FakeSources source = _FakeSources(
         hits: <String, List<SourceItemView>>{
           'mikan:葬送的芙莉莲': <SourceItemView>[
@@ -770,8 +770,8 @@ void main() {
       await controller.resolve(_subject());
       expect(c.read(librarySeedProvider).shownGroups, hasLength(kSeedVisibleGroups));
 
-      // 第四十八轮·补四：用户「我说的张开字幕组列表」—— 这颗按钮展开的是**组名列表**，
-      // 一次把 12 段全放出来，不该还留着 8 段要再点一次「显示更多字幕组」。
+      // 第四十八轮·补四：用户「我说的张开字幕组列表」—— 这颗图标展开的是**组名列表**，
+      // 一次把 12 段全放出来（界面上现在是 `unfold_more` 那颗纯图标）。
       // （它**不碰**每段自己的开合，那是界面上的 `_openGroups`，provider 这边看不见。）
       controller.showAllGroups();
       final LibrarySeedState all = c.read(librarySeedProvider);

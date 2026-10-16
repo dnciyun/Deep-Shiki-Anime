@@ -18,11 +18,13 @@
 ///   而且「这一组都入队」在收起状态下照样点得到；
 /// * 展开之后先露 [kSeedGroupVisibleStep] 条，其余藏在「本组还有 N 条」后面；
 /// * 段本身先露 [kSeedVisibleGroups] 个，其余的走「显示更多字幕组」；
-/// * **「展开全部字幕组 ⇄ 收起字幕组」只管组名列表的宽窄**（第四十八轮·补四）：展开 = 把被
-///   「显示更多字幕组」挡住的那些组名一次全放出来；收起 = 段窗口退回 [kSeedVisibleGroups] 个。
-///   ⚠️ **不碰每段自己的开合** —— 用户两次说的都是同一件事：「我说的张开字幕组列表，不是把
-///   字幕组也展开了」。哪一段要展开，是用户点**那一段抬头**的事（第一版把这颗按钮做成
-///   "连段内容也一起打开"，被退回来了）；
+/// * **组名列表的宽窄 = 两颗纯图标按钮**（第四十八轮·补四，用户第三版原话「去掉展开这些文字，
+///   多加一个收起按钮，只需要矢量图」）：结果下面那排只有 `unfold_more`（展开全部字幕组，把被
+///   首屏挡住的那几个组名一次放出来）与 `unfold_less`（收起字幕组，退回 [kSeedVisibleGroups] 个）
+///   —— **中文只留在悬停提示里，一个文字标签都不画**；两颗**同时都在**（不是一颗按钮变来变去），
+///   所以"只要比首屏宽，收起就是亮的"，不会再出现「必须要展开完才能收起」；
+///   ⚠️ 它们**不碰每段自己的开合** —— 用户第二版原话：「我说的张开字幕组列表，不是把字幕组也
+///   展开了」。哪一段要展开，是用户点**那一段抬头**的事；
 /// * 这一排跟着结果走，画在结果**下面**（第四十八轮·补四：「这些位置也不应该在上面」——
 ///   控制行挪到上面那一版也被退回了）；
 /// * 每一段展开后的末尾另有一颗「收起这一组」：翻完 80 行想收起来时，不用再滚回抬头去点；
@@ -70,12 +72,11 @@ const Key dsDetailSeedsSearchPageKey = Key('library-detail-seeds-search-page');
 /// 结果表（整块的外壳 key）。
 const Key dsDetailSeedsTableKey = Key('library-detail-seeds-table');
 
-/// 「显示更多字幕组」。
-const Key dsDetailSeedsMoreKey = Key('library-detail-seeds-more');
-
-/// 「展开全部字幕组 / 收起字幕组」（第四十八轮·补四：这颗只管**组名列表**的宽窄，
-/// 不碰每段自己的开合）。
+/// 「展开全部字幕组」那颗图标（`unfold_more`）。第四十八轮·补四：纯图标，中文只在悬停提示里。
 const Key dsDetailSeedsExpandAllKey = Key('library-detail-seeds-expand-all');
+
+/// 「收起字幕组」那颗图标（`unfold_less`）。第四十八轮·补四：与展开那颗**同时都在**。
+const Key dsDetailSeedsCollapseKey = Key('library-detail-seeds-collapse');
 
 /// 字幕组那一段（每段一个，key 带组名 —— 用例据此定位某一段）。
 Key dsDetailSeedsGroupKey(String key) => ValueKey<String>('seed-group-$key');
@@ -339,21 +340,6 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     }
   });
 
-  /// 「展开全部字幕组 ⇄ 收起字幕组」：**只动段窗口**（露几个组名），**不碰每段自己的开合**。
-  ///
-  /// 用户第四十八轮·补四的原话：「我说的张开字幕组列表，不是把字幕组也展开了，收起也没加」——
-  /// 第一版把这颗按钮做成了"连每一段的内容也一起打开 + 段内也不截断"，被退回来了：
-  /// 哪一段要展开是用户点**那一段抬头**的事，不该由这颗按钮代劳（那样一按就是几百行）。
-  ///
-  /// 收起那一半是补上「显示更多字幕组」的反向 —— 那颗原本只能越加越多（单向路）。
-  void _toggleGroupList(LibrarySeedState s, LibrarySeedController controller) {
-    if (s.visibleGroups > kSeedVisibleGroups) {
-      controller.collapseGroups();
-    } else {
-      controller.showAllGroups();
-    }
-  }
-
   // ── 渲染 ────────────────────────────────────────────────────────────────────
 
   @override
@@ -407,36 +393,44 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 结果下面那一排：显示更多字幕组 / 展开全部字幕组·收起字幕组 / 改搜索词·粘链接。
+  /// 结果下面那一排：展开全部字幕组（图标）/ 收起字幕组（图标）/ 改搜索词·粘链接。
+  ///
+  /// 第四十八轮·补四第三版（用户原话「去掉展开这些文字，多加一个收起按钮，只需要矢量图」）：
+  /// 组名列表这一对**只有矢量图标**，中文只留在悬停提示里；而且两颗**同时都在**——
+  /// 不再是一颗按钮的标签变来变去，所以"比首屏宽"这件事一眼就能从"收起那颗亮着"看出来
+  /// （用户上一版那句「必须要展开完才能收起」就是一颗按钮变标签导致的）。
+  ///
+  /// ⚠️ 它们只动**段窗口**（露几个组名），不碰每段自己的开合。
   Widget _controls(LibrarySeedState s) {
     final LibrarySeedController controller = ref.read(
       librarySeedProvider.notifier,
     );
-    // 「展开 / 收起」说的是**组名列表的宽窄**（露几个段），不是"把每一段也打开"。
-    final bool listWide = s.visibleGroups > kSeedVisibleGroups;
+    // 段数没超过首屏那几个：没有"宽窄"可调，两颗都不画（画了也是两颗灰的）。
+    final bool toggleable = s.groups.length > kSeedVisibleGroups;
+    final int remaining = s.remainingGroups;
+    final bool wide = s.visibleGroups > kSeedVisibleGroups;
     return Wrap(
       spacing: 8,
       runSpacing: 6,
       children: <Widget>[
-        if (s.remainingGroups > 0)
-          NeoButton(
-            key: dsDetailSeedsMoreKey,
-            label: '显示更多字幕组（还有 ${s.remainingGroups} 个）',
-            icon: Icons.expand_more,
-            compact: true,
-            onPressed: controller.showMoreGroups,
-          ),
-        // 段数超过首屏那几个才有得展开 / 收起（没超过就画一颗点了没反应的按钮）。
-        // 为什么要有「收起字幕组」这一半：「显示更多字幕组」原本只能越加越多（单向路），
-        // 用户第四十八轮·补四的原话正是「只有展开没有收起」。
-        if (s.groups.length > kSeedVisibleGroups)
-          NeoButton(
+        if (toggleable) ...<Widget>[
+          NeoIconButton(
             key: dsDetailSeedsExpandAllKey,
-            label: listWide ? '收起字幕组' : '展开全部字幕组',
-            icon: listWide ? Icons.unfold_less : Icons.unfold_more,
-            compact: true,
-            onPressed: () => _toggleGroupList(s, controller),
+            icon: Icons.unfold_more,
+            tooltip: remaining > 0
+                ? '展开全部字幕组（还有 $remaining 个）'
+                : '字幕组已经全露出来了',
+            onPressed: remaining > 0 ? controller.showAllGroups : null,
           ),
+          NeoIconButton(
+            key: dsDetailSeedsCollapseKey,
+            icon: Icons.unfold_less,
+            tooltip: wide
+                ? '收起字幕组（回到首屏那 $kSeedVisibleGroups 个）'
+                : '已经是首屏那 $kSeedVisibleGroups 个组名',
+            onPressed: wide ? controller.collapseGroups : null,
+          ),
+        ],
         NeoButton(
           label: _tools ? '收起工具' : '改搜索词 / 粘链接',
           icon: Icons.tune,

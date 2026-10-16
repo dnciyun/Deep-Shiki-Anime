@@ -1,7 +1,7 @@
 /// 本构建的版本号（第三十九轮：检查更新时的比较基准）。
 ///
-/// ⚠️ **必须与 `app/pubspec.yaml` 的 `version:` 同步**（`1.0.3+10` ↔
-/// `AppVersion(1, 0, 3, build: 10)`）。`app/test/app_version_test.dart` 会直接读
+/// ⚠️ **必须与 `app/pubspec.yaml` 的 `version:` 同步**（`1.0.2+3` ↔
+/// `AppVersion(1, 0, 2, build: 3)`）。`app/test/app_version_test.dart` 会直接读
 /// pubspec 对账：漏改一处，检查更新就会永远说"有新版本"（或者发布了新版却没提示）。
 ///
 /// 为什么用一个常量而不是 `package_info_plus`：
@@ -14,4 +14,8 @@ library;
 import 'package:dsanima_core/update/update.dart';
 
 /// 当前构建的版本（发布标签就是它的 [AppVersion.tag]）。
-const AppVersion kAppVersion = AppVersion(1, 0, 3, build: 10);
+///
+/// ⚠️ 用户第四十八轮·补四定下：**版本号就停在 1.0.2**（与已发布的 1.0.2 同一份号），
+/// 后面这些迭代不再往上抬 —— 抬号只在他真的要发新版时做。所以这里的 `+3` 与
+/// 已发布的 `v1.0.2` 是同一个构建号，检查更新那边比出来就是"已是最新"。
+const AppVersion kAppVersion = AppVersion(1, 0, 2, build: 3);

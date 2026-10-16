@@ -2067,14 +2067,17 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
   }
 
   /// 「显示更多字幕组」：多露 [kSeedGroupsStep] 个。
+  ///
+  /// ⚠️ 第四十八轮·补四第三版起**界面不再用它**：那一排现在是"全露 / 全收"两颗纯图标
+  /// （用户「去掉展开这些文字，多加一个收起按钮，只需要矢量图」）。这个方法与
+  /// [kSeedGroupsStep] 留着 —— 分档展开随时能再挂回界面上，状态机这边不用重写。
   void showMoreGroups() {
     if (state.remainingGroups <= 0) return;
     state = state.copyWith(visibleGroups: state.visibleGroups + kSeedGroupsStep);
   }
 
-  /// 「展开全部字幕组」：段**一次全露**（界面那颗「展开全部字幕组」用）。
+  /// 「展开全部字幕组」：段**一次全露**（界面那颗 `unfold_more` 图标用）。
   ///
-  /// 与 [showMoreGroups] 的分工：那颗是"一屏一屏地加"，这颗是"这次我全都要"。
   /// ⚠️ 它只改**组名列表的宽窄**（露几个段），**不碰**每段自己的开合 —— 那是界面上的
   /// `_openGroups`：用户第四十八轮·补四的原话是「我说的张开字幕组列表，不是把字幕组也展开了」。
   void showAllGroups() {
@@ -2082,10 +2085,8 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     state = state.copyWith(visibleGroups: state.groups.length);
   }
 
-  /// 「收起字幕组」：段窗口退回 [kSeedVisibleGroups] 个 —— 回到刚进这一页的样子。
-  ///
-  /// 「显示更多字幕组」原本是条单向路（只能越加越多），用户那句「收起也没加」说的就是它：
-  /// 收起时把它一起退回去，两个方向才都有。
+  /// 「收起字幕组」：段窗口退回 [kSeedVisibleGroups] 个 —— 回到刚进这一页的样子
+  /// （界面那颗 `unfold_less` 图标用；比首屏宽就亮着，所以"点一次也能收"）。
   void collapseGroups() {
     if (state.visibleGroups <= kSeedVisibleGroups) return;
     state = state.copyWith(visibleGroups: kSeedVisibleGroups);
