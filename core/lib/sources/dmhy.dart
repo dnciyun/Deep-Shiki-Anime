@@ -43,6 +43,23 @@ const String kDmhyAnimeSortId = '2';
 /// dmhy 的「季度全集」分类 id（`/topics/list/sort_id/31`，動畫下面的子分区）。
 const String kDmhyBatchSortId = '31';
 
+/// dmhy 这次给的**不是列表页**（站点自己的错误页 / 防护页，HTTP 200）。
+///
+/// 为什么要单独一个类型（第四十八轮·补三）：用户报「1/7 个源没回来：
+/// 动漫花园·季度全集(DMHY) —— 页面里既没有结果表，也没有它自己的分页工具条」。
+/// 真机复测（`build/round48b/probe_dmhy*.py`：同一个 URL 按 1.2s 节奏连打 6 次、
+/// 加上零结果 / 分页 / 各种关键字共 20 多个样本）**站点结构没变** ——
+/// 每个正常的列表/搜索页都同时有结果表和 `div.nav_title`（连"0 条"的都有），
+/// 而**站点自己的错误页**（404 / 500 那两页）正好是"有 `.top_sort`、没有 nav_title、
+/// 没有结果表"。也就是说那一次拿到的是**一张临时页**，不是"站点改版了"，
+/// 更不是"这个关键词没命中"（那是另一条分支）。
+///
+/// 有了这个类型，[DmhySource] 就能**只对这一种重试一次**：
+/// 它是偶发的，重试一次比让用户少看一个源划算；而「0 条」是**结论**，重试只是白打一次请求。
+class DmhyNotListPageException extends SourceException {
+  DmhyNotListPageException(super.message, {super.sourceId, super.url});
+}
+
 class DmhySource extends CachedSourceClient {
   DmhySource({
     required super.http,
@@ -115,13 +132,7 @@ class DmhySource extends CachedSourceClient {
     return loadPage(
       request: CacheRequest.latest(page: page),
       fetch: () async {
-        final body = await http.getText(latestUri(page), sourceId: id);
-        final outcome = DmhyListParser.parse(
-          body,
-          sourceId: id,
-          baseUrl: baseUrl,
-          clock: clock,
-        );
+        final outcome = await _loadParsed(latestUri(page));
         return SourcePage(
           items: outcome.items,
           hasNext: outcome.hasNext,
@@ -144,14 +155,7 @@ class DmhySource extends CachedSourceClient {
     return loadPage(
       request: CacheRequest.search(q, page: page),
       fetch: () async {
-        final body = await http.getText(searchUri(q, page), sourceId: id);
-        final outcome = DmhyListParser.parse(
-          body,
-          sourceId: id,
-          baseUrl: baseUrl,
-          clock: clock,
-          keyword: q, // 0 条时把关键字写进错误文案（"没命中"≠"站点改版"）
-        );
+        final outcome = await _loadParsed(searchUri(q, page), keyword: q);
         return SourcePage(
           items: outcome.items,
           hasNext: outcome.hasNext,
@@ -160,6 +164,37 @@ class DmhySource extends CachedSourceClient {
         );
       },
     );
+  }
+
+  /// 抓一页并解析；**「不是列表页」自动重试一次**（第四十八轮·补三，见
+  /// [DmhyNotListPageException] 的类注释）。
+  ///
+  /// * 只重试这一种：偶发的临时页（站点自己的错误页 / 防护页）重试一次通常就好了 ——
+  ///   代价只有限速器那 1.2s（同 host 两次请求的**开始**时刻本来就至少隔这么久）；
+  /// * 「这一页 0 条」**不重试**：那是结论，再打一次还是 0 条；
+  /// * 「结构变了」在重试后照旧抛出去给用户看 —— 只是文案不再把偶发页面说成改版。
+  Future<ParseOutcome> _loadParsed(Uri uri, {String? keyword}) async {
+    for (int attempt = 0; ; attempt++) {
+      final String body = await http.getText(uri, sourceId: id);
+      try {
+        return DmhyListParser.parse(
+          body,
+          sourceId: id,
+          baseUrl: baseUrl,
+          clock: clock,
+          keyword: keyword,
+          pageUri: uri,
+        );
+      } on DmhyNotListPageException catch (e) {
+        if (attempt >= 1) {
+          throw DmhyNotListPageException(
+            '${e.message}（已自动重试一次，两次都是这个页面）',
+            sourceId: id,
+            url: uri,
+          );
+        }
+      }
+    }
   }
 
   /// `/topics/view/725809_xxx.html` → `725809`。
@@ -195,6 +230,14 @@ class DmhySource extends CachedSourceClient {
 /// 门户页没有它。所以：**骨架在而结果表不在 = 站点正常、这一页 0 条**；
 /// **骨架也不在 = 才说"结构可能已改版"**。两种都仍然报错（用户选定：0 条也要看得见），
 /// 但必须说成两件不同的事，否则用户会把"关键字没命中"当成"站点坏了"。
+///
+/// ⚠️ **第四十八轮·补三：骨架不在时再分两种**（用户又报了一次同样的文案，这次是
+/// 「1/7 个源没回来：动漫花园·季度全集(DMHY)」）。二十多个真机样本（`build/round48b/`）
+/// 复现不出"正常的列表页却没有 nav_title"—— **站点结构没变**；反倒是站点**自己的错误页**
+/// （404 / 500）正好长成"有 `.top_sort`、没有 nav_title、没有结果表"。
+/// 所以骨架不在时：站点标记还在 → 「站点给了张临时页（偶发）」；连站点标记都没有 →
+/// 「根本没到 dmhy（代理 / 防护页）」。两种都抛 [DmhyNotListPageException]，
+/// 让 [DmhySource] 先自动重试一次，仍失败才把这条文案交给用户。
 class DmhyListParser {
   const DmhyListParser._();
 
@@ -204,6 +247,7 @@ class DmhyListParser {
     String baseUrl = dmhyBaseUrl,
     required ClockFn clock,
     String? keyword,
+    Uri? pageUri,
   }) {
     final dom.Document doc;
     try {
@@ -211,29 +255,45 @@ class DmhyListParser {
     } catch (e) {
       throw SourceException('dmhy 列表页解析失败: $e', sourceId: sourceId, cause: e);
     }
+    final Uri where = pageUri ?? Uri.parse(baseUrl);
 
     final table = doc.querySelector('table#topic_list') ??
         doc.querySelector('table.tablesorter');
     if (table == null) {
       // **不返回空列表**：0 条和"页面结构变了"对用户是两件事，静默空表会把后者伪装成前者。
-      // 但也**不能把 0 条说成"结构已变"** —— 那正是用户报的那条假警报。
+      // 但也**不能把 0 条说成"结构已变"** —— 那正是第二十二轮用户报的那条假警报。
       // （fetch 层只把 2xx 的响应送到这里，所以下面写 HTTP 200 是准确的。）
       final String head = keyword == null ? 'dmhy 这一页' : 'dmhy 搜索「$keyword」';
-      final String why =
-          keyword == null ? '这个分类下暂无内容' : '这个关键字在 dmhy 上没有命中';
       if (_looksLikeDmhyListPage(doc)) {
+        final String why =
+            keyword == null ? '这个分类下暂无内容' : '这个关键字在 dmhy 上没有命中';
         throw SourceException(
           '$head没有结果（0 条）：站点页面是正常的（它自己的分页工具条在），'
           '是$why —— 不是页面改版（HTTP 200）',
           sourceId: sourceId,
-          url: Uri.parse(baseUrl),
+          url: where,
         );
       }
-      throw SourceException(
-        'dmhy 页面结构可能已改版：站点这次返回的页面里既没有结果表，也没有它自己的'
-        '分页工具条（HTTP 200）—— 把这一条反馈给我，我按新结构修解析',
+      // 第四十八轮·补三：骨架（分页工具条）不在，就**别急着说"改版"**。
+      //
+      // 真机复测（`build/round48b/`，20 多个样本）：正常的列表/搜索页 —— 有结果的、
+      // 零结果的、`sort_id` 不存在的 —— 全都带 `div.nav_title`；只有**站点自己的
+      // 错误页**（404 / 500 那两页）是"有 `.top_sort`、没有 nav_title、没有结果表"。
+      // 也就是说这种情况多半是**站点临时给了张不是列表页的页面**（偶发），
+      // 所以这里换成一个能行动的文案：[DmhySource] 会先重试一次，仍失败才让用户看到它。
+      final String title = _pageTitle(doc);
+      final String tail = title.isEmpty ? '' : '，页面标题「$title」';
+      throw DmhyNotListPageException(
+        _looksLikeDmhySite(doc)
+            ? '$head没回列表页（HTTP 200）：站点自己的东西在（分类导航 / 搜索框都在），'
+              '但既没有结果表，也没有它自己的分页工具条$tail —— '
+              '真 0 条时站点会带上那条工具条，所以这多半是站点临时抽风或被防护页挡了'
+              '（也可能列表页换了骨架）。过几分钟再点一次；一直这样的话把这一条反馈给我'
+            : 'dmhy 这次回的根本不是 dmhy 的页面（HTTP 200）$tail —— '
+              '像是代理 / 防护页 / 被换站。过几分钟再点一次；'
+              '一直这样的话把这一条反馈给我',
         sourceId: sourceId,
-        url: Uri.parse(baseUrl),
+        url: where,
       );
     }
 
@@ -331,6 +391,21 @@ class DmhyListParser {
   /// 而被换掉的错误页/门户页没有（见本类的类注释）。
   static bool _looksLikeDmhyListPage(dom.Document doc) =>
       doc.querySelector('div.nav_title') != null;
+
+  /// 这一页**是不是 dmhy 自己的页面**（不管它是不是列表页）。
+  ///
+  /// 三个独立标记取"任意一个"（第四十八轮·补三真机实测，`build/round48b/`）：
+  /// `.top_sort` 那排分类导航、搜索框 `input[name=keyword]`、站点名。
+  /// 站点自己的 404 / 500 页**三个都在**，而代理 / 防护页一个都没有 ——
+  /// 文案据此分开说"站点给了张怪页"与"根本没到 dmhy"。
+  static bool _looksLikeDmhySite(dom.Document doc) =>
+      doc.querySelector('.top_sort') != null ||
+      doc.querySelector('input[name="keyword"]') != null ||
+      _pageTitle(doc).contains('動漫花園');
+
+  /// 页面 `<title>`（诊断用：反馈时带上它，一眼能看出那是张什么页面）。
+  static String _pageTitle(dom.Document doc) =>
+      normalizeWhitespace(doc.querySelector('head title')?.text) ?? '';
 
   /// 取某个选择器的 `href`（`a.arrow-magnet` 的磁力就在 href 上）。
   static String? _magnetOf(dom.Element cell, String selector) =>

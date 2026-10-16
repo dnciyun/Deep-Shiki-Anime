@@ -422,6 +422,22 @@ void main() {
       expect(groups.single.isUnknown, isTrue);
     });
 
+    test('⚠️「未知组」永远排最后，哪怕它条数最多', () {
+      final List<SeedGroup> groups = groupSeedItems(<SourceItemView>[
+        // 杂项（解析不出组名）先给了 3 条，正常组只有 1 条 —— 条数排法会把杂项放首屏。
+        for (int i = 1; i <= 3; i++)
+          SourceItemView(
+            id: 'mikan:x$i',
+            sourceId: 'mikan',
+            title: '葬送的芙莉莲 - 0$i',
+          ),
+        _item(9, '葬送的芙莉莲 - 01', group: '大组'),
+      ]);
+      expect(groups.last.key, kUnknownSubtitleGroupKey);
+      expect(groups.last.count, 3, reason: '它确实是条数最多的那一段');
+      expect(groups.first.label, '大组', reason: '有条理的那几家先摆出来');
+    });
+
     test('条数多的段在前（平手按最新那条，再按组名）', () {
       final List<SeedGroup> groups = groupSeedItems(<SourceItemView>[
         _item(1, '葬送的芙莉莲 - 01', group: '小组'),

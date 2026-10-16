@@ -477,7 +477,8 @@ class SeedGroup {
   bool get isUnknown => key == kUnknownSubtitleGroupKey;
 }
 
-/// 按字幕组把池子切成一段一段；**条数多的组在前**（平手按最新那条的时间，再按组名）。
+/// 按字幕组把池子切成一段一段；**条数多的组在前**（平手按最新那条的时间，再按组名），
+/// 而「未知组」**永远排最后**（第四十八轮·补三，用户「未知组默认在最下面」）。
 ///
 /// 为什么不是"最新发过东西的组在前"（第四十八轮用真数据试过）：「命运石之门」的 841 行
 /// 分成 48 段，每组条数中位数 **3**、只有 1 条的 **13 段**，而真正成套的是
@@ -510,6 +511,11 @@ List<SeedGroup> groupSeedItems(List<SourceItemView> items) {
       ),
   ];
   groups.sort((SeedGroup a, SeedGroup b) {
+    // 「未知组」**永远排最后**（第四十八轮·补三，用户「未知组默认在最下面」）：
+    // 解析不出组名的那些是个人发布 / 命名怪的杂项，不是"一家字幕组" —— 按条数排的话
+    // 它们很容易挤进首屏，把真正成套的那几家顶下去。用户是要挑一家来下，
+    // 所以"谁有整部"先摆出来，杂项留到最后需要时再翻。
+    if (a.isUnknown != b.isUnknown) return a.isUnknown ? 1 : -1;
     final int byCount = b.count.compareTo(a.count);
     if (byCount != 0) return byCount;
     final DateTime? at = a.items.first.publishedAt;

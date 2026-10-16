@@ -1,11 +1,15 @@
-/// dmhy（动漫花园）源单测：列表页解析、磁力规范化、分页语义、URL 形态。
+/// dmhy（动漫花园）源单测：列表页解析、磁力规范化、分页语义、URL 形态、临时页重试。
 ///
-/// 全部离线；fixture 是 **2026-10-12** 从 `share.dmhy.org` 真实抓取后裁掉多余行
-/// 的原文（见 `test/fixtures/README.md`）。
+/// 全部离线；fixture 大多是 **2026-10-12** 从 `share.dmhy.org` 真实抓取后裁掉多余行
+/// 的原文（见 `test/fixtures/README.md`）；`dmhy_not_list_page.html` 是第四十八轮·补三
+/// 抓的那一版（来源见用例里的注释）。
 library;
+
+import 'dart:convert';
 
 import 'package:dsanima_core/sources/sources.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 
 import 'fixtures.dart';
 import 'support.dart';
@@ -99,18 +103,88 @@ void main() {
       expect(last.hasNext, isFalse);
     });
 
-    test('结构不认识（连站点骨架都没有）→ 抛 SourceException，且文案说"可能已改版"', () {
+    test('页面完全不是 dmhy 的（连站名都没有）→ 说"没到 dmhy"，不冒充"0 条"', () {
       expect(
         () => DmhyListParser.parse(
-          '<html><body><p>这不是列表页</p></body></html>',
+          '<html><head><title>502 Bad Gateway</title></head>'
+          '<body><p>这不是列表页</p></body></html>',
           sourceId: 'dmhy',
           clock: () => _now,
         ),
         throwsA(
-          isA<SourceException>().having(
-            (SourceException e) => e.message,
+          isA<DmhyNotListPageException>()
+              .having(
+                (DmhyNotListPageException e) => e.message,
+                'message',
+                allOf(
+                  contains('根本不是 dmhy 的页面'),
+                  contains('HTTP 200'),
+                  contains('502 Bad Gateway'),
+                  isNot(contains('没有结果（0 条）')),
+                ),
+              ),
+        ),
+      );
+    });
+
+    // ── 第四十八轮·补三（用户：「1/7 个源没回来：动漫花园·季度全集(DMHY) —— 页面里既没有
+    //    结果表，也没有它自己的分页工具条」）────────────────────────────────────────
+    //
+    // 这条文案原来写的是「页面结构可能已改版 —— 把这一条反馈给我，我按新结构修解析」。
+    // 真机复测（`build/round48b/probe_dmhy*.py`，20 多个样本）**复现不出"结构变了"**：
+    // 有结果 / 零结果 / 分页 / 各种关键字全都是正常列表页（nav_title + 结果表都在），
+    // 而站点**自己的错误页**正好长成"有 .top_sort、没有 nav_title、没有结果表"。
+    // 所以：这是**偶发的临时页**，不是改版 —— 文案要能行动，[DmhySource] 还要自动重试一次。
+    test('站点自己的临时页（真机抓的错误页骨架）→ 说"没回列表页 + 页面标题"，不说"改版"', () {
+      expect(
+        () => DmhyListParser.parse(
+          loadFixture('dmhy_not_list_page.html'),
+          sourceId: 'dmhy-batch',
+          clock: () => _now,
+          keyword: '命运石之门',
+          pageUri: Uri.parse(
+            'https://share.dmhy.org/topics/list?keyword=%E5%91%BD%E8%BF%90%E7%9F%B3%E4%B9%8B%E9%97%A8&sort_id=31',
+          ),
+        ),
+        throwsA(
+          isA<DmhyNotListPageException>()
+              .having(
+                (DmhyNotListPageException e) => e.message,
+                'message',
+                allOf(
+                  contains('dmhy 搜索「命运石之门」没回列表页'),
+                  // 诊断三件套：站点标记在不在、页面标题、真 0 条长什么样。
+                  contains('分类导航'),
+                  contains('页面标题「動漫花園資源網'),
+                  contains('真 0 条时站点会带上那条工具条'),
+                  contains('过几分钟再点一次'),
+                  isNot(contains('结构可能已改版')),
+                  isNot(contains('没有结果（0 条）')),
+                ),
+              )
+              .having(
+                (DmhyNotListPageException e) => e.url.toString(),
+                'url',
+                contains('sort_id=31'),
+                // 报错要带**这次真正请求的 URL**（原来只带站点根，反馈时等于没有线索）。
+              ),
+        ),
+      );
+    });
+
+    test('站点骨架不在、但站点标记在 → 与"根本不是 dmhy"分开说', () {
+      expect(
+        () => DmhyListParser.parse(
+          '<html><head><title>動漫花園資源網 - 動漫愛好者的自由交流平台</title></head>'
+          '<body><div class="top_sort"></div></body></html>',
+          sourceId: 'dmhy',
+          clock: () => _now,
+        ),
+        throwsA(
+          isA<DmhyNotListPageException>().having(
+            (DmhyNotListPageException e) => e.message,
             'message',
-            allOf(contains('可能已改版'), contains('HTTP 200')),
+            contains('站点自己的东西在'),
           ),
         ),
       );
@@ -299,6 +373,86 @@ void main() {
       final again = await s.search('x');
       expect(again.fromCache, isTrue);
       expect(again.items, hasLength(4));
+      expect(factory.requestedUris, hasLength(1));
+    });
+
+    // ── 第四十八轮·补三：临时页**自动重试一次** ────────────────────────────────
+    test('第一次拿到临时页、第二次正常 → 用户这边毫无感觉（只看到结果）', () async {
+      final factory = sequenceFactory(<http.Response Function()>[
+        () => http.Response.bytes(
+          utf8.encode(loadFixture('dmhy_not_list_page.html')),
+          200,
+          headers: <String, String>{'content-type': 'text/html; charset=utf-8'},
+        ),
+        () => http.Response.bytes(
+          utf8.encode(loadFixture('dmhy_list.html')),
+          200,
+          headers: <String, String>{'content-type': 'text/html; charset=utf-8'},
+        ),
+      ]);
+      final s = DmhySource(
+        http: buildHttp(factory),
+        cache: SourceCache(store: InMemoryKeyValueStore()),
+        clock: () => _now,
+      );
+
+      final page = await s.search('葬送的芙莉莲');
+
+      expect(page.items, hasLength(4), reason: '第二次那张页才是列表页');
+      expect(
+        factory.requestedUris,
+        hasLength(2),
+        reason: '同一个 URL 打了两次（中间由限速器保证间隔）',
+      );
+      expect(factory.requestedUris[0], factory.requestedUris[1]);
+    });
+
+    test('两次都是临时页 → 才把话交给用户，且说明"已重试一次" + 带上真 URL', () async {
+      final factory = textFactory(
+        loadFixture('dmhy_not_list_page.html'),
+        contentType: 'text/html; charset=utf-8',
+      );
+      final s = DmhySource(
+        http: buildHttp(factory),
+        cache: SourceCache(store: InMemoryKeyValueStore()),
+        clock: () => _now,
+      );
+
+      await expectLater(
+        s.search('命运石之门'),
+        throwsA(
+          isA<DmhyNotListPageException>()
+              .having(
+                (DmhyNotListPageException e) => e.message,
+                'message',
+                allOf(
+                  contains('没回列表页'),
+                  contains('已自动重试一次，两次都是这个页面'),
+                ),
+              )
+              .having((DmhyNotListPageException e) => e.sourceId, 'sourceId', 'dmhy')
+              .having(
+                (DmhyNotListPageException e) => e.url!.queryParameters['keyword'],
+                'url.keyword',
+                '命运石之门',
+              ),
+        ),
+      );
+      expect(factory.requestedUris, hasLength(2), reason: '重试过一次就不再打第三次');
+    });
+
+    test('零结果**不**重试：那是结论，再打一次还是 0 条', () async {
+      final factory = textFactory(
+        loadFixture('dmhy_search_empty.html'),
+        contentType: 'text/html; charset=utf-8',
+      );
+      final s = DmhySource(
+        http: buildHttp(factory),
+        cache: SourceCache(store: InMemoryKeyValueStore()),
+        clock: () => _now,
+      );
+
+      await expectLater(s.search('芙莉莲'), throwsA(isA<SourceException>()));
       expect(factory.requestedUris, hasLength(1));
     });
 
