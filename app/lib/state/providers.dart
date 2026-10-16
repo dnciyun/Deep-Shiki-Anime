@@ -2072,6 +2072,25 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     state = state.copyWith(visibleGroups: state.visibleGroups + kSeedGroupsStep);
   }
 
+  /// 「展开全部字幕组」：段**一次全露**（界面那颗「展开全部」用）。
+  ///
+  /// 与 [showMoreGroups] 的分工：那颗是"一屏一屏地加"，这颗是"这次我全都要" ——
+  /// 第四十八轮·补三用户的原话是「展开全部不把全部打开，就展开所有字幕组」：
+  /// 展开全部却还留着 8 段要再点一次「显示更多」，那不叫全部。
+  void showAllGroups() {
+    if (state.remainingGroups <= 0) return;
+    state = state.copyWith(visibleGroups: state.groups.length);
+  }
+
+  /// 「收起全部」：段窗口退回 [kSeedVisibleGroups] 个 —— 回到刚进这一页的样子。
+  ///
+  /// 「显示更多字幕组」原本是条单向路（只能越加越多）。用户那条「只有展开没有收起」里
+  /// 也有它一份：收起全部时把它一起退回去，两个方向才都有。
+  void collapseGroups() {
+    if (state.visibleGroups <= kSeedVisibleGroups) return;
+    state = state.copyWith(visibleGroups: kSeedVisibleGroups);
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // 内部
   // ───────────────────────────────────────────────────────────────────────────

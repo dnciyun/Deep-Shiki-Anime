@@ -748,6 +748,45 @@ void main() {
       expect(more.shownGroups, hasLength(kSeedVisibleGroups + kSeedGroupsStep));
       expect(more.remainingGroups, 0);
     });
+
+    test('「展开全部」一次把段全露出来，「收起全部」退回刚进页面的那 4 段', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[
+            for (int i = 1; i <= 12; i++)
+              _item(i, '[组$i] 葬送的芙莉莲 - 01', group: '组$i'),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+      final LibrarySeedController controller = c.read(
+        librarySeedProvider.notifier,
+      );
+
+      await controller.resolve(_subject());
+      expect(c.read(librarySeedProvider).shownGroups, hasLength(kSeedVisibleGroups));
+
+      // 第四十八轮·补三：用户「展开全部不把全部打开，就展开所有字幕组」——
+      // 展开全部不该还留着 8 段要再点一次「显示更多字幕组」。
+      controller.showAllGroups();
+      final LibrarySeedState all = c.read(librarySeedProvider);
+      expect(all.shownGroups, hasLength(12));
+      expect(all.remainingGroups, 0);
+
+      // 「显示更多字幕组」原本是条单向路（只能越加越多）；收起时把它一起退回来。
+      controller.collapseGroups();
+      final LibrarySeedState back = c.read(librarySeedProvider);
+      expect(back.shownGroups, hasLength(kSeedVisibleGroups), reason: '收起全部 = 回到刚进这一页的样子');
+      expect(back.remainingGroups, 12 - kSeedVisibleGroups);
+
+      // 已经在默认窗口上时再收一次是空操作（不会把窗口收成 0 段）。
+      controller.collapseGroups();
+      expect(c.read(librarySeedProvider).shownGroups, hasLength(kSeedVisibleGroups));
+    });
   });
 
   group('LibrarySeedController：手动锚点（粘 mikan 番剧页）', () {

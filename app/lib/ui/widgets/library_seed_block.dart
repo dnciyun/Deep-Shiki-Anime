@@ -14,10 +14,18 @@
 /// * **跨站同名合并**成一条（合并过的行会带一个"别的站也有"的小标记，别让用户以为少看了一个站）；
 /// * 每段抬头：组名 · 条数 · 「订阅」（只有拿得到那张 mikan 番剧页时才有）·「这一组都入队」；
 /// * **每一段默认收起**（第四十八轮·补，用户「把搜索结果默认收起形态」）—— 进页面只看到
-///   一行行组抬头，点哪一段抬头（或底下那颗「展开全部」）才画那一段的条目：
-///   一屏十几个组名比一屏几行番名好挑，而且「这一组都入队」在收起状态下照样点得到；
+///   一行行组抬头，点哪一段抬头才画那一段的条目：一屏十几个组名比一屏几行番名好挑，
+///   而且「这一组都入队」在收起状态下照样点得到；
 /// * 展开之后先露 [kSeedGroupVisibleStep] 条，其余藏在「本组还有 N 条」后面；
 /// * 段本身先露 [kSeedVisibleGroups] 个，其余的走「显示更多字幕组」；
+/// * **「展开全部 ⇄ 收起全部」是真·全开全收**（第四十八轮·补三，用户原话「展开全部不把
+///   全部打开，就展开所有字幕组」+「只有展开没有收起」）：
+///   展开 = 段全露出来 + 每段都展开 + 段内**不再截断**（「本组还有 N 条」一个都不剩）；
+///   收起 = 段窗口退回 [kSeedVisibleGroups] 个 + 全收，也就是**回到刚进这一页的样子**
+///   （「显示更多字幕组」原本是条单向路，收起时把它一起退回来，两个方向才都有）。
+///   ⚠️ 所以这排控制画在结果**上面**：画在下面的话，一展开就被顶到几千像素之外 ——
+///   用户点得到"展开"、却再也找不到"收起"；
+/// * 每一段展开后的末尾另有一颗「收起这一组」：翻完 80 行想收起来时，不用再滚回抬头去点；
 /// * mikan 番剧页降级成**手动**口（「改搜索词 / 粘链接」里粘地址或 id）—— 它给的东西更完整
 ///   （整部剧集表 + 每组自己的 RSS），只是不该再当主力，见 `domain/library_seed.dart` 的库注释。
 library;
@@ -65,7 +73,7 @@ const Key dsDetailSeedsTableKey = Key('library-detail-seeds-table');
 /// 「显示更多字幕组」。
 const Key dsDetailSeedsMoreKey = Key('library-detail-seeds-more');
 
-/// 「展开全部 / 收起全部」（第四十八轮·补：每段默认收起，这颗是一次全开）。
+/// 「展开全部 / 收起全部」（第四十八轮·补：每段默认收起，这颗是全开 / 全收的开关）。
 const Key dsDetailSeedsExpandAllKey = Key('library-detail-seeds-expand-all');
 
 /// 字幕组那一段（每段一个，key 带组名 —— 用例据此定位某一段）。
@@ -74,6 +82,10 @@ Key dsDetailSeedsGroupKey(String key) => ValueKey<String>('seed-group-$key');
 /// 那一段的**抬头**（点它 = 展开 / 收起这一段）。
 Key dsDetailSeedsGroupToggleKey(String key) =>
     ValueKey<String>('seed-group-toggle-$key');
+
+/// 某一段展开后末尾那颗「收起这一组」（第四十八轮·补三）。
+Key dsDetailSeedsGroupCollapseKey(String key) =>
+    ValueKey<String>('seed-group-collapse-$key');
 
 /// 某一段的「本组还有 N 条」。
 Key dsDetailSeedsGroupMoreKey(String key) =>
@@ -109,7 +121,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   final Set<String> _openGroups = <String>{};
 
   /// 哪几段把「本组还有 N 条」也点开了（= 这一段全露）。收起那一段时一起丢掉，
-  /// 再展开又回到"先露 12 条"。
+  /// 再展开又回到"先露 12 条"。「展开全部」会把**每一段**都放进来（第四十八轮·补三：
+  /// 用户要的"全部打开"就是连段内的截断也一起打开）。
   final Set<String> _fullGroups = <String>{};
 
   final TextEditingController _word = TextEditingController();
@@ -326,18 +339,40 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     }
   });
 
-  /// 「展开全部 / 收起全部」：**只对现在露出来的这些段**动手（没露出来的那些
-  /// 走「显示更多字幕组」，展开它们等于凭空长出一屏内容）。
-  void _toggleAllGroups(List<SeedGroup> shown) => setState(() {
-    if (_openGroups.isEmpty) {
-      for (final SeedGroup group in shown) {
-        _openGroups.add(group.key);
-      }
-    } else {
+  /// 「展开全部」= **真·全开**（第四十八轮·补三）。
+  ///
+  /// 三件事一起做，少一件用户就会说"展开全部不把全部打开"：
+  /// 1. 段全露出来（`showAllGroups` —— 原来只开"现在露出来的那几段"，剩下 8 段还得再点
+  ///    「显示更多字幕组」，那不叫全部）；
+  /// 2. 每一段都展开（[_openGroups]）；
+  /// 3. 段内**不再截断**（[_fullGroups]）—— 否则每段照样停在 12 条、「本组还有 N 条」
+  ///    一颗不少，用户看到的就是"只展开了所有字幕组"。
+  void _expandAllGroups(LibrarySeedState s, LibrarySeedController controller) {
+    final Set<String> keys = <String>{
+      for (final SeedGroup g in s.groups) g.key,
+    };
+    controller.showAllGroups();
+    setState(() {
+      _openGroups
+        ..clear()
+        ..addAll(keys);
+      _fullGroups
+        ..clear()
+        ..addAll(keys);
+    });
+  }
+
+  /// 「收起全部」= **真·全收**：回到刚进这一页的样子 —— 段窗口也退回 [kSeedVisibleGroups] 个。
+  ///
+  /// 段窗口一起退，是因为「显示更多字幕组」原本只会越加越多（单向路）。用户第四十八轮·补三
+  /// 说的「只有展开没有收起」，两个地方都算：这颗按钮一直是"展开"，以及"显示更多"加出去就收不回来。
+  void _collapseAllGroups(LibrarySeedController controller) {
+    controller.collapseGroups();
+    setState(() {
       _openGroups.clear();
       _fullGroups.clear();
-    }
-  });
+    });
+  }
 
   // ── 渲染 ────────────────────────────────────────────────────────────────────
 
@@ -376,51 +411,56 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             padding: const EdgeInsets.only(bottom: 10),
             trailing: _headerActions(s),
           ),
-          _body(context, s, showTitle, marks, jobs, torrents),
-          if (_tools) ...<Widget>[const SizedBox(height: 10), _toolsRow(s)],
+          // 控制行画在结果**上面**（第四十八轮·补三）：这里面有「展开全部 / 收起全部」，
+          // 而它只要落在结果下面，用户点完"展开"就等于把它推出了屏幕 —— 只剩展开、没有收起。
           if (s.phase == LibrarySeedPhase.ready) ...<Widget>[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: <Widget>[
-                  if (s.remainingGroups > 0)
-                    NeoButton(
-                      key: dsDetailSeedsMoreKey,
-                      label:
-                          '显示更多字幕组（还有 ${s.remainingGroups} 个）',
-                      icon: Icons.expand_more,
-                      compact: true,
-                      onPressed: ref
-                          .read(librarySeedProvider.notifier)
-                          .showMoreGroups,
-                    ),
-                  // 每段默认收起，所以给一颗"一次全开"：想通览条目的人不用一段段点。
-                  // 段数多的时候它只开**现在露出来的这些**（见 `_toggleAllGroups`）。
-                  if (s.shownGroups.isNotEmpty)
-                    NeoButton(
-                      key: dsDetailSeedsExpandAllKey,
-                      label: _openGroups.isEmpty ? '展开全部' : '收起全部',
-                      icon: _openGroups.isEmpty
-                          ? Icons.unfold_more
-                          : Icons.unfold_less,
-                      compact: true,
-                      onPressed: () => _toggleAllGroups(s.shownGroups),
-                    ),
-                  NeoButton(
-                    label: _tools ? '收起工具' : '改搜索词 / 粘链接',
-                    icon: Icons.tune,
-                    compact: true,
-                    onPressed: () => setState(() => _tools = !_tools),
-                  ),
-                ],
-              ),
-            ),
+            _controls(s),
+            const SizedBox(height: 10),
           ],
+          if (_tools) ...<Widget>[_toolsRow(s), const SizedBox(height: 10)],
+          _body(context, s, showTitle, marks, jobs, torrents),
         ],
       ),
+    );
+  }
+
+  /// 结果区上面那一排：显示更多字幕组 / 展开全部·收起全部 / 改搜索词·粘链接。
+  Widget _controls(LibrarySeedState s) {
+    final LibrarySeedController controller = ref.read(
+      librarySeedProvider.notifier,
+    );
+    final bool anyOpen = _openGroups.isNotEmpty;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: <Widget>[
+        if (s.remainingGroups > 0)
+          NeoButton(
+            key: dsDetailSeedsMoreKey,
+            label: '显示更多字幕组（还有 ${s.remainingGroups} 个）',
+            icon: Icons.expand_more,
+            compact: true,
+            onPressed: controller.showMoreGroups,
+          ),
+        // 每段默认收起，所以给一颗"全开 / 全收"的开关：想通览条目的人不用一段段点，
+        // 想收回去的人也不用一段段收（第四十八轮·补三：见 `_expandAllGroups`）。
+        if (s.shownGroups.isNotEmpty)
+          NeoButton(
+            key: dsDetailSeedsExpandAllKey,
+            label: anyOpen ? '收起全部' : '展开全部',
+            icon: anyOpen ? Icons.unfold_less : Icons.unfold_more,
+            compact: true,
+            onPressed: anyOpen
+                ? () => _collapseAllGroups(controller)
+                : () => _expandAllGroups(s, controller),
+          ),
+        NeoButton(
+          label: _tools ? '收起工具' : '改搜索词 / 粘链接',
+          icon: Icons.tune,
+          compact: true,
+          onPressed: () => setState(() => _tools = !_tools),
+        ),
+      ],
     );
   }
 
@@ -581,31 +621,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                 ),
               ),
             ),
-            if (_visibleItems(shown[i]).length < shown[i].count)
-              Padding(
-                padding: const EdgeInsets.only(top: 2, bottom: 4),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    key: dsDetailSeedsGroupMoreKey(shown[i].key),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      minimumSize: const Size(0, 26),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    onPressed: () => setState(
-                      () => _fullGroups.add(shown[i].key),
-                    ),
-                    child: Text(
-                      '本组还有 ${shown[i].count - _visibleItems(shown[i]).length} 条',
-                      style: TextStyle(
-                        color: t.accent,
-                        fontSize: DsTypeScale.caption,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+            _groupFoot(shown[i], t),
           ],
         ],
         if (_selected.isNotEmpty) ...<Widget>[
@@ -670,6 +686,46 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
       return group.items;
     }
     return group.items.sublist(0, kSeedGroupVisibleStep);
+  }
+
+  /// 一段展开后末尾那行小链接：段内还剩几条可放 + 「收起这一组」。
+  ///
+  /// 为什么末尾也要一颗"收起"（第四十八轮·补三）：一段 80 行，看完想收起来时不该再滚回
+  /// 抬头去点那颗小箭头 —— 用户的原话是「只有展开没有收起」（抬头那颗箭头的"收起"只写在
+  /// 悬停提示里，看不出也够不着）。
+  Widget _groupFoot(SeedGroup group, DsTokens t) {
+    final int hidden = group.count - _visibleItems(group).length;
+    Widget link(Key key, String label, VoidCallback onPressed) => TextButton(
+      key: key,
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        minimumSize: const Size(0, 26),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      onPressed: onPressed,
+      child: Text(
+        label,
+        style: TextStyle(color: t.accent, fontSize: DsTypeScale.caption),
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 2, bottom: 4),
+      child: Row(
+        children: <Widget>[
+          if (hidden > 0)
+            link(
+              dsDetailSeedsGroupMoreKey(group.key),
+              '本组还有 $hidden 条',
+              () => setState(() => _fullGroups.add(group.key)),
+            ),
+          link(
+            dsDetailSeedsGroupCollapseKey(group.key),
+            '收起这一组',
+            () => _toggleGroup(group.key),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 一张 mikan 番剧页里跟这一段同名的那个组（拿 RSS 地址用；没有就画不出「订阅」）。

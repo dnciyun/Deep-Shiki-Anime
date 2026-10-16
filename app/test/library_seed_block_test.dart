@@ -3,8 +3,9 @@
 /// 状态机在 `library_seed_test.dart` 里验；这里只验用户能看见的东西：
 /// * 加载文案（「正在各站搜…」）；
 /// * 有结果时：**一段一个字幕组**（抬头写着组名与条数）、**默认全收起**（一进来只有组抬头，
-///   点抬头或底下那颗「展开全部」才画条目）、表头只在第一张展开的表上画一次、行尾的
-///   「已看过 / 在队列 / 已完成」与「别的站也有」标记；
+///   点抬头、或结果上面那颗「展开全部」才画条目 —— 那颗是**真全开 / 真全收**）、
+///   表头只在第一张展开的表上画一次、行尾的「已看过 / 在队列 / 已完成」与「别的站也有」标记；
+/// * 每一段展开后的末尾还有一颗「收起这一组」（第四十八轮·补三）；
 /// * 每段展开后先露 12 条（「本组还有 N 条」）、整块先露 4 段（「显示更多字幕组」）；
 /// * 右键 / 抬头那颗「这一组都入队」真的把这一段加进队列（跳过已看过的），
 ///   **收起状态下也能点**；
@@ -295,13 +296,18 @@ void main() {
     expect(find.byKey(dsDetailSeedsMoreKey), findsNothing);
   });
 
-  testWidgets('「展开全部」一次打开所有露出来的段，「收起全部」再全收回去', (WidgetTester tester) async {
+  testWidgets('「展开全部」= 真全开（段全露 + 段内不再截断），「收起全部」回到刚进页面的样子', (
+    WidgetTester tester,
+  ) async {
+    // 用户第四十八轮·补三的原话：「只有展开没有收起，展开全部不把全部打开，就展开所有字幕组」。
+    // 这份数据把两个面都摆上：12 段（默认只露 4 个）+ 第一段 15 条（默认只露 12 条）。
+    // ⚠️ 同条数时段的次序看"这一段最新那条"（见 `groupSeedItems`），所以 `day` 反着给，
+    // 让露出来的 4 段就是 甲组 / 组2 / 组3 / 组4，被窗口挡住的**一定**有 组12。
     final _Harness h = _Harness(
       source: _FakeSources(<String, List<SourceItemView>>{
         'mikan:葬送的芙莉莲': <SourceItemView>[
-          _item(1, group: '甲组'),
-          _item(2, group: '乙组', day: 2),
-          _item(3, group: '丙组', day: 3),
+          for (int i = 1; i <= 15; i++) _item(i, group: '甲组', day: i),
+          for (int i = 2; i <= 12; i++) _item(100 + i, group: '组$i', day: 13 - i),
         ],
       }),
       schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
@@ -309,28 +315,48 @@ void main() {
     );
     await _pump(tester, h);
 
-    expect(find.textContaining('葬送的芙莉莲 - 0'), findsNothing, reason: '默认全收起');
+    // 刚进来：露 4 段、一段都没展开。
+    expect(find.text('甲组（15 条）'), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsNothing, reason: '默认只露 4 段');
+    expect(find.textContaining('还有 8 个'), findsOneWidget);
+    expect(find.text('展开全部'), findsOneWidget);
+    expect(find.textContaining('葬送的芙莉莲 - '), findsNothing, reason: '默认全收起');
+    final double dyBefore = tester
+        .getTopLeft(find.byKey(dsDetailSeedsExpandAllKey))
+        .dy;
 
     await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
     await tester.pumpAndSettle();
 
-    for (int i = 1; i <= 3; i++) {
-      expect(
-        find.textContaining('葬送的芙莉莲 - 0$i'),
-        findsOneWidget,
-        reason: '三段都打开了',
-      );
-    }
+    // ① 12 段全露出来了（「显示更多字幕组」自己消失）。
+    expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsMoreKey), findsNothing);
+    // ② 段内也不再截断：最老那条画出来了，「本组还有 N 条」一条都不剩。
     expect(
-      find.text('番名'),
+      find.textContaining('葬送的芙莉莲 - 01'),
       findsOneWidget,
-      reason: '开了三张表，表头仍然只在最上面那张画一次',
+      reason: '第 13~15 条不再藏在「本组还有 3 条」后面',
+    );
+    expect(find.textContaining('本组还有'), findsNothing);
+    // ③ 12 张表，表头仍然只在最上面那张画一次。
+    expect(find.text('番名'), findsOneWidget);
+    expect(find.text('收起全部'), findsOneWidget);
+
+    // ④ 那颗按钮在结果**上面**：展开之后它没被顶走 —— 否则用户只剩"展开"点得到。
+    expect(
+      tester.getTopLeft(find.byKey(dsDetailSeedsExpandAllKey)).dy,
+      dyBefore,
+      reason: '控制行在结果上面，内容在它下面长',
     );
 
     await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('葬送的芙莉莲 - 0'), findsNothing);
+    // 回到刚进这一页的样子：段窗口 4 个、全收、一条不画。
+    expect(find.textContaining('葬送的芙莉莲 - '), findsNothing);
+    expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsNothing);
+    expect(find.textContaining('还有 8 个'), findsOneWidget, reason: '「显示更多字幕组」也回来了');
+    expect(find.text('展开全部'), findsOneWidget);
     expect(find.text('番名'), findsNothing);
   });
 
@@ -386,6 +412,16 @@ void main() {
 
     expect(find.textContaining('葬送的芙莉莲 - 01'), findsOneWidget);
     expect(find.text('本组还有 3 条'), findsNothing);
+
+    // 末尾那颗「收起这一组」：这一段 15 行，看完想收起来时不用再滚回抬头去点那颗小箭头
+    // （第四十八轮·补三，用户原话「只有展开没有收起」）。
+    expect(find.byKey(dsDetailSeedsGroupCollapseKey('桜都')), findsOneWidget);
+    await tester.tap(find.byKey(dsDetailSeedsGroupCollapseKey('桜都')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('葬送的芙莉莲 - '), findsNothing, reason: '收起来了');
+    expect(find.text('桜都字幕组（15 条）'), findsOneWidget, reason: '只是收起，抬头还在');
+    expect(find.text('展开全部'), findsOneWidget, reason: '一段都没开着 → 那颗变回"全开"');
   });
 
   testWidgets('字幕组超过 4 段才出现「显示更多字幕组」', (WidgetTester tester) async {
