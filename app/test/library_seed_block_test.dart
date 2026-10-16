@@ -2,10 +2,12 @@
 ///
 /// 状态机在 `library_seed_test.dart` 里验；这里只验用户能看见的东西：
 /// * 加载文案（「正在各站搜…」）；
-/// * 有结果时：**一段一个字幕组**（抬头写着组名与条数）、每段一张表（表头只在最上面画一次）、
-///   行尾的「已看过 / 在队列 / 已完成」与「别的站也有」标记；
-/// * 每段先露 12 条（「本组还有 N 条」）、整块先露 4 段（「显示更多字幕组」）；
-/// * 右键 / 抬头那颗「这一组都入队」真的把这一段加进队列（跳过已看过的）；
+/// * 有结果时：**一段一个字幕组**（抬头写着组名与条数）、**默认全收起**（一进来只有组抬头，
+///   点抬头或底下那颗「展开全部」才画条目）、表头只在第一张展开的表上画一次、行尾的
+///   「已看过 / 在队列 / 已完成」与「别的站也有」标记；
+/// * 每段展开后先露 12 条（「本组还有 N 条」）、整块先露 4 段（「显示更多字幕组」）；
+/// * 右键 / 抬头那颗「这一组都入队」真的把这一段加进队列（跳过已看过的），
+///   **收起状态下也能点**；
 /// * 粘 mikan 番剧页之后，每段抬头多出「订阅」；
 /// * 没有结果时：说清是"各站都没有"、给「重新搜一遍」；
 /// * 抬头那颗「在搜索页打开」在**任何阶段**都在。
@@ -231,9 +233,7 @@ Future<void> _pump(WidgetTester tester, _Harness h) async {
 }
 
 void main() {
-  testWidgets('有结果：一段一个字幕组（组名 + 条数）/ 每段一张表 / 抬头两颗动作都在', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('有结果：默认**全收起**（只有一组行抬头，一条条目都不画）', (WidgetTester tester) async {
     final _Harness h = _Harness(
       source: _FakeSources(<String, List<SourceItemView>>{
         'mikan:葬送的芙莉莲': <SourceItemView>[_item(1), _item(2)],
@@ -257,15 +257,81 @@ void main() {
     expect(find.byKey(dsDetailSeedsGroupKey('lolihouse')), findsOneWidget);
     expect(find.text('桜都字幕组（2 条）'), findsOneWidget);
     expect(find.text('LoliHouse（1 条）'), findsOneWidget);
-    // 三行都在；没锚过番剧页 → 没有「订阅」（那颗要番剧 id）。
-    expect(find.byKey(dsDetailSeedsTableKey), findsOneWidget);
-    for (int i = 1; i <= 3; i++) {
-      expect(find.textContaining('葬送的芙莉莲 - 0$i'), findsOneWidget);
-    }
+    // ⚠️ 第四十八轮·补：默认收起 —— 一行条目、一条表头都不该出现。
+    expect(
+      find.textContaining('葬送的芙莉莲 - 0'),
+      findsNothing,
+      reason: '收起形态：进页面先看组名，点开哪一段才画哪一段',
+    );
+    expect(find.text('番名'), findsNothing, reason: '一张表都没展开 → 没有表头');
+    expect(find.byKey(dsDetailSeedsExpandAllKey), findsOneWidget);
+    expect(find.text('展开全部'), findsOneWidget);
+
+    // 没锚过番剧页 → 没有「订阅」（那颗要番剧 id）。
     expect(find.text('订阅'), findsNothing);
+    expect(find.byKey(dsDetailSeedsSearchPageKey), findsOneWidget);
+
+    // 点「桜都」那一段的抬头 → **只**展开这一段。
+    await tester.tap(find.byKey(dsDetailSeedsGroupToggleKey('桜都')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('葬送的芙莉莲 - 01'), findsOneWidget);
+    expect(find.textContaining('葬送的芙莉莲 - 02'), findsOneWidget);
+    expect(
+      find.textContaining('葬送的芙莉莲 - 03'),
+      findsNothing,
+      reason: 'LoliHouse 那一段还收着',
+    );
+    expect(find.text('番名'), findsOneWidget, reason: '表头只在第一张展开的表上画一次');
+    expect(find.text('收起全部'), findsOneWidget, reason: '有段开着 → 那颗变成"全收"');
+
+    // 再点一次抬头 = 收起来。
+    await tester.tap(find.byKey(dsDetailSeedsGroupToggleKey('桜都')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('葬送的芙莉莲 - 01'), findsNothing);
+    expect(find.text('展开全部'), findsOneWidget);
+
     // 段数没超默认值 → 没有「显示更多字幕组」。
     expect(find.byKey(dsDetailSeedsMoreKey), findsNothing);
-    expect(find.byKey(dsDetailSeedsSearchPageKey), findsOneWidget);
+  });
+
+  testWidgets('「展开全部」一次打开所有露出来的段，「收起全部」再全收回去', (WidgetTester tester) async {
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[
+          _item(1, group: '甲组'),
+          _item(2, group: '乙组', day: 2),
+          _item(3, group: '丙组', day: 3),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+
+    expect(find.textContaining('葬送的芙莉莲 - 0'), findsNothing, reason: '默认全收起');
+
+    await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
+    await tester.pumpAndSettle();
+
+    for (int i = 1; i <= 3; i++) {
+      expect(
+        find.textContaining('葬送的芙莉莲 - 0$i'),
+        findsOneWidget,
+        reason: '三段都打开了',
+      );
+    }
+    expect(
+      find.text('番名'),
+      findsOneWidget,
+      reason: '开了三张表，表头仍然只在最上面那张画一次',
+    );
+
+    await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('葬送的芙莉莲 - 0'), findsNothing);
+    expect(find.text('番名'), findsNothing);
   });
 
   testWidgets('跨站同名合并成一条：行尾带「别的站也有」的小标记', (WidgetTester tester) async {
@@ -286,6 +352,9 @@ void main() {
     await _pump(tester, h);
 
     expect(find.text('桜都字幕组（1 条）'), findsOneWidget, reason: '两个站的一条 → 合成一段一条');
+    // 收起态下先点开这一段才看得见行尾那枚标记。
+    await tester.tap(find.byKey(dsDetailSeedsGroupToggleKey('桜都')));
+    await tester.pumpAndSettle();
     expect(find.byTooltip('另外 1 个站也有这一条（同名合并成了一条）'), findsOneWidget);
   });
 
@@ -302,6 +371,11 @@ void main() {
     await _pump(tester, h);
 
     expect(find.text('桜都字幕组（15 条）'), findsOneWidget);
+    expect(find.text('本组还有 3 条'), findsNothing, reason: '收起着的段连"还有几条"都不画');
+
+    await tester.tap(find.byKey(dsDetailSeedsGroupToggleKey('桜都')));
+    await tester.pumpAndSettle();
+
     // 组内按发布 新→旧：藏起来的是**最老的**那三条。
     expect(find.textContaining('葬送的芙莉莲 - 15'), findsOneWidget);
     expect(find.textContaining('葬送的芙莉莲 - 03'), findsNothing, reason: '最老的三条先藏着');
@@ -405,6 +479,10 @@ void main() {
     ]);
     await tester.pumpAndSettle();
 
+    // 标记画在行尾，所以先把这一段点开。
+    await tester.tap(find.byKey(dsDetailSeedsGroupToggleKey('桜都')));
+    await tester.pumpAndSettle();
+
     expect(find.byTooltip('已看过'), findsOneWidget);
     expect(find.byTooltip('已下载'), findsNothing); // 队列里的是"下载中"这一档
     expect(find.byTooltip('已完成'), findsOneWidget);
@@ -426,6 +504,8 @@ void main() {
       queue: queue,
     );
     await _pump(tester, h);
+    // 收起状态下抬头那颗也要能用（想整组下的人，正是最不想先翻那 90 行的人）。
+    expect(find.textContaining('葬送的芙莉莲 - 0'), findsNothing);
 
     final ProviderContainer container = ProviderScope.containerOf(
       tester.element(find.byKey(dsDetailSeedsKey)),
@@ -466,6 +546,9 @@ void main() {
       queue: queue,
     );
     await _pump(tester, h);
+
+    await tester.tap(find.byKey(dsDetailSeedsGroupToggleKey('桜都')));
+    await tester.pumpAndSettle();
 
     await tester.tap(
       find.textContaining('葬送的芙莉莲 - 01'),

@@ -10,10 +10,13 @@
 ///
 /// 所以这一块的形态是：
 /// * **引擎 = 主流站点的关键字搜索**（用户勾选的那些源，聚合搜番名；`LibrarySeedController`）；
-/// * 结果**按字幕组分段**（一段一张小表，列宽与搜索页完全一致，表头只在最上面画一次）；
+/// * 结果**按字幕组分段**（一段一行抬头，列宽与搜索页完全一致，表头只在最上面画一次）；
 /// * **跨站同名合并**成一条（合并过的行会带一个"别的站也有"的小标记，别让用户以为少看了一个站）；
 /// * 每段抬头：组名 · 条数 · 「订阅」（只有拿得到那张 mikan 番剧页时才有）·「这一组都入队」；
-/// * 每段先露 [kSeedGroupVisibleStep] 条，其余藏在「本组还有 N 条」后面；
+/// * **每一段默认收起**（第四十八轮·补，用户「把搜索结果默认收起形态」）—— 进页面只看到
+///   一行行组抬头，点哪一段抬头（或底下那颗「展开全部」）才画那一段的条目：
+///   一屏十几个组名比一屏几行番名好挑，而且「这一组都入队」在收起状态下照样点得到；
+/// * 展开之后先露 [kSeedGroupVisibleStep] 条，其余藏在「本组还有 N 条」后面；
 /// * 段本身先露 [kSeedVisibleGroups] 个，其余的走「显示更多字幕组」；
 /// * mikan 番剧页降级成**手动**口（「改搜索词 / 粘链接」里粘地址或 id）—— 它给的东西更完整
 ///   （整部剧集表 + 每组自己的 RSS），只是不该再当主力，见 `domain/library_seed.dart` 的库注释。
@@ -62,8 +65,15 @@ const Key dsDetailSeedsTableKey = Key('library-detail-seeds-table');
 /// 「显示更多字幕组」。
 const Key dsDetailSeedsMoreKey = Key('library-detail-seeds-more');
 
+/// 「展开全部 / 收起全部」（第四十八轮·补：每段默认收起，这颗是一次全开）。
+const Key dsDetailSeedsExpandAllKey = Key('library-detail-seeds-expand-all');
+
 /// 字幕组那一段（每段一个，key 带组名 —— 用例据此定位某一段）。
 Key dsDetailSeedsGroupKey(String key) => ValueKey<String>('seed-group-$key');
+
+/// 那一段的**抬头**（点它 = 展开 / 收起这一段）。
+Key dsDetailSeedsGroupToggleKey(String key) =>
+    ValueKey<String>('seed-group-toggle-$key');
 
 /// 某一段的「本组还有 N 条」。
 Key dsDetailSeedsGroupMoreKey(String key) =>
@@ -94,8 +104,13 @@ class LibrarySeedBlock extends ConsumerStatefulWidget {
 class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   final Set<String> _selected = <String>{};
 
-  /// 哪几段被「本组还有 N 条」展开了（纯界面状态，不落盘、换条目就清）。
-  final Set<String> _expandedGroups = <String>{};
+  /// 哪几段**展开着**（第四十八轮·补：默认**全收起** —— 进页面先看组名与条数，
+  /// 点哪一段看哪一段）。纯界面状态，不落盘、换条目就清。
+  final Set<String> _openGroups = <String>{};
+
+  /// 哪几段把「本组还有 N 条」也点开了（= 这一段全露）。收起那一段时一起丢掉，
+  /// 再展开又回到"先露 12 条"。
+  final Set<String> _fullGroups = <String>{};
 
   final TextEditingController _word = TextEditingController();
   final TextEditingController _raw = TextEditingController();
@@ -127,7 +142,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.subject.id == widget.subject.id) return;
     _selected.clear();
-    _expandedGroups.clear();
+    _openGroups.clear();
+    _fullGroups.clear();
     _ensureSoon();
   }
 
@@ -298,6 +314,31 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     ),
   );
 
+  // ── 段的开合（第四十八轮·补） ────────────────────────────────────────────────
+
+  /// 点某一段的抬头：收着的 → 展开；展开的 → 收起来（收起时顺手关掉段内的"全露"，
+  /// 下次再点开仍然先露 12 条 —— 否则它会记住一个用户已经不看了的滚动位置）。
+  void _toggleGroup(String key) => setState(() {
+    if (_openGroups.remove(key)) {
+      _fullGroups.remove(key);
+    } else {
+      _openGroups.add(key);
+    }
+  });
+
+  /// 「展开全部 / 收起全部」：**只对现在露出来的这些段**动手（没露出来的那些
+  /// 走「显示更多字幕组」，展开它们等于凭空长出一屏内容）。
+  void _toggleAllGroups(List<SeedGroup> shown) => setState(() {
+    if (_openGroups.isEmpty) {
+      for (final SeedGroup group in shown) {
+        _openGroups.add(group.key);
+      }
+    } else {
+      _openGroups.clear();
+      _fullGroups.clear();
+    }
+  });
+
   // ── 渲染 ────────────────────────────────────────────────────────────────────
 
   @override
@@ -355,6 +396,18 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                       onPressed: ref
                           .read(librarySeedProvider.notifier)
                           .showMoreGroups,
+                    ),
+                  // 每段默认收起，所以给一颗"一次全开"：想通览条目的人不用一段段点。
+                  // 段数多的时候它只开**现在露出来的这些**（见 `_toggleAllGroups`）。
+                  if (s.shownGroups.isNotEmpty)
+                    NeoButton(
+                      key: dsDetailSeedsExpandAllKey,
+                      label: _openGroups.isEmpty ? '展开全部' : '收起全部',
+                      icon: _openGroups.isEmpty
+                          ? Icons.unfold_more
+                          : Icons.unfold_less,
+                      compact: true,
+                      onPressed: () => _toggleAllGroups(s.shownGroups),
                     ),
                   NeoButton(
                     label: _tools ? '收起工具' : '改搜索词 / 粘链接',
@@ -446,12 +499,19 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     if (s.phase == LibrarySeedPhase.failed) return _failure(context, s);
 
     final List<SeedGroup> shown = s.shownGroups;
-    // 「全选本页」说的是**整块露出来的那些**（每段一张小表，但勾选是一件事）。
+    // 「全选本页」说的是**现在真看得见**的那些条目：收起着的段一行都没画，
+    // 把它算进去就会变成"勾选了一批看不见的东西"（第四十五轮那条纪律的延续）。
     final List<SourceItemView> scope = <SourceItemView>[
-      for (final SeedGroup group in shown) ..._visibleItems(group),
+      for (final SeedGroup group in shown)
+        if (_openGroups.contains(group.key)) ..._visibleItems(group),
     ];
     final bool connected = ref.watch(engineStatusProvider).isConnected;
     final List<SourceOption> sources = ref.watch(sourceOptionsProvider);
+    // 表头（番名 / 大小 / 状态 / 操作 + 全选）只在**第一张展开出来的**表上画一次：
+    // 默认全都收着时一张表都没有，也就不该有一条孤零零的表头。
+    final int headerAt = shown.indexWhere(
+      (SeedGroup g) => _openGroups.contains(g.key),
+    );
 
     return Column(
       key: dsDetailSeedsTableKey,
@@ -464,86 +524,89 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
           ),
         for (int i = 0; i < shown.length; i++) ...<Widget>[
           _groupHeader(context, s, shown[i], showTitle, marks, jobs, torrents),
-          SearchResultsTable(
-            items: _visibleItems(shown[i]),
-            embedded: true,
-            // 表头只在最上面画一次（列宽一样，每段都来一行会把版面切碎）。
-            showHeader: i == 0,
-            selectAllScope: scope,
-            engineConnected: connected,
-            busyItemId: _busyItemId,
-            sources: sources,
-            onPlay: (SourceItemView item) =>
-                unawaited(_play(item, s, showTitle)),
-            onDownload: (SourceItemView item) => runGuarded(
-              context,
-              action: () => ref.read(queuePortProvider).enqueueDownload(item),
-              success: '已加入下载队列',
-            ),
-            onSubscribe: (SourceItemView item) => runGuarded(
-              context,
-              action: () => ref.read(queuePortProvider).attachToSubsRule(item),
-              success: '已加入订阅过滤',
-            ),
-            selectedIds: _selected,
-            onToggleSelect: (SourceItemView item) => setState(() {
-              if (!_selected.remove(item.id)) _selected.add(item.id);
-            }),
-            onToggleSelectAll: (bool select) => setState(() {
-              for (final SourceItemView item in scope) {
-                if (!canBatchDownload(item)) continue;
-                if (select) {
-                  _selected.add(item.id);
-                } else {
-                  _selected.remove(item.id);
+          if (_openGroups.contains(shown[i].key)) ...<Widget>[
+            SearchResultsTable(
+              items: _visibleItems(shown[i]),
+              embedded: true,
+              // 表头只在最上面画一次（列宽一样，每段都来一行会把版面切碎）。
+              showHeader: i == headerAt,
+              selectAllScope: scope,
+              engineConnected: connected,
+              busyItemId: _busyItemId,
+              sources: sources,
+              onPlay: (SourceItemView item) =>
+                  unawaited(_play(item, s, showTitle)),
+              onDownload: (SourceItemView item) => runGuarded(
+                context,
+                action: () => ref.read(queuePortProvider).enqueueDownload(item),
+                success: '已加入下载队列',
+              ),
+              onSubscribe: (SourceItemView item) => runGuarded(
+                context,
+                action: () => ref.read(queuePortProvider).attachToSubsRule(item),
+                success: '已加入订阅过滤',
+              ),
+              selectedIds: _selected,
+              onToggleSelect: (SourceItemView item) => setState(() {
+                if (!_selected.remove(item.id)) _selected.add(item.id);
+              }),
+              onToggleSelectAll: (bool select) => setState(() {
+                for (final SourceItemView item in scope) {
+                  if (!canBatchDownload(item)) continue;
+                  if (select) {
+                    _selected.add(item.id);
+                  } else {
+                    _selected.remove(item.id);
+                  }
                 }
-              }
-            }),
-            marksOf: (SourceItemView item) => _marks(
-              item,
-              s,
-              showTitle,
-              watched: marks,
-              jobs: jobs,
-              torrents: torrents,
-            ),
-            groupActionLabel: (SourceItemView item) =>
-                '这一组都入队（${shown[i].count} 条）',
-            onGroupAction: (SourceItemView item) => unawaited(
-              _enqueueGroup(
-                shown[i].items,
+              }),
+              marksOf: (SourceItemView item) => _marks(
+                item,
                 s,
                 showTitle,
-                marks,
-                jobs,
-                torrents,
+                watched: marks,
+                jobs: jobs,
+                torrents: torrents,
+              ),
+              groupActionLabel: (SourceItemView item) =>
+                  '这一组都入队（${shown[i].count} 条）',
+              onGroupAction: (SourceItemView item) => unawaited(
+                _enqueueGroup(
+                  shown[i].items,
+                  s,
+                  showTitle,
+                  marks,
+                  jobs,
+                  torrents,
+                ),
               ),
             ),
-          ),
-          if (_visibleItems(shown[i]).length < shown[i].count)
-            Padding(
-              padding: const EdgeInsets.only(top: 2, bottom: 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  key: dsDetailSeedsGroupMoreKey(shown[i].key),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    minimumSize: const Size(0, 26),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  onPressed: () =>
-                      setState(() => _expandedGroups.add(shown[i].key)),
-                  child: Text(
-                    '本组还有 ${shown[i].count - _visibleItems(shown[i]).length} 条',
-                    style: TextStyle(
-                      color: t.accent,
-                      fontSize: DsTypeScale.caption,
+            if (_visibleItems(shown[i]).length < shown[i].count)
+              Padding(
+                padding: const EdgeInsets.only(top: 2, bottom: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: dsDetailSeedsGroupMoreKey(shown[i].key),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      minimumSize: const Size(0, 26),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () => setState(
+                      () => _fullGroups.add(shown[i].key),
+                    ),
+                    child: Text(
+                      '本组还有 ${shown[i].count - _visibleItems(shown[i]).length} 条',
+                      style: TextStyle(
+                        color: t.accent,
+                        fontSize: DsTypeScale.caption,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+          ],
         ],
         if (_selected.isNotEmpty) ...<Widget>[
           const SizedBox(height: 8),
@@ -600,9 +663,9 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 这一段现在该画几条（没展开就只画前 [kSeedGroupVisibleStep] 条）。
+  /// 这一段现在该画几条（收起着的段一条都不画；展开了先露 [kSeedGroupVisibleStep] 条）。
   List<SourceItemView> _visibleItems(SeedGroup group) {
-    if (_expandedGroups.contains(group.key) ||
+    if (_fullGroups.contains(group.key) ||
         group.count <= kSeedGroupVisibleStep) {
       return group.items;
     }
@@ -622,7 +685,11 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     return null;
   }
 
-  /// 一段的抬头：组名 · 条数 ·（拿得到番剧页时）「订阅」·「这一组都入队」。
+  /// 一段的抬头：`▸/▾` 组名（N 条）·（拿得到番剧页时）「订阅」·「这一组都入队」。
+  ///
+  /// 抬头本身是**这一段的开关**（第四十八轮·补：默认全收起）—— 点它才画条目。
+  /// 「这一组都入队」与「订阅」留在收起态里：这两件事本来就不需要先看见每一行
+  /// （想整组下的人正是最不想翻那 90 行的人）。
   Widget _groupHeader(
     BuildContext context,
     LibrarySeedState s,
@@ -634,17 +701,46 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   ) {
     final DsTokens t = context.ds;
     final BangumiGroupView? detailGroup = _detailGroupOf(s, group);
+    final bool open = _openGroups.contains(group.key);
     return Padding(
       key: dsDetailSeedsGroupKey(group.key),
       padding: const EdgeInsets.only(top: 10, bottom: 6),
       child: Row(
         children: <Widget>[
           Expanded(
-            child: Text(
-              '${group.label}（${group.count} 条）',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: dsTableHeaderStyle(t).copyWith(fontSize: DsTypeScale.secondary),
+            child: InkWell(
+              key: dsDetailSeedsGroupToggleKey(group.key),
+              onTap: () => _toggleGroup(group.key),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: <Widget>[
+                    Tooltip(
+                      message: open
+                          ? '收起这一组'
+                          : '展开这一组（${group.count} 条）',
+                      child: Icon(
+                        open
+                            ? Icons.keyboard_arrow_down
+                            : Icons.keyboard_arrow_right,
+                        size: 16,
+                        color: t.text3,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        '${group.label}（${group.count} 条）',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: dsTableHeaderStyle(
+                          t,
+                        ).copyWith(fontSize: DsTypeScale.secondary),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
           if (detailGroup != null && s.binding != null) ...<Widget>[

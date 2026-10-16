@@ -38,6 +38,18 @@ import 'subtitle_groups.dart';
 /// 一次解析最多试几个查询词（用户第四十五轮定的阶梯正好四级）。
 const int kMaxLibrarySeedQueries = 4;
 
+/// 种子块**不问**的源 id（第四十八轮·补，用户原话：「去除 acg.rip 源」）。
+///
+/// 为什么只在这一块里删、搜索页照旧留着它：ACG.RIP 全站**不提供 magnet**（见
+/// `core/lib/sources/bencode.dart` 头部的实测），列表里给的是 `.torrent` 直链 —— 于是
+/// 每一条都要**先多打一次请求**、把种子文件下回来算 infohash 才拿得到磁力。
+/// 种子块是"进页面就自动搜一遍、一次问好几个站"，把它算进去等于多搭几条会超时的腿；
+/// 搜索页是用户自己点着搜的，愿意等就留着（`host_data_test` 那套注册表一字没动）。
+///
+/// 判定按 id 白名单做减法，不按域名：自定义 RSS（`rss:<hash>`）是用户自己加的，
+/// 哪怕它指向 acg.rip 也照问 —— 那一份勾选是用户的意图，不该被这里悄悄吃掉。
+const Set<String> kSeedSkippedSourceIds = <String>{'acgrip', 'acgrip-batch'};
+
 /// 番剧页结果的宿主侧缓存时长（第四十五轮用户选定「30 分钟」）。
 ///
 /// 为什么必须自己缓存：`core` 的 `MikanSource.bangumi()` **不走缓存**（裸 `http.getText`），

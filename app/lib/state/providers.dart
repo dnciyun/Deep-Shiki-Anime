@@ -2369,10 +2369,16 @@ class _SeedAnchor {
 ///
 /// 参数是两个清单而不是 `Ref`：调用方一半是 controller（`Ref`）、一半是界面（`WidgetRef`），
 /// 两者没有共同的父类型能读 provider。
+///
+/// ⚠️ 第四十八轮·补：在勾选之上再减掉 [kSeedSkippedSourceIds]（ACG.RIP）—— 用户
+/// 「去除 acg.rip 源」。减法放在**这里**而不是各个调用点：controller 的两处取站点、
+/// 以及失败文案里"问过几个站"的那个数字，读的都是这一份口径，不会各说各话。
 List<SourceOption> seedSourceTargetsFor(
   List<SourceOption> all,
   Set<String> excluded,
-) => selectedSources(all, excluded, needSearch: true);
+) => selectedSources(all, excluded, needSearch: true)
+    .where((SourceOption s) => !kSeedSkippedSourceIds.contains(s.id))
+    .toList(growable: false);
 
 /// 种子块的聚合兜底：把 [query] 在 [targets] 上搜一遍（并发与超时口径同搜索页）。
 Future<List<AggregateSourceResult>> _seedFanOut(

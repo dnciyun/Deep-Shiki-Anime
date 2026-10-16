@@ -641,6 +641,48 @@ void main() {
       expect(s.episodes, hasLength(1), reason: '条目还是要留在那儿，好让用户看见是什么没源');
     });
 
+    test('AGC.RIP 不在种子块的站点里（用户「去除 acg.rip 源」）', () async {
+      final _FakeSources source = _FakeSources(
+        options: const <SourceOption>[
+          SourceOption(id: 'mikan', displayName: 'Mikan（蜜柑计划）'),
+          SourceOption(id: 'acgrip', displayName: 'ACG.RIP · 动画'),
+          SourceOption(id: 'dmhy', displayName: '动漫花园（DMHY）'),
+        ],
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[
+            _item(1, '[桜都字幕组] 葬送的芙莉莲 - 01'),
+          ],
+          'dmhy:葬送的芙莉莲': <SourceItemView>[
+            _item(2, '[LoliHouse] 葬送的芙莉莲 - 01', group: 'LoliHouse', source: 'dmhy'),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(
+        source.searched.where((String q) => q.startsWith('acgrip')),
+        isEmpty,
+        reason: '这一块不问 ACG.RIP：它不给 magnet，每条都要多打一次请求才算得出磁力',
+      );
+      expect(
+        source.searched,
+        <String>['mikan:葬送的芙莉莲', 'dmhy:葬送的芙莉莲'],
+        reason: '其它站照旧一起搜',
+      );
+      expect(s.phase, LibrarySeedPhase.ready);
+      expect(
+        s.groups.map((SeedGroup g) => g.label),
+        unorderedEquals(<String>['桜都字幕组', 'LoliHouse']),
+      );
+    });
+
     test('一个源都没勾（勾上的也都不支持搜索）→ network + 说清去哪儿勾', () async {
       final _FakeSources source = _FakeSources(
         options: const <SourceOption>[
@@ -839,6 +881,56 @@ void main() {
 
       expect(s.phase, LibrarySeedPhase.ready);
       expect(s.groups.single.label, '桜都字幕组');
+    });
+  });
+
+  group('seedSourceTargetsFor：种子块问哪些源', () {
+    List<String> ids(List<SourceOption> all, {Set<String> excluded = const <String>{}}) =>
+        seedSourceTargetsFor(all, excluded).map((SourceOption s) => s.id).toList();
+
+    test('ACG.RIP 减掉，其它勾上的照旧（含合集分区那些）', () {
+      expect(
+        ids(const <SourceOption>[
+          SourceOption(id: 'nyaa', displayName: 'Nyaa'),
+          SourceOption(id: 'acgrip', displayName: 'ACG.RIP · 动画'),
+          SourceOption(id: 'acgrip-batch', displayName: 'ACG.RIP · 合集'),
+          SourceOption(id: 'dmhy-batch', displayName: '动漫花园 · 季度全集'),
+        ]),
+        <String>['nyaa', 'dmhy-batch'],
+      );
+    });
+
+    test('搜索页的排除名单照旧生效（两道减法叠在一起）', () {
+      expect(
+        ids(
+          const <SourceOption>[
+            SourceOption(id: 'mikan', displayName: 'Mikan'),
+            SourceOption(id: 'nyaa', displayName: 'Nyaa'),
+            SourceOption(id: 'acgrip', displayName: 'ACG.RIP · 动画'),
+          ],
+          excluded: <String>{'nyaa'},
+        ),
+        <String>['mikan'],
+      );
+    });
+
+    test('自定义 RSS 哪怕指向 acg.rip 也照问（那是用户自己加的）', () {
+      expect(
+        ids(const <SourceOption>[
+          SourceOption(id: 'rss:8f3a', displayName: 'acg.rip'),
+        ]),
+        <String>['rss:8f3a'],
+      );
+    });
+
+    test('不支持关键字搜索的源照旧排除（不是这一轮加的口径）', () {
+      expect(
+        ids(const <SourceOption>[
+          SourceOption(id: 'mikan', displayName: 'Mikan'),
+          SourceOption(id: 'rss:x', displayName: '订阅源', supportsSearch: false),
+        ]),
+        <String>['mikan'],
+      );
     });
   });
 }
