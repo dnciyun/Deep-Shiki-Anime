@@ -1,17 +1,25 @@
-/// 动漫库「种子」块（第四十五轮）：领域规则 + 状态机。
+/// 动漫库「种子」块：领域规则 + 状态机。
 ///
-/// 用户原话：「能实现动漫库中直接显示种子吗，就像主页那样」，问答里逐条定下：
-/// * 主路径 = 按番名搜 mikan → 认番剧页 → 拿整部（字幕组 + 每集磁力），对应关系**落盘记住**；
-/// * 查询词阶梯 = 中文名 → 原名 → 罗马字/英文别名 → 去季/部后缀的短名，**命中即停**；
-/// * 候选番剧页**必须回验标题**（实测候选顺序不保证是目标那一季），拿不准就列出来让用户点；
-/// * 落空 = **手动**「用其他源再搜一次」（不自动打聚合）；
-/// * 三种空分开写；番剧页结果宿主侧缓存 30 分钟、失败不缓存。
+/// 用户原话（第四十五轮）：「能实现动漫库中直接显示种子吗，就像主页那样」。
+/// 用户原话（第四十八轮）：「我自己去 mikan 搜都搜索得到，这里就搜不到了，修复一下，
+/// 然后改为主流搜索当引擎，按字幕组分隔，不同搜索引擎同名字就按合并」。
+///
+/// 第四十八轮换掉了引擎，所以这一份里能看到两代口径：
+/// * **主路径**：番名阶梯 × 勾选的源（聚合搜）→ 名字命中判据 → 跨站同名合并 → 按字幕组分段；
+/// * **手动**：粘 mikan 番剧页地址/id，把它并进池子（它给的是整部剧集表 + 每组 RSS）。
+///
+/// 真机口径的证据在 `build/round48/`：841 行 → 名字命中 841（用打分当判据会只剩 595，
+/// 丢掉 KissSub 一整套 01–12）→ 同名合并 835 → **54 段**，中位数 3 条/段、最多 93 条/段。
 library;
 
+import 'dart:async';
+
+import 'package:dsanima/domain/aggregate.dart';
 import 'package:dsanima/domain/bangumi.dart';
 import 'package:dsanima/domain/library_seed.dart';
 import 'package:dsanima/domain/models.dart';
 import 'package:dsanima/domain/ports.dart';
+import 'package:dsanima/domain/subtitle_groups.dart';
 import 'package:dsanima/domain/unavailable.dart';
 import 'package:dsanima/state/providers.dart';
 import 'package:dsanima_core/sources/kv.dart' show InMemoryKeyValueStore;
@@ -22,42 +30,49 @@ import 'package:flutter_test/flutter_test.dart';
 // 测试替身
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 假源：`mikanHits` 里的词能搜到（其余词 0 条），复现 mikan"整串匹配、不分词"。
+/// 假源表：`hits['源:词']` 里有东西才算搜到（复现 mikan"整串匹配、不分词"）；
+/// [failingSources] 里的源每次都抛（复现"某个站挂了"）。
 class _FakeSources extends UnavailableSourcePort {
   _FakeSources({
-    this.mikanHits = const <String, List<SourceItemView>>{},
-    this.otherHits = const <String, List<SourceItemView>>{},
+    this.hits = const <String, List<SourceItemView>>{},
     this.options = const <SourceOption>[
       SourceOption(id: 'mikan', displayName: 'Mikan（蜜柑计划）'),
       SourceOption(id: 'dmhy', displayName: '动漫花园（DMHY）'),
     ],
+    this.failingSources = const <String>{},
   });
 
-  final Map<String, List<SourceItemView>> mikanHits;
-  final Map<String, List<SourceItemView>> otherHits;
+  final Map<String, List<SourceItemView>> hits;
   final List<SourceOption> options;
+  final Set<String> failingSources;
 
-  /// 记录每次搜索（`源:词`），用来断言"命中即停"与"有没有乱打聚合"。
+  /// 记录每次搜索（`源:词`）——"命中即停"与"阶梯试到哪一级"都靠它断言。
   final List<String> searched = <String>[];
 
   @override
   List<SourceOption> get sources => options;
 
   @override
-  Future<SourcePageView> latest(String sourceId, {int page = 1}) async => SourcePageView(
-    items: const <SourceItemView>[],
-    page: page,
-    hasNext: false,
-    fetchedAt: DateTime(2026, 10, 16, 12),
-  );
+  Future<SourcePageView> latest(String sourceId, {int page = 1}) async =>
+      SourcePageView(
+        items: const <SourceItemView>[],
+        page: page,
+        hasNext: false,
+        fetchedAt: DateTime(2026, 10, 16, 12),
+      );
 
   @override
-  Future<SourcePageView> search(String sourceId, String keyword, {int page = 1}) async {
+  Future<SourcePageView> search(
+    String sourceId,
+    String keyword, {
+    int page = 1,
+  }) async {
     searched.add('$sourceId:$keyword');
-    final Map<String, List<SourceItemView>> map =
-        sourceId == 'mikan' ? mikanHits : otherHits;
+    if (failingSources.contains(sourceId)) {
+      throw PortUnavailableException('源站 503', hint: '稍后重试');
+    }
     return SourcePageView(
-      items: map[keyword] ?? const <SourceItemView>[],
+      items: hits['$sourceId:$keyword'] ?? const <SourceItemView>[],
       page: page,
       hasNext: false,
       fetchedAt: DateTime(2026, 10, 16, 12),
@@ -65,61 +80,7 @@ class _FakeSources extends UnavailableSourcePort {
   }
 }
 
-/// 假宿主数据层：**照真实现的契约来**。
-///
-/// ⚠️ 第四十七轮修的那条真机 bug 就死在"假契约"上，所以这里刻意把两条都建准：
-/// * [episodeInfo] —— "去单集页认番剧页"，**不看有没有磁力**（真实现是
-///   `MikanEpisodeParser` 认 `extra['bangumiId'] / ['bangumiTitle']`）；
-/// * [ensurePlayable] —— "**缺磁力才补**，已经有磁力就一次网络都不打"
-///   （`host_data.dart` 真实现的第一条）。旧版假实现这里无脑补 `bangumiId`，
-///   于是"控制器错用了 `ensurePlayable`"在测试里永远看不见，真机上却全军覆没。
-class _FakeHostData extends UnavailableHostDataPort {
-  _FakeHostData(this.byItem);
-
-  /// 条目 id → 这个条目所在的番剧页。
-  final Map<String, ({String id, String title})> byItem;
-
-  /// 真的去"单集页"取过信息的条目（= 打了几次网络）。
-  final List<String> enriched = <String>[];
-
-  /// `core.SourceItem.bestMagnet` 的等价判据（视图层没有这个 getter，见
-  /// `core/lib/sources/models.dart:87`）：有 magnet 或能用 infoHash 拼出磁力。
-  static bool _playableAlready(SourceItemView item) =>
-      (item.magnet ?? '').isNotEmpty || (item.infoHash ?? '').isNotEmpty;
-
-  @override
-  Future<SourceItemView> episodeInfo(SourceItemView item) async {
-    enriched.add(item.id);
-    final ({String id, String title})? hit = byItem[item.id];
-    if (hit == null) return item;
-    return _withExtras(item, <String, Object?>{
-      'bangumiId': hit.id,
-      'bangumiTitle': hit.title,
-    });
-  }
-
-  @override
-  Future<SourceItemView> ensurePlayable(SourceItemView item) async =>
-      _playableAlready(item) ? item : episodeInfo(item);
-
-  static SourceItemView _withExtras(SourceItemView item, Map<String, Object?> extra) =>
-      SourceItemView(
-        id: item.id,
-        sourceId: item.sourceId,
-        title: item.title,
-        detailUrl: item.detailUrl,
-        torrentUrl: item.torrentUrl,
-        magnet: item.magnet,
-        infoHash: item.infoHash,
-        sizeBytes: item.sizeBytes,
-        publishedAt: item.publishedAt,
-        group: item.group,
-        episodeHints: item.episodeHints,
-        extra: <String, Object?>{...item.extra, ...extra},
-      );
-}
-
-/// 假番剧端口：按 id 给整部剧集；`failure` 非空时每次都抛（复现 404 / 网络失败）。
+/// 假番剧端口：按 id 给整部剧集；[failure] 非空时每次都抛（复现 404 / 网络失败）。
 class _FakeSchedule extends UnavailableSchedulePort {
   _FakeSchedule(this.pages);
 
@@ -145,32 +106,39 @@ class _FakeSchedule extends UnavailableSchedulePort {
 
 String _hash(int n) => n.toRadixString(16).padLeft(40, '0');
 
-SourceItemView _item(int n, String title, {String group = '桜都字幕组'}) =>
-    SourceItemView(
-      id: 'mikan:${_hash(n)}',
-      sourceId: 'mikan',
-      title: title,
-      group: group,
-      magnet: 'magnet:?xt=urn:btih:${_hash(n)}',
-      infoHash: _hash(n),
-      sizeBytes: 400 * 1024 * 1024,
-      publishedAt: DateTime(2026, 10, 1).add(Duration(days: n)),
-      episodeHints: <String>['$n'],
-    );
+SourceItemView _item(
+  int n,
+  String title, {
+  String group = '桜都字幕组',
+  String source = 'mikan',
+}) => SourceItemView(
+  id: '$source:${_hash(n)}',
+  sourceId: source,
+  title: title,
+  group: group,
+  magnet: 'magnet:?xt=urn:btih:${_hash(n)}',
+  infoHash: _hash(n),
+  sizeBytes: 400 * 1024 * 1024,
+  publishedAt: DateTime(2026, 10, 1).add(Duration(days: n)),
+  episodeHints: <String>['$n'],
+);
 
-BangumiDetailView _detail(String id, String title, List<SourceItemView> episodes) =>
-    BangumiDetailView(
-      bangumiId: id,
-      title: title,
-      groups: <BangumiGroupView>[
-        BangumiGroupView(
-          id: '1',
-          name: '桜都字幕组',
-          rssUrl: 'https://mikanani.me/RSS/Bangumi?bangumiId=$id&subgroupid=1',
-        ),
-      ],
-      episodes: episodes,
-    );
+BangumiDetailView _detail(
+  String id,
+  String title,
+  List<SourceItemView> episodes,
+) => BangumiDetailView(
+  bangumiId: id,
+  title: title,
+  groups: <BangumiGroupView>[
+    BangumiGroupView(
+      id: '1',
+      name: '桜都字幕组',
+      rssUrl: 'https://mikanani.me/RSS/Bangumi?bangumiId=$id&subgroupid=1',
+    ),
+  ],
+  episodes: episodes,
+);
 
 BangumiSubject _subject({
   int id = 400602,
@@ -186,16 +154,33 @@ BangumiSubject _subject({
       : <BangumiInfoboxItem>[BangumiInfoboxItem(key: '别名', values: aliases)],
 );
 
+/// 设置里那一条（`searchProvider` 会读它 —— 种子块的"问哪些源"就是它的勾选）。
+AppSettings _settings({List<String> excluded = const <String>[]}) => AppSettings(
+  firstRunCompleted: true,
+  searchMode: SearchMode.aggregate,
+  defaultSourceId: 'mikan',
+  aggregateExcludedSourceIds: excluded,
+);
+
+InMemoryKeyValueStore _store([InMemoryKeyValueStore? given]) {
+  if (given == null) {
+    return InMemoryKeyValueStore(<String, Object?>{
+      SettingsController.storageKey: _settings().toJson(),
+    });
+  }
+  // 调用方自己建的 store（要预置绑定）：把设置补上，别让设置那一层退回"第一次启动"。
+  unawaited(given.put(SettingsController.storageKey, _settings().toJson()));
+  return given;
+}
+
 ProviderContainer _container({
   required _FakeSources source,
-  required _FakeHostData host,
   required _FakeSchedule schedule,
   InMemoryKeyValueStore? store,
 }) => ProviderContainer(
   overrides: [
-    keyValueStoreProvider.overrideWithValue(store ?? InMemoryKeyValueStore()),
+    keyValueStoreProvider.overrideWithValue(_store(store)),
     sourcePortProvider.overrideWithValue(source),
-    hostDataPortProvider.overrideWithValue(host),
     schedulePortProvider.overrideWithValue(schedule),
   ],
 );
@@ -217,7 +202,10 @@ void main() {
     });
 
     test('没有中文名（实测占条目池 8%）：第一格直接是原名，不出现空格子', () {
-      final BangumiSubject subject = _subject(nameCn: '', name: 'CLANNAD 〜AFTER STORY〜');
+      final BangumiSubject subject = _subject(
+        nameCn: '',
+        name: 'CLANNAD 〜AFTER STORY〜',
+      );
       expect(librarySeedQueries(subject).first, 'CLANNAD 〜AFTER STORY〜');
     });
 
@@ -244,7 +232,10 @@ void main() {
   group('dropSeasonSuffix：mikan 整串匹配的救命稻草', () {
     test('中文季/部/期/后半部分都剥掉（可连续剥）', () {
       expect(dropSeasonSuffix('间谍过家家 第2部分'), '间谍过家家');
-      expect(dropSeasonSuffix('Re：从零开始的异世界生活 第二季 后半部分'), 'Re：从零开始的异世界生活');
+      expect(
+        dropSeasonSuffix('Re：从零开始的异世界生活 第二季 后半部分'),
+        'Re：从零开始的异世界生活',
+      );
       expect(dropSeasonSuffix('某番 第三期'), '某番');
     });
 
@@ -276,21 +267,169 @@ void main() {
 
     test('一边包含另一边 = 60；括号与集号尾标剥掉之后完全一样 = 100', () {
       expect(seedTitleScore('葬送的芙莉莲 第二季', names), 60);
-      // 方括号里是组名/技术标签，剥掉 + 砍掉 `- 01` 之后**就是**同一个名字 → 100。
       expect(seedTitleScore('[7³ACG] 葬送的芙莉莲 - 01 [1080p]', names), 100);
       expect(seedTitleScore('葬送的芙莉莲 特别篇', names), 60);
     });
 
     test('⚠️ 季号不同直接判 0（实测候选顺序不保证是目标那一季）', () {
       expect(seedTitleScore('进击的巨人 第二季', <String>['进击的巨人 第三季']), 0);
-      expect(seedTitleScore('SPY×FAMILY Season 1', <String>['SPY×FAMILY Season 2']), 0);
+      expect(
+        seedTitleScore('SPY×FAMILY Season 1', <String>['SPY×FAMILY Season 2']),
+        0,
+      );
     });
 
-    test('剥掉季/部后缀后一样 = 40（比"像"低一档，不足以自动绑定）', () {
-      expect(seedTitleScore('葬送的芙莉莲 第一季', <String>['葬送的芙莉莲']), 60);
-      expect(seedTitleScore('葬送的芙莉莲', <String>['葬送的芙莉莲 第一季']), 60);
-      // 基础名相同但一边带季号：走"包含"那一档仍是 60；40 留给"两边都带季号且不同"之外的写法
+    test('不像的判 0', () {
       expect(seedTitleScore('完全无关的番', names), 0);
+    });
+  });
+
+  // ── 第四十八轮：相关度判据（与打分函数刻意分开） ──────────────────────────────
+
+  group('seedTitleMentions：相关度判据', () {
+    const List<String> names = <String>['命运石之门', 'STEINS;GATE'];
+
+    test('方括号里的名字也算命中（换成打分函数就漏了）', () {
+      const String title =
+          '[KissSub][Steins;Gate][命运石之门][12][GB_BIG5_JP][BDrip][1080P][HEVC] 静滞极限的教理';
+      expect(seedTitleMentions(title, names), isTrue);
+      expect(
+        seedTitleScore(title, names),
+        0,
+        reason: '打分函数要剥方括号，名字装在方括号里就没了 —— 真机上 29% 是这么漏的',
+      );
+    });
+
+    test('大小写 / 标点 / 全角都不影响', () {
+      expect(seedTitleMentions('[组] steins gate 01', names), isTrue);
+      expect(seedTitleMentions('[组] ＳＴＥＩＮＳ；ＧＡＴＥ 01', names), isTrue);
+      expect(seedTitleMentions('完全无关的番', names), isFalse);
+      expect(seedTitleMentions(null, names), isFalse);
+    });
+
+    test('一个字的名字不算命中（`零` 会捞回半个站）', () {
+      expect(seedTitleMentions('[组] 零 01', <String>['零']), isFalse);
+      expect(seedTitleMentions('[组] 零之使魔 01', <String>['零之使魔']), isTrue);
+    });
+  });
+
+  // ── 第四十八轮：同一个名字在不同站出现就合成一条 ──────────────────────────────
+
+  group('mergeSeedDuplicates：不同引擎同名字按合并', () {
+    test('同一字幕组 + 同一标题（只差全角/空格）→ 并成一条，记下别的站', () {
+      final SourceItemView a = _item(
+        1,
+        '[桜都字幕组] 葬送的芙莉莲 - 01 [1080p]',
+        source: 'mikan',
+      );
+      final SourceItemView b = _item(
+        9,
+        '[桜都字幕组]　葬送的芙莉莲 － 01　［1080p］',
+        source: 'dmhy',
+      );
+      expect(
+        aggregateMerge(<SourceItemView>[a], <SourceItemView>[b]),
+        hasLength(2),
+        reason: '先过的是 infoHash 那一层：两个不同的种子文件，它管不着',
+      );
+
+      // 顺序照控制器来：先合并（保持到达顺序），最后才排序。
+      final List<SourceItemView> merged = mergeSeedDuplicates(
+        <SourceItemView>[a, b],
+      );
+
+      expect(merged, hasLength(1), reason: '同一家组发的同一条，并成一条');
+      expect(merged.single.sourceId, 'mikan', reason: '信息一样 → 留先到的');
+      expect(seedAlsoOn(merged.single), <String>['dmhy']);
+    });
+
+    test('⚠️ 同标题但**不同字幕组**不合并（那是两份不同的文件）', () {
+      final SourceItemView a = _item(1, '葬送的芙莉莲 - 01', group: '桜都字幕组');
+      final SourceItemView b = _item(
+        9,
+        '葬送的芙莉莲 - 01',
+        group: 'LoliHouse',
+        source: 'dmhy',
+      );
+      expect(mergeSeedDuplicates(<SourceItemView>[a, b]), hasLength(2));
+    });
+
+    test('没有标题的不合并（同一组里一堆"无标题"不许并成一条）', () {
+      final SourceItemView a = SourceItemView(id: 'mikan:a', sourceId: 'mikan');
+      final SourceItemView b = SourceItemView(id: 'dmhy:b', sourceId: 'dmhy');
+      expect(mergeSeedDuplicates(<SourceItemView>[a, b]), hasLength(2));
+    });
+
+    test('留下的那条按"信息更全"选（与聚合搜索同一把尺子）', () {
+      final SourceItemView poor = SourceItemView(
+        id: 'mikan:a',
+        sourceId: 'mikan',
+        title: '葬送的芙莉莲 - 01',
+        group: '桜都字幕组',
+      );
+      final SourceItemView rich = _item(9, '葬送的芙莉莲 - 01', source: 'dmhy');
+      final List<SourceItemView> merged = mergeSeedDuplicates(
+        <SourceItemView>[poor, rich],
+      );
+      expect(merged.single.sourceId, 'dmhy');
+      expect(seedAlsoOn(merged.single), <String>['mikan']);
+    });
+  });
+
+  // ── 第四十八轮：按字幕组分段 ─────────────────────────────────────────────────
+
+  group('groupSeedItems：按字幕组分段', () {
+    test('同一家组的不同写法归到一段（桜都字幕组 / 桜都字幕組 / 桜都）', () {
+      final List<SeedGroup> groups = groupSeedItems(<SourceItemView>[
+        _item(1, '葬送的芙莉莲 - 01', group: '桜都字幕组'),
+        _item(2, '葬送的芙莉莲 - 02', group: '桜都字幕組', source: 'dmhy'),
+        _item(3, '葬送的芙莉莲 - 03', group: '桜都', source: 'acgnx'),
+      ]);
+      expect(groups, hasLength(1));
+      expect(groups.single.key, '桜都');
+      expect(groups.single.label, '桜都字幕组', reason: '预置名单里有它，显示站点上那个写法');
+      expect(groups.single.count, 3);
+    });
+
+    test('协作署名自成一段（`喵萌奶茶屋&LoliHouse` 不并进 `喵萌奶茶屋`）', () {
+      final List<SeedGroup> groups = groupSeedItems(<SourceItemView>[
+        _item(1, '葬送的芙莉莲 - 01', group: '喵萌奶茶屋'),
+        _item(2, '葬送的芙莉莲 - 02', group: '喵萌奶茶屋&LoliHouse'),
+        _item(3, '葬送的芙莉莲 - 03', group: 'LoliHouse'),
+      ]);
+      expect(groups.map((SeedGroup g) => g.label).toSet(), <String>{
+        '喵萌奶茶屋',
+        '喵萌奶茶屋&LoliHouse',
+        'LoliHouse',
+      });
+      expect(
+        groups.map((SeedGroup g) => g.count),
+        everyElement(1),
+        reason: '协作署名是**自己一段**：既没并进喵萌，也没并进 LoliHouse',
+      );
+    });
+
+    test('组名解析不出来的落到「未知组」', () {
+      final List<SeedGroup> groups = groupSeedItems(<SourceItemView>[
+        SourceItemView(
+          id: 'mikan:a',
+          sourceId: 'mikan',
+          title: '葬送的芙莉莲 - 01',
+        ),
+      ]);
+      expect(groups.single.key, kUnknownSubtitleGroupKey);
+      expect(groups.single.label, '未知组');
+      expect(groups.single.isUnknown, isTrue);
+    });
+
+    test('条数多的段在前（平手按最新那条，再按组名）', () {
+      final List<SeedGroup> groups = groupSeedItems(<SourceItemView>[
+        _item(1, '葬送的芙莉莲 - 01', group: '小组'),
+        _item(2, '葬送的芙莉莲 - 01', group: '大组', source: 'dmhy'),
+        _item(3, '葬送的芙莉莲 - 02', group: '大组', source: 'dmhy'),
+        _item(4, '葬送的芙莉莲 - 03', group: '大组', source: 'dmhy'),
+      ]);
+      expect(groups.map((SeedGroup g) => g.label), <String>['大组', '小组']);
     });
   });
 
@@ -322,489 +461,384 @@ void main() {
     });
   });
 
-  group('LibrarySeedController：主路径', () {
-    test('中文名一次命中 + 标题完全一样 → 自动绑定并取回整部（1 搜 + 1 详情 + 1 番剧页）', () async {
+  group('LibrarySeedController：引擎 = 勾选的那些主流站点', () {
+    test('中文名一次命中 → 各站一起搜、按字幕组分段；**不再去猜 mikan 番剧页**', () async {
       final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[_item(1, '[桜都字幕组] 葬送的芙莉莲 - 01 [1080p]')],
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[
+            _item(1, '[桜都字幕组] 葬送的芙莉莲 - 01 [1080p]'),
+            _item(2, '[桜都字幕组] 葬送的芙莉莲 - 02 [1080p]'),
+          ],
+          'dmhy:葬送的芙莉莲': <SourceItemView>[
+            _item(5, '[LoliHouse] 葬送的芙莉莲 - 01', group: 'LoliHouse', source: 'dmhy'),
+          ],
         },
       );
-      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      });
+      final _FakeSchedule schedule = _FakeSchedule(
+        const <String, BangumiDetailView>{},
+      );
+      final ProviderContainer c = _container(source: source, schedule: schedule);
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready);
+      expect(s.word, '葬送的芙莉莲', reason: '块上要显示"实际用的词"');
+      expect(s.episodes, hasLength(3));
+      expect(s.groups.map((SeedGroup g) => g.label), <String>['桜都字幕组', 'LoliHouse']);
+      expect(s.groups.first.count, 2);
+      expect(s.shownGroups, hasLength(2));
+      expect(s.remainingGroups, 0);
+      expect(
+        source.searched,
+        <String>['mikan:葬送的芙莉莲', 'dmhy:葬送的芙莉莲'],
+        reason: '命中即停：不再试原名 / 别名 / 短名',
+      );
+      expect(schedule.asked, isEmpty, reason: '第四十八轮起不去猜番剧页（那正是病根）');
+      expect(s.binding, isNull);
+      expect(s.warning, isNull);
+    });
+
+    test('中文名 0 条 → 退到原名；命中即停', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:Sousou no Frieren': <SourceItemView>[
+            _item(1, '[桜都字幕组] Sousou no Frieren - 01'),
+          ],
+          'dmhy:Sousou no Frieren': <SourceItemView>[
+            _item(2, '[LoliHouse] Sousou no Frieren - 01', group: 'LoliHouse', source: 'dmhy'),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready);
+      expect(s.word, 'Sousou no Frieren');
+      expect(source.searched, <String>[
+        'mikan:葬送的芙莉莲',
+        'dmhy:葬送的芙莉莲',
+        'mikan:Sousou no Frieren',
+        'dmhy:Sousou no Frieren',
+      ]);
+    });
+
+    test('哪一级都没结果 → notFound，而不是"搜坏了"', () async {
+      final _FakeSources source = _FakeSources();
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.failed);
+      expect(s.problem, LibrarySeedProblem.notFound);
+      expect(
+        source.searched,
+        hasLength(librarySeedQueries(_subject()).length * 2),
+        reason: '阶梯有哪几级就试哪几级 × 每个源',
+      );
+    });
+
+    test('源站给了东西但没一条带这个名字 → 原样给用户（本地判据无权宣布"都没有"）', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[
+            _item(1, '[搬运] 完全对不上的东西 - 01'),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready);
+      expect(s.episodes, hasLength(1));
+      expect(s.word, '葬送的芙莉莲', reason: '四级都没命中名字，留在第一级那批上');
+    });
+
+    test('部分源挂了 → 结果照常给 + 警告带点名是哪几个', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[
+            _item(1, '[桜都字幕组] 葬送的芙莉莲 - 01'),
+          ],
+        },
+        failingSources: <String>{'dmhy'},
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready);
+      expect(s.warning, contains('动漫花园'));
+      expect(s.warning, contains('503'));
+    });
+
+    test('全部源挂了 → network（整页错误，不是"空"）', () async {
+      final _FakeSources source = _FakeSources(
+        failingSources: <String>{'mikan', 'dmhy'},
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.failed);
+      expect(s.problem, LibrarySeedProblem.network);
+      expect(s.failure, isNotNull);
+      expect(s.failure!.hint, contains('503'));
+    });
+
+    test('搜到了条目但一条能下的都没有 → noMagnet（另一种空）', () async {
+      final SourceItemView dead = SourceItemView(
+        id: 'mikan:${_hash(7)}',
+        sourceId: 'mikan',
+        title: '[桜都字幕组] 葬送的芙莉莲 - 07',
+        group: '桜都字幕组',
+        // 既没有磁力、也没有详情页可补链 ⇒ canDownload 为假。
+      );
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[dead],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.failed);
+      expect(s.problem, LibrarySeedProblem.noMagnet);
+      expect(s.episodes, hasLength(1), reason: '条目还是要留在那儿，好让用户看见是什么没源');
+    });
+
+    test('一个源都没勾（勾上的也都不支持搜索）→ network + 说清去哪儿勾', () async {
+      final _FakeSources source = _FakeSources(
+        options: const <SourceOption>[
+          SourceOption(id: 'rss:x', displayName: '订阅源', supportsSearch: false),
+        ],
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.problem, LibrarySeedProblem.network);
+      expect(s.failure, isNotNull);
+      expect(source.searched, isEmpty);
+    });
+
+    test('字幕组先露 4 段，「显示更多字幕组」一次加 8 段', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[
+            for (int i = 1; i <= 12; i++)
+              _item(i, '[组$i] 葬送的芙莉莲 - 01', group: '组$i'),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+      final LibrarySeedController controller = c.read(
+        librarySeedProvider.notifier,
+      );
+
+      await controller.resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+      expect(s.groups, hasLength(12));
+      expect(s.shownGroups, hasLength(kSeedVisibleGroups));
+      expect(s.remainingGroups, 12 - kSeedVisibleGroups);
+
+      controller.showMoreGroups();
+      final LibrarySeedState more = c.read(librarySeedProvider);
+      expect(more.shownGroups, hasLength(kSeedVisibleGroups + kSeedGroupsStep));
+      expect(more.remainingGroups, 0);
+    });
+  });
+
+  group('LibrarySeedController：手动锚点（粘 mikan 番剧页）', () {
+    test('粘地址：它的剧集并进池子、落盘记住、detail 留着（订阅要用它）', () async {
+      final InMemoryKeyValueStore store = InMemoryKeyValueStore();
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[
+            _item(2, '[桜都字幕组] 葬送的芙莉莲 - 02'),
+          ],
+        },
+      );
       final _FakeSchedule schedule = _FakeSchedule(<String, BangumiDetailView>{
         '3141': _detail('3141', '葬送的芙莉莲', <SourceItemView>[
           _item(1, '葬送的芙莉莲 - 01'),
-          _item(2, '葬送的芙莉莲 - 02'),
+          _item(3, '葬送的芙莉莲 - 03'),
         ]),
       });
       final ProviderContainer c = _container(
         source: source,
-        host: host,
         schedule: schedule,
+        store: store,
       );
       addTearDown(c.dispose);
+      final LibrarySeedController controller = c.read(
+        librarySeedProvider.notifier,
+      );
 
-      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      await controller.resolve(_subject());
+      expect(c.read(librarySeedProvider).episodes, hasLength(1));
+
+      await controller.bindRaw(_subject(), 'https://mikanani.me/Home/Bangumi/3141');
       final LibrarySeedState s = c.read(librarySeedProvider);
 
       expect(s.phase, LibrarySeedPhase.ready);
       expect(s.binding?.bangumiId, '3141');
-      expect(s.word, '葬送的芙莉莲', reason: '块上要显示"实际用的词"');
-      expect(s.episodes, hasLength(2));
-      expect(s.groupNames, <String>['桜都字幕组']);
-      expect(source.searched, <String>['mikan:葬送的芙莉莲'], reason: '命中即停');
-      expect(host.enriched, hasLength(1));
+      expect(s.detail?.bangumiId, '3141');
+      expect(s.episodes, hasLength(3), reason: '搜索那一条 + 番剧页那两条');
+      expect(s.groups.single.label, '桜都字幕组');
       expect(schedule.asked, <String>['3141']);
-    });
-
-    // ⚠️ 第四十七轮真机踩到的**整块失效**：真站上 mikan 搜索页的行天生带磁力
-    // （`td[0]` 的 `input.js-episode-select[data-magnet]`），而这一条链要的番剧 id
-    // **只在单集页里**。`ensurePlayable` 的契约是"缺磁力才补" ⇒ 它对这种行**一次网络
-    // 都不打** ⇒ `extra['bangumiId']` 永远为空 ⇒ 1000 行一条候选都攒不出来，
-    // 每部番都报"mikan 上没找到"（用户原话：「什么都搜不到了」）。
-    test('带磁力的搜索行也要去单集页认番剧 id（不许踩 ensurePlayable 的短路）', () async {
-      final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[
-            _item(
-              1,
-              '[7³ACG] 葬送的芙莉莲/Sousou no Frieren S01 | 01-28+SPx11 [简繁字幕] BDrip 1080p',
-            ),
-          ],
-        },
-      );
-      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      });
-      final ProviderContainer c = _container(
-        source: source,
-        host: host,
-        schedule: _FakeSchedule(<String, BangumiDetailView>{
-          '3141': _detail('3141', '葬送的芙莉莲', <SourceItemView>[_item(1, '葬送的芙莉莲 - 01')]),
-        }),
-      );
-      addTearDown(c.dispose);
-
-      await c.read(librarySeedProvider.notifier).resolve(_subject());
-      final LibrarySeedState s = c.read(librarySeedProvider);
-
-      expect(s.phase, LibrarySeedPhase.ready, reason: '"有磁力"不等于"不用去单集页"');
-      expect(s.binding?.bangumiId, '3141');
-      expect(host.enriched, hasLength(1), reason: '必须真的去单集页取过（episodeInfo）');
-    });
-
-    test('对照：ensurePlayable 的短路仍然成立（有磁力就一次网络都不打）', () async {
-      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      });
-      final SourceItemView item = _item(1, '[桜都字幕组] 葬送的芙莉莲 - 01 [1080p]');
-
-      final SourceItemView out = await host.ensurePlayable(item);
-
-      expect(identical(out, item), isTrue, reason: '已经有磁力 → 原样返回');
-      expect(host.enriched, isEmpty, reason: '一次网络都不打（搜索页那一大片真播/下载靠它）');
-    });
-
-    test('中文名 0 条 → 退到原名；不再往下试（命中即停）', () async {
-      final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          'Sousou no Frieren': <SourceItemView>[
-            _item(1, '[桜都字幕组] Sousou no Frieren - 01'),
-          ],
-        },
-      );
-      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: 'Sousou no Frieren'),
-      });
-      final ProviderContainer c = _container(
-        source: source,
-        host: host,
-        schedule: _FakeSchedule(<String, BangumiDetailView>{
-          '3141': _detail('3141', 'Sousou no Frieren', <SourceItemView>[
-            _item(1, 'Sousou no Frieren - 01'),
-          ]),
-        }),
-      );
-      addTearDown(c.dispose);
-
-      await c.read(librarySeedProvider.notifier).resolve(_subject());
-      final LibrarySeedState s = c.read(librarySeedProvider);
-
-      expect(s.phase, LibrarySeedPhase.ready);
-      expect(source.searched, <String>[
-        'mikan:葬送的芙莉莲',
-        'mikan:Sousou no Frieren',
-      ]);
-      expect(s.word, 'Sousou no Frieren');
-    });
-
-    test('两个候选同分 → 不自动绑，列出来让用户点（needsPick）', () async {
-      final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[
-            _item(1, '[组A] 葬送的芙莉莲 - 01'),
-            _item(2, '[组B] 葬送的芙莉莲 - 02'),
-          ],
-        },
-      );
-      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '111', title: '葬送的芙莉莲 特别篇'),
-        'mikan:${_hash(2)}': (id: '222', title: '葬送的芙莉莲 剧场版'),
-      });
-      final _FakeSchedule schedule = _FakeSchedule(const <String, BangumiDetailView>{});
-      final ProviderContainer c = _container(
-        source: source,
-        host: host,
-        schedule: schedule,
-      );
-      addTearDown(c.dispose);
-
-      await c.read(librarySeedProvider.notifier).resolve(_subject());
-      final LibrarySeedState s = c.read(librarySeedProvider);
-
-      expect(s.phase, LibrarySeedPhase.needsPick);
-      // 同分时按"排在前面的是更近发布的那条"（`_seedRankMikan` 的次序），两条都列出来。
       expect(
-        s.candidates.map((MikanSeedCandidate c) => c.bangumiId).toSet(),
-        <String>{'111', '222'},
-      );
-      expect(schedule.asked, isEmpty, reason: '还没认下来，不该去取番剧页');
-      expect(host.enriched, hasLength(2), reason: '最多试 kMaxLibrarySeedDetails 条');
-    });
-
-    test('一条都搜不到 → mikanNotFound，且**不自动**打聚合（用户选定手动）', () async {
-      final _FakeSources source = _FakeSources(
-        mikanHits: const <String, List<SourceItemView>>{},
-        otherHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[_item(9, '[别站] 葬送的芙莉莲 - 01')],
-        },
-      );
-      final ProviderContainer c = _container(
-        source: source,
-        host: _FakeHostData(const <String, ({String id, String title})>{}),
-        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
-      );
-      addTearDown(c.dispose);
-
-      await c.read(librarySeedProvider.notifier).resolve(_subject());
-      final LibrarySeedState s = c.read(librarySeedProvider);
-
-      expect(s.phase, LibrarySeedPhase.failed);
-      expect(s.problem, LibrarySeedProblem.mikanNotFound);
-      expect(
-        source.searched.every((String q) => q.startsWith('mikan:')),
-        isTrue,
-        reason: '落空只报空，不偷偷去打 8 个源',
-      );
-      expect(
-        source.searched,
-        hasLength(librarySeedQueries(_subject()).length),
-        reason: '阶梯有哪几级就试哪几级',
-      );
-    });
-
-    test('找到了番剧页但一集可下的都没有 → noMagnet（另一种空）', () async {
-      final SourceItemView dead = SourceItemView(
-        id: 'mikan:${_hash(7)}',
-        sourceId: 'mikan',
-        title: '葬送的芙莉莲 - 07',
-        // 既没有磁力、也没有详情页可补链 ⇒ canDownload 为假。
-      );
-      final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[_item(1, '[桜都字幕组] 葬送的芙莉莲 - 01')],
-        },
-      );
-      final ProviderContainer c = _container(
-        source: source,
-        host: _FakeHostData(<String, ({String id, String title})>{
-          'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-        }),
-        schedule: _FakeSchedule(<String, BangumiDetailView>{
-          '3141': _detail('3141', '葬送的芙莉莲', <SourceItemView>[dead]),
-        }),
-      );
-      addTearDown(c.dispose);
-
-      await c.read(librarySeedProvider.notifier).resolve(_subject());
-      final LibrarySeedState s = c.read(librarySeedProvider);
-
-      expect(s.problem, LibrarySeedProblem.noMagnet);
-      expect(s.detail?.bangumiId, '3141', reason: '页面确实拿到了，只是没有磁力');
-    });
-  });
-
-  group('LibrarySeedController：落盘绑定与缓存', () {
-    test('记住绑定 + 30 分钟缓存：第二次进来一次网络都不打', () async {
-      final InMemoryKeyValueStore store = InMemoryKeyValueStore();
-      final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[_item(1, '[桜都字幕组] 葬送的芙莉莲 - 01')],
-        },
-      );
-      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      });
-      final _FakeSchedule first = _FakeSchedule(<String, BangumiDetailView>{
-        '3141': _detail('3141', '葬送的芙莉莲', <SourceItemView>[_item(1, '葬送的芙莉莲 - 01')]),
-      });
-      final ProviderContainer c1 = _container(
-        source: source,
-        host: host,
-        schedule: first,
-        store: store,
-      );
-      addTearDown(c1.dispose);
-      await c1.read(librarySeedProvider.notifier).resolve(_subject());
-      expect(c1.read(librarySeedProvider).phase, LibrarySeedPhase.ready);
-
-      // 新容器 = 重进这一页（同一个 store）。
-      final _FakeSources source2 = _FakeSources();
-      final _FakeSchedule second = _FakeSchedule(<String, BangumiDetailView>{
-        '3141': _detail('3141', '葬送的芙莉莲', <SourceItemView>[_item(2, '葬送的芙莉莲 - 02')]),
-      });
-      final ProviderContainer c2 = _container(
-        source: source2,
-        host: _FakeHostData(const <String, ({String id, String title})>{}),
-        schedule: second,
-        store: store,
-      );
-      addTearDown(c2.dispose);
-      await c2.read(librarySeedProvider.notifier).resolve(_subject());
-      final LibrarySeedState s2 = c2.read(librarySeedProvider);
-
-      expect(s2.phase, LibrarySeedPhase.ready);
-      expect(s2.binding?.bangumiId, '3141');
-      expect(source2.searched, isEmpty, reason: '绑定落盘了，不用再按番名搜');
-      expect(
-        second.asked,
-        <String>['3141'],
-        reason: '换进程之后番剧页要重打一次（那份缓存是进程内的，只有绑定落盘）',
+        c.read(librarySeedServiceProvider).bindingFor(400602)?.bangumiId,
+        '3141',
+        reason: '落盘记住：下次进这一页不用再粘',
       );
 
-      // 同一次运行里再进一遍：绑定 + 番剧页缓存都命中 → 一次网络都不打。
-      await c2.read(librarySeedProvider.notifier).resolve(_subject());
-      expect(second.asked, <String>['3141'], reason: '30 分钟内同一部不重打');
-    });
-
-    test('绑定失效（番剧页 404）→ 自动重搜一次，仍失败则报网络', () async {
-      final InMemoryKeyValueStore store = InMemoryKeyValueStore();
-      await store.put(
-        '${LibrarySeedService.bindingPrefix}400602',
-        const MikanSeedBinding(bangumiId: '9999', title: '旧的一页', query: '葬送的芙莉莲').toJson(),
-      );
-      final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[_item(1, '[桜都字幕组] 葬送的芙莉莲 - 01')],
-        },
-      );
-      final _FakeSchedule schedule = _FakeSchedule(<String, BangumiDetailView>{})
-        ..failure = const PortUnavailableException('mikan 番剧页取不回来', hint: '稍后重试');
-      final ProviderContainer c = _container(
-        source: source,
-        host: _FakeHostData(const <String, ({String id, String title})>{}),
-        schedule: schedule,
-        store: store,
-      );
-      addTearDown(c.dispose);
-
-      await c.read(librarySeedProvider.notifier).resolve(_subject());
-      final LibrarySeedState s = c.read(librarySeedProvider);
-
-      expect(schedule.asked, <String>['9999'], reason: '先试落盘的那份绑定');
-      expect(source.searched, isNotEmpty, reason: '绑定取不回来 → 自动重搜一次');
-      expect(s.problem, LibrarySeedProblem.network);
-      expect(s.failure, isNotNull);
-    });
-
-    test('绑定里的 id 已经不指向这一部（站点换页）→ 丢掉绑定重新按番名找', () async {
-      final InMemoryKeyValueStore store = InMemoryKeyValueStore();
-      await store.put(
-        '${LibrarySeedService.bindingPrefix}400602',
-        const MikanSeedBinding(bangumiId: '9999', title: '别的番', query: '别的番').toJson(),
-      );
-      final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[_item(1, '[桜都字幕组] 葬送的芙莉莲 - 01')],
-        },
-      );
-      final ProviderContainer c = _container(
-        source: source,
-        host: _FakeHostData(<String, ({String id, String title})>{
-          'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-        }),
-        schedule: _FakeSchedule(<String, BangumiDetailView>{
-          '9999': _detail('9999', '完全无关的另一部番', <SourceItemView>[_item(3, '别的番 - 01')]),
-          '3141': _detail('3141', '葬送的芙莉莲', <SourceItemView>[_item(1, '葬送的芙莉莲 - 01')]),
-        }),
-        store: store,
-      );
-      addTearDown(c.dispose);
-
-      await c.read(librarySeedProvider.notifier).resolve(_subject());
-      final LibrarySeedState s = c.read(librarySeedProvider);
-
-      expect(s.phase, LibrarySeedPhase.ready);
-      expect(s.binding?.bangumiId, '3141');
-      expect(source.searched, isNotEmpty, reason: '绑定被否掉了，必须重新按番名搜');
-    });
-
-    test('「重新搜一次」绕过缓存（force）：番剧页再打一次', () async {
-      final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[_item(1, '[桜都字幕组] 葬送的芙莉莲 - 01')],
-        },
-      );
-      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      });
-      final _FakeSchedule schedule = _FakeSchedule(<String, BangumiDetailView>{
-        '3141': _detail('3141', '葬送的芙莉莲', <SourceItemView>[_item(1, '葬送的芙莉莲 - 01')]),
-      });
-      final ProviderContainer c = _container(
-        source: source,
-        host: host,
-        schedule: schedule,
-      );
-      addTearDown(c.dispose);
-      final LibrarySeedController controller = c.read(librarySeedProvider.notifier);
-
-      await controller.resolve(_subject());
-      expect(schedule.asked, hasLength(1));
+      // 「重新搜一遍」要绕开 30 分钟缓存（番剧页重打一次），但**锚点不能丢** ——
+      // 那是用户手动指的页面（第四十八轮修：旧写法在这里把锚点一起忘了）。
       await controller.retry();
-      expect(schedule.asked, hasLength(2), reason: 'force 要绕过 30 分钟缓存');
-      expect(source.searched, hasLength(2), reason: 'force 也要绕过绑定');
+      expect(schedule.asked, <String>['3141', '3141'], reason: 'force 绕开缓存');
+      final LibrarySeedState again = c.read(librarySeedProvider);
+      expect(again.binding?.bangumiId, '3141');
+      expect(again.detail?.bangumiId, '3141', reason: '锚点还在，订阅按钮就还在');
+      expect(again.episodes, hasLength(3));
     });
-  });
 
-  group('LibrarySeedController：手动兜底与其它动作', () {
-    test('「用其他源再搜一次」：合并去重、按时间新→旧、标出这是聚合结果', () async {
-      final _FakeSources source = _FakeSources(
-        options: const <SourceOption>[
-          SourceOption(id: 'mikan', displayName: 'Mikan（蜜柑计划）'),
-          SourceOption(id: 'dmhy', displayName: '动漫花园（DMHY）'),
-        ],
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[],
+    test('记住的番剧页取不回来了 → 忘掉它 + 一句提示；搜索结果照常给', () async {
+      final InMemoryKeyValueStore store = InMemoryKeyValueStore(
+        <String, Object?>{
+          '${LibrarySeedService.bindingPrefix}400602': const MikanSeedBinding(
+            bangumiId: '9999',
+            title: '旧的一页',
+            query: '葬送的芙莉莲',
+          ).toJson(),
         },
-        otherHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[
-            _item(5, '[A] 葬送的芙莉莲 - 05'),
-            _item(6, '[A] 葬送的芙莉莲 - 06'),
+      );
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:葬送的芙莉莲': <SourceItemView>[
+            _item(1, '[桜都字幕组] 葬送的芙莉莲 - 01'),
           ],
         },
       );
+      final _FakeSchedule schedule = _FakeSchedule(
+        const <String, BangumiDetailView>{},
+      )..failure = const PortUnavailableException('番剧页取不回来', hint: '稍后重试');
       final ProviderContainer c = _container(
         source: source,
-        host: _FakeHostData(const <String, ({String id, String title})>{}),
-        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+        schedule: schedule,
+        store: store,
       );
       addTearDown(c.dispose);
-      final LibrarySeedController controller = c.read(librarySeedProvider.notifier);
 
-      await controller.resolve(_subject());
-      expect(c.read(librarySeedProvider).phase, LibrarySeedPhase.failed);
-
-      await controller.searchEverywhere(_subject());
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
       final LibrarySeedState s = c.read(librarySeedProvider);
-      expect(s.phase, LibrarySeedPhase.ready);
-      expect(s.fromAggregate, isTrue);
-      expect(s.episodes, hasLength(2));
-      expect(s.groupNames, isEmpty, reason: '聚合结果没有 mikan 的字幕组结构');
-      expect(source.searched, contains('dmhy:葬送的芙莉莲'));
-    });
 
-    test('聚合兜底也 0 条 → allSourcesEmpty（冷门番那一档）', () async {
-      final _FakeSources source = _FakeSources();
-      final ProviderContainer c = _container(
-        source: source,
-        host: _FakeHostData(const <String, ({String id, String title})>{}),
-        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      expect(s.phase, LibrarySeedPhase.ready, reason: '番剧页挂了不该把整块拖垮');
+      expect(schedule.asked, <String>['9999'], reason: '先试落盘的那个锚点');
+      expect(s.binding, isNull);
+      expect(s.warning, contains('取不回来'));
+      expect(
+        c.read(librarySeedServiceProvider).bindingFor(400602),
+        isNull,
+        reason: '取不回来就忘掉，下次别再为它多等一秒',
       );
-      addTearDown(c.dispose);
-      final LibrarySeedController controller = c.read(librarySeedProvider.notifier);
-
-      await controller.searchEverywhere(_subject());
-      final LibrarySeedState s = c.read(librarySeedProvider);
-      expect(s.phase, LibrarySeedPhase.failed);
-      expect(s.problem, LibrarySeedProblem.allSourcesEmpty);
-    });
-
-    test('「改搜索词重搜」只试手打的那一个词（失败不静默换词）', () async {
-      final _FakeSources source = _FakeSources(
-        mikanHits: const <String, List<SourceItemView>>{},
-      );
-      final ProviderContainer c = _container(
-        source: source,
-        host: _FakeHostData(const <String, ({String id, String title})>{}),
-        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
-      );
-      addTearDown(c.dispose);
-
-      await c.read(librarySeedProvider.notifier).useQuery(_subject(), 'Frieren');
-      expect(source.searched, <String>['mikan:Frieren']);
-      expect(c.read(librarySeedProvider).problem, LibrarySeedProblem.mikanNotFound);
     });
 
     test('粘一串不是 id 的东西 → badInput（不编一个 id 去搜）', () async {
       final _FakeSources source = _FakeSources();
       final ProviderContainer c = _container(
         source: source,
-        host: _FakeHostData(const <String, ({String id, String title})>{}),
         schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
       );
       addTearDown(c.dispose);
 
-      await c.read(librarySeedProvider.notifier).bindRaw(_subject(), '这是番名不是 id');
+      await c.read(
+        librarySeedProvider.notifier,
+      ).bindRaw(_subject(), '这是番名不是 id');
       expect(c.read(librarySeedProvider).problem, LibrarySeedProblem.badInput);
       expect(source.searched, isEmpty);
     });
+  });
 
-    test('挑候选 / 显示更多', () async {
-      // 搜索只给两条候选（两条标题都像、分数打平 → needsPick）；
-      // 「显示更多」验的是番剧页那 25 集只先露 20 条。
+  group('LibrarySeedController：改搜索词', () {
+    test('只试手打的那一个词（失败不静默换词）', () async {
+      final _FakeSources source = _FakeSources();
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).useQuery(_subject(), 'Frieren');
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(source.searched, <String>['mikan:Frieren', 'dmhy:Frieren']);
+      expect(s.problem, LibrarySeedProblem.notFound);
+      expect(s.word, 'Frieren');
+    });
+
+    test('手打的词有结果 → 直接出段', () async {
       final _FakeSources source = _FakeSources(
-        mikanHits: <String, List<SourceItemView>>{
-          '葬送的芙莉莲': <SourceItemView>[
-            _item(1, '[组A] 葬送的芙莉莲 - 01'),
-            _item(2, '[组B] 葬送的芙莉莲 - 02'),
+        hits: <String, List<SourceItemView>>{
+          'mikan:Frieren': <SourceItemView>[
+            _item(1, '[桜都字幕组] 葬送的芙莉莲 - 01'),
           ],
         },
       );
-      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '111', title: '葬送的芙莉莲 特别篇'),
-        'mikan:${_hash(2)}': (id: '222', title: '葬送的芙莉莲 剧场版'),
-      });
-      final _FakeSchedule schedule = _FakeSchedule(<String, BangumiDetailView>{
-        '222': _detail('222', '葬送的芙莉莲 剧场版', <SourceItemView>[
-          for (int i = 1; i <= 25; i++) _item(i, '葬送的芙莉莲 - $i'),
-        ]),
-      });
       final ProviderContainer c = _container(
         source: source,
-        host: host,
-        schedule: schedule,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
       );
       addTearDown(c.dispose);
-      final LibrarySeedController controller = c.read(librarySeedProvider.notifier);
 
-      await controller.resolve(_subject());
-      final LibrarySeedState picked = c.read(librarySeedProvider);
-      expect(picked.phase, LibrarySeedPhase.needsPick);
+      await c.read(librarySeedProvider.notifier).useQuery(_subject(), 'Frieren');
+      final LibrarySeedState s = c.read(librarySeedProvider);
 
-      await controller.pickCandidate(_subject(), picked.candidates.firstWhere(
-        (MikanSeedCandidate x) => x.bangumiId == '222',
-      ));
-      final LibrarySeedState ready = c.read(librarySeedProvider);
-      expect(ready.phase, LibrarySeedPhase.ready);
-      expect(ready.binding?.bangumiId, '222');
-      expect(ready.shown, hasLength(kSeedVisibleStep), reason: '先露 20 条');
-      expect(ready.remaining, 5);
-
-      controller.showMore();
-      expect(c.read(librarySeedProvider).shown, hasLength(25));
-      expect(c.read(librarySeedProvider).remaining, 0);
+      expect(s.phase, LibrarySeedPhase.ready);
+      expect(s.groups.single.label, '桜都字幕组');
     });
   });
 }

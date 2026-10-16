@@ -11,12 +11,29 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dsanima/domain/app_version.dart' show kAppVersion;
 import 'package:dsanima/domain/ports.dart';
 import 'package:dsanima/state/providers.dart';
 import 'package:dsanima/state/update.dart';
 import 'package:dsanima_core/update/update.dart' as core_update;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// 假 release 的版本 = **比当前构建高一格**（patch +1）。
+///
+/// ⚠️ 为什么要算而不是写死 `v1.0.3`：这些用例验的是"**有新版本**"这条路，
+/// 而比较基准是 [kAppVersion] —— 写死的那个号一旦被发布版追上（第四十八轮：
+/// 上一轮把 app 抬到 `1.0.3+4`，这份用例当场全变成"已是最新"），
+/// 用例就会静默地测错东西。
+String get _newerTag =>
+    'v${kAppVersion.major}.${kAppVersion.minor}.${kAppVersion.patch + 1}';
+
+/// 与 [_newerTag] 对应的版本对象（`target` 用）。
+core_update.AppVersion get _newerVersion => core_update.AppVersion(
+  kAppVersion.major,
+  kAppVersion.minor,
+  kAppVersion.patch + 1,
+);
 
 /// 假端口：如实记录每次调用，并按开关抛错（"失败"必须真的抛，不能返回假成功）。
 class _FakeUpdatePort implements UpdatePort {
@@ -96,22 +113,23 @@ class _FakeUpdatePort implements UpdatePort {
 }
 
 core_update.ReleaseInfo _release({
-  String tag = 'v1.0.3',
+  String? tag,
   List<String> assets = const <String>['DSAnima-20261015-win-x64.zip'],
 }) =>
     core_update.ReleaseInfo.tryParse(<String, Object?>{
-      'tag_name': tag,
-      'name': 'DSAnima $tag',
+      'tag_name': tag ?? _newerTag,
+      'name': 'DSAnima ${tag ?? _newerTag}',
       'body': '## 修复\n- 点下一集有反馈了',
       'published_at': '2026-10-15T13:00:00Z',
-      'html_url': 'https://github.com/abc/DSAnima/releases/tag/$tag',
+      'html_url': 'https://github.com/abc/DSAnima/releases/tag/${tag ?? _newerTag}',
       'draft': false,
       'prerelease': false,
       'assets': <Object?>[
         for (final String name in assets)
           <String, Object?>{
             'name': name,
-            'browser_download_url': 'https://github.com/abc/DSAnima/releases/download/$tag/$name',
+            'browser_download_url':
+                'https://github.com/abc/DSAnima/releases/download/${tag ?? _newerTag}/$name',
             'size': 4 * 1024 * 1024,
           },
       ],
@@ -312,8 +330,8 @@ void main() {
       await _settle();
 
       expect(port.prepared, isNotNull);
-      expect(port.declared.single!.tag, 'v1.0.3');
-      expect(port.declared.single!.target, const core_update.AppVersion(1, 0, 3));
+      expect(port.declared.single!.tag, _newerTag);
+      expect(port.declared.single!.target, _newerVersion);
       expect(quitCalls, 1, reason: '必须真的走宿主那条退出流程（先放 Hive 锁再停边车）');
       expect(container.read(updateProvider).note, contains('更新脚本已启动'));
     });
@@ -377,8 +395,8 @@ void main() {
     test('还是老版本：明说"上次更新没有生效"，并指出日志在哪', () async {
       final _FakeUpdatePort port = _FakeUpdatePort(release: _release());
       port.pending = core_update.PendingUpdate(
-        tag: 'v1.0.3',
-        target: const core_update.AppVersion(1, 0, 3),
+        tag: _newerTag,
+        target: _newerVersion,
         startedAt: DateTime(2026, 10, 15, 12),
       );
       final ProviderContainer container = _container(port);

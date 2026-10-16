@@ -1,23 +1,25 @@
-/// 动漫库详细页的「种子」块（第四十五轮）。
+/// 动漫库详细页的「种子」块（第四十五轮起，第四十八轮换过引擎）。
 ///
-/// 用户原话：「能实现动漫库中直接显示种子吗，就像主页那样」—— 也就是**主页卡片点进去
-/// 那一页**（`ui/bangumi_detail.dart`：按字幕组列剧集 + 每集磁力）的数据，直接落到动漫库
-/// 的条目详细页上，不用再跑去搜索页重搜一遍。
+/// 用户原话（第四十五轮）：「能实现动漫库中直接显示种子吗，就像主页那样」—— 也就是**主页卡片
+/// 点进去那一页**（`ui/bangumi_detail.dart`：按字幕组列剧集 + 每集磁力）的数据，直接落到
+/// 动漫库的条目详细页上，不用再跑去搜索页重搜一遍。
 ///
-/// 口径全部来自第四十五轮的问答（见 `domain/library_seed.dart` 与
-/// `state/providers.dart` 的 `LibrarySeedController`）：
-/// * **进入就抓**，两段式文案：「正在 mikan 找这一部…」→「正在取字幕组与剧集…」；
-/// * 主路径 = mikan 番剧页（整部、按字幕组），对应关系**落盘记住**；
-/// * 拿不准时**列出候选番剧页**让用户点，还可以手打搜索词 / 粘 mikan 链接或 id；
-/// * 落空 = **手动**「用其他源再搜一次」（不自动打聚合）；
-/// * 三种空分开写；有结果时**复用搜索页那张结果表**（同样的勾选列、同样的动作），
-///   额外加：每行的「已看过 / 在队列 / 已完成」标记、右键「这一组都入队（N 集）」、
-///   每个字幕组旁边的「订阅」（和主页那页一致）；
-/// * 旧的「按这个名字搜种子」按钮删掉，降级成这里的一个「在搜索页打开」小链接。
+/// 用户原话（第四十八轮）：
+/// > 「我自己去 mikan 搜都搜索得到，这里就搜不到了，修复一下，然后改为主流搜索当引擎，
+/// >   按字幕组分隔，不同搜索引擎同名字就按合并」
+///
+/// 所以这一块的形态是：
+/// * **引擎 = 主流站点的关键字搜索**（用户勾选的那些源，聚合搜番名；`LibrarySeedController`）；
+/// * 结果**按字幕组分段**（一段一张小表，列宽与搜索页完全一致，表头只在最上面画一次）；
+/// * **跨站同名合并**成一条（合并过的行会带一个"别的站也有"的小标记，别让用户以为少看了一个站）；
+/// * 每段抬头：组名 · 条数 · 「订阅」（只有拿得到那张 mikan 番剧页时才有）·「这一组都入队」；
+/// * 每段先露 [kSeedGroupVisibleStep] 条，其余藏在「本组还有 N 条」后面；
+/// * 段本身先露 [kSeedVisibleGroups] 个，其余的走「显示更多字幕组」；
+/// * mikan 番剧页降级成**手动**口（「改搜索词 / 粘链接」里粘地址或 id）—— 它给的东西更完整
+///   （整部剧集表 + 每组自己的 RSS），只是不该再当主力，见 `domain/library_seed.dart` 的库注释。
 library;
 
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -42,32 +44,30 @@ import '../widgets/state_views.dart';
 /// 整块的 key（版面断言看它）。
 const Key dsDetailSeedsKey = Key('library-detail-seeds');
 
-/// 正在找 / 正在取（两段式）时的占位 key。
+/// 正在找 / 正在取时的占位 key。
 const Key dsDetailSeedsLoadingKey = Key('library-detail-seeds-loading');
 
-/// 整块没成（三种空 / 网络失败）时的 key。
+/// 整块没成（空 / 网络失败）时的 key。
 const Key dsDetailSeedsFailedKey = Key('library-detail-seeds-failed');
 
 /// 失败态那颗「重新搜一次」。
 const Key dsDetailSeedsRetryKey = Key('library-detail-seeds-retry');
 
-/// 失败态那颗「用其他源再搜一次」（手动降级）。
-const Key dsDetailSeedsOtherSourcesKey = Key('library-detail-seeds-other-sources');
-
-/// 「在搜索页打开」那颗小链接（旧按钮的降级形态）。
+/// 「在搜索页打开」那颗小链接。
 const Key dsDetailSeedsSearchPageKey = Key('library-detail-seeds-search-page');
 
-/// 拿不准时的候选番剧页列表。
-const Key dsDetailSeedsPickKey = Key('library-detail-seeds-pick');
-
-/// 结果表。
+/// 结果表（整块的外壳 key）。
 const Key dsDetailSeedsTableKey = Key('library-detail-seeds-table');
 
-/// 「显示更多」。
+/// 「显示更多字幕组」。
 const Key dsDetailSeedsMoreKey = Key('library-detail-seeds-more');
 
-/// 字幕组那一排（每个组旁边一颗「订阅」）。
-const Key dsDetailSeedsGroupsKey = Key('library-detail-seeds-groups');
+/// 字幕组那一段（每段一个，key 带组名 —— 用例据此定位某一段）。
+Key dsDetailSeedsGroupKey(String key) => ValueKey<String>('seed-group-$key');
+
+/// 某一段的「本组还有 N 条」。
+Key dsDetailSeedsGroupMoreKey(String key) =>
+    ValueKey<String>('seed-group-more-$key');
 
 /// 工具行（改搜索词 / 粘链接）。
 const Key dsDetailSeedsQueryFieldKey = Key('library-detail-seeds-query');
@@ -93,6 +93,10 @@ class LibrarySeedBlock extends ConsumerStatefulWidget {
 
 class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   final Set<String> _selected = <String>{};
+
+  /// 哪几段被「本组还有 N 条」展开了（纯界面状态，不落盘、换条目就清）。
+  final Set<String> _expandedGroups = <String>{};
+
   final TextEditingController _word = TextEditingController();
   final TextEditingController _raw = TextEditingController();
   bool _tools = false;
@@ -123,6 +127,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.subject.id == widget.subject.id) return;
     _selected.clear();
+    _expandedGroups.clear();
     _ensureSoon();
   }
 
@@ -135,7 +140,11 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
 
   // ── 动作 ────────────────────────────────────────────────────────────────────
 
-  Future<void> _play(SourceItemView item, LibrarySeedState s, String showTitle) async {
+  Future<void> _play(
+    SourceItemView item,
+    LibrarySeedState s,
+    String showTitle,
+  ) async {
     setState(() => _busyItemId = item.id);
     try {
       await ref
@@ -147,39 +156,40 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             showTitle: showTitle,
             coverUrl: widget.subject.coverUrl,
             coverReferer: 'https://bgm.tv/',
+            // 手动锚过番剧页时把它带上（观看记录按 `mikan:<id>` 归组、缺链还能回那一页补）；
+            // 没有锚点也没关系 —— `watch_history.dart` 会退回按番名归组。
             mikanBangumiId: s.binding?.bangumiId,
           );
       final DsFailure? failure = ref.read(playbackProvider).failure;
       if (failure != null && mounted) showFailure(context, failure);
     } catch (error, stackTrace) {
-      if (mounted) showFailure(context, describeFailure(error, stackTrace: stackTrace));
+      if (mounted) {
+        showFailure(context, describeFailure(error, stackTrace: stackTrace));
+      }
     } finally {
       if (mounted) setState(() => _busyItemId = null);
     }
   }
 
-  /// 这一条属于哪一组（协作署名的条目两边都算，与筛选面板同一口径）。
-  List<SourceItemView> _groupItems(SourceItemView item, LibrarySeedState s) {
-    final Set<String> keys = groupKeysOf(item.group).toSet();
-    if (keys.isEmpty) return <SourceItemView>[item];
-    return <SourceItemView>[
-      for (final SourceItemView other in s.episodes)
-        if (groupKeysOf(other.group).any(keys.contains)) other,
-    ];
-  }
-
-  /// 「这一组都入队（N 集）」：跳过已看过 / 已在队列 / 已完成的。
+  /// 「这一组都入队」：跳过已看过 / 已在队列 / 已完成的。
+  ///
+  /// ⚠️ [group] 是**这一段自己的条目**，不是"按组名去整个池子里捞"（第四十八轮改）：
+  /// 协作署名的条目（`喵萌奶茶屋&LoliHouse`）在归段时只落一段，而"按组名捞"会用**并集**
+  /// 把别的段里的条目也拉进来 —— 那样按钮上写的"（N 条）"和下进去的对不上。
   Future<void> _enqueueGroup(
-    SourceItemView item,
+    List<SourceItemView> group,
     LibrarySeedState s,
     String showTitle,
     Map<String, DateTime> watched,
     List<QueueJobView> jobs,
     List<EngineTorrentView> torrents,
   ) async {
-    final List<SourceItemView> all =
-        _groupItems(item, s).where(canBatchDownload).toList(growable: false);
-    final Set<String> inQueue = <String>{for (final QueueJobView j in jobs) j.item.dedupeKey};
+    final List<SourceItemView> all = group
+        .where(canBatchDownload)
+        .toList(growable: false);
+    final Set<String> inQueue = <String>{
+      for (final QueueJobView j in jobs) j.item.dedupeKey,
+    };
     final Set<String> done = <String>{
       for (final EngineTorrentView t in torrents)
         if (t.finished || t.progress >= 1) t.infoHash.toLowerCase(),
@@ -201,7 +211,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     if (todo.isEmpty) {
       showSuccess(
         context,
-        '这一组 ${all.length} 集都看过了（或已在队列里），没有要下的',
+        '这一组 ${all.length} 条都看过了（或已在队列里），没有要下的',
         seconds: 4,
       );
       return;
@@ -215,7 +225,9 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
       ref.invalidate(queueJobsProvider);
       if (!mounted) return;
       final String summary = batchDownloadSummary(result);
-      final String extra = skipped == 0 ? '' : '（另跳过 $skipped 集：已看过 / 已在队列 / 已完成）';
+      final String extra = skipped == 0
+          ? ''
+          : '（另跳过 $skipped 条：已看过 / 已在队列 / 已完成）';
       if (result.failures.isEmpty) {
         showSuccess(context, '$summary$extra');
       } else {
@@ -228,13 +240,15 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
         );
       }
     } catch (error, stackTrace) {
-      if (mounted) showFailure(context, describeFailure(error, stackTrace: stackTrace));
+      if (mounted) {
+        showFailure(context, describeFailure(error, stackTrace: stackTrace));
+      }
     } finally {
       if (mounted) setState(() => _busyGroup = false);
     }
   }
 
-  /// 行尾的状态标记：已看过 / 在队列 / 已完成（与「正在追」同一套判据）。
+  /// 行尾的状态标记：已看过 / 在队列 / 已完成 / 别的站也有这一条。
   List<Widget> _marks(
     SourceItemView item,
     LibrarySeedState s,
@@ -255,16 +269,24 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
         .where((QueueJobView j) => j.item.dedupeKey == item.dedupeKey)
         .firstOrNull;
     final String? hash = item.infoHash?.toLowerCase();
-    final bool done = hash != null &&
+    final bool done =
+        hash != null &&
         hash.isNotEmpty &&
         torrents.any(
           (EngineTorrentView t) =>
               t.infoHash.toLowerCase() == hash && (t.finished || t.progress >= 1),
         );
+    final List<String> alsoOn = seedAlsoOn(item);
     return <Widget>[
       if (seen) _mark(Icons.check_box, '已看过', context.ds.success),
       if (job != null) _mark(Icons.downloading, job.state.label, context.ds.accent),
       if (done) _mark(Icons.check_circle, '已完成', context.ds.success),
+      if (alsoOn.isNotEmpty)
+        _mark(
+          Icons.layers,
+          '另外 ${alsoOn.length} 个站也有这一条（同名合并成了一条）',
+          context.ds.text2,
+        ),
     ];
   }
 
@@ -294,8 +316,11 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     // ⚠️ 用**安全快照**（见 `state/providers.dart` 的 `queueJobsSnapshotProvider`）：
     // 直接 watch 那两个流，在"未装配"环境下会让 Riverpod 排一条自动重试计时器。
     final List<QueueJobView> jobs = ref.watch(queueJobsSnapshotProvider);
-    final List<EngineTorrentView> torrents = ref.watch(engineTorrentsSnapshotProvider);
-    final String showTitle = (s.detail?.displayTitle ?? widget.subject.displayTitle).trim();
+    final List<EngineTorrentView> torrents = ref.watch(
+      engineTorrentsSnapshotProvider,
+    );
+    final String showTitle =
+        (s.detail?.displayTitle ?? widget.subject.displayTitle).trim();
 
     return Container(
       key: dsDetailSeedsKey,
@@ -320,13 +345,16 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                 spacing: 8,
                 runSpacing: 6,
                 children: <Widget>[
-                  if (s.remaining > 0)
+                  if (s.remainingGroups > 0)
                     NeoButton(
                       key: dsDetailSeedsMoreKey,
-                      label: '显示更多（还有 ${s.remaining} 条）',
+                      label:
+                          '显示更多字幕组（还有 ${s.remainingGroups} 个）',
                       icon: Icons.expand_more,
                       compact: true,
-                      onPressed: ref.read(librarySeedProvider.notifier).showMore,
+                      onPressed: ref
+                          .read(librarySeedProvider.notifier)
+                          .showMoreGroups,
                     ),
                   NeoButton(
                     label: _tools ? '收起工具' : '改搜索词 / 粘链接',
@@ -353,7 +381,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
           key: dsDetailSeedsRetryKey,
           icon: Icons.refresh,
           size: 26,
-          tooltip: '重新搜一次（绕开 30 分钟缓存与记住的番剧页）',
+          tooltip: '重新搜一遍（绕开 30 分钟缓存）',
           onPressed: s.loading
               ? null
               : () => unawaited(ref.read(librarySeedProvider.notifier).retry()),
@@ -376,23 +404,23 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 抬头那行小字：说清"这批种子是从哪来的、用的是哪个词"。
+  /// 抬头那行小字：说清"这批种子是怎么来的、用的是哪个词"。
   String _subtitle(LibrarySeedState s) => switch (s.phase) {
-    LibrarySeedPhase.idle || LibrarySeedPhase.searching => '正在 mikan 找这一部…',
-    LibrarySeedPhase.fetching => '正在取字幕组与剧集…',
-    LibrarySeedPhase.needsPick => 'mikan 上有几个可能，挑一个',
+    LibrarySeedPhase.idle ||
+    LibrarySeedPhase.searching => s.word == null
+        ? '正在各站找这一部…'
+        : '正在各站搜「${s.word}」…',
+    LibrarySeedPhase.fetching => '正在取这张 mikan 番剧页…',
     LibrarySeedPhase.failed => switch (s.problem) {
-      LibrarySeedProblem.mikanNotFound => 'mikan 上没找到这一部',
-      LibrarySeedProblem.noMagnet => '找到了番剧页，但里面没有可下的种子',
-      LibrarySeedProblem.allSourcesEmpty => '其他源也没有',
-      LibrarySeedProblem.badInput => '这串里没有番剧 id',
+      LibrarySeedProblem.notFound => '各站都没搜到这一部',
+      LibrarySeedProblem.noMagnet => '搜到了条目，但没有可下的种子',
       LibrarySeedProblem.network => '这一轮没取回来',
+      LibrarySeedProblem.badInput => '这串里没有番剧 id',
       LibrarySeedProblem.none => '没找到',
     },
     LibrarySeedPhase.ready => <String>[
-      if (s.fromAggregate) '来自其他源'
-      else 'mikan 番剧页 · ${s.groupNames.length} 个字幕组',
-      '共 ${s.episodes.length} 集',
+      '${s.groups.length} 个字幕组',
+      '共 ${s.episodes.length} 条',
       if (s.word case final String word) '用的是「$word」',
     ].join(' · '),
   };
@@ -409,126 +437,114 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     if (s.loading) {
       return DsLoading(
         key: dsDetailSeedsLoadingKey,
-        label: s.phase == LibrarySeedPhase.searching
-            ? '正在 mikan 找这一部（第 1 步 / 共 2 步）…'
-            : '正在取字幕组与剧集（第 2 步 / 共 2 步）…',
+        label: s.phase == LibrarySeedPhase.fetching
+            ? '正在取这张 mikan 番剧页…'
+            : '正在各站搜这一部（mikan、动漫花园、ACGNX…）…',
         compact: true,
       );
     }
-    if (s.phase == LibrarySeedPhase.needsPick) {
-      return Column(
-        key: dsDetailSeedsPickKey,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            '这些页面里有一个是这一部，点了就用它（拿不准时我不替你猜）：',
-            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
-          ),
-          const SizedBox(height: 6),
-          for (final MikanSeedCandidate c in s.candidates)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      '${c.title}（mikan #${c.bangumiId}）',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: t.text, fontSize: DsTypeScale.secondary),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  NeoButton(
-                    label: '用这一页',
-                    compact: true,
-                    onPressed: () => unawaited(
-                      ref
-                          .read(librarySeedProvider.notifier)
-                          .pickCandidate(widget.subject, c),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 4),
-          Text(
-            '都不对？展开下面的「改搜索词 / 粘链接」。',
-            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
-          ),
-        ],
-      );
-    }
-    if (s.phase == LibrarySeedPhase.failed) {
-      return _failure(context, s);
-    }
+    if (s.phase == LibrarySeedPhase.failed) return _failure(context, s);
+
+    final List<SeedGroup> shown = s.shownGroups;
+    // 「全选本页」说的是**整块露出来的那些**（每段一张小表，但勾选是一件事）。
+    final List<SourceItemView> scope = <SourceItemView>[
+      for (final SeedGroup group in shown) ..._visibleItems(group),
+    ];
+    final bool connected = ref.watch(engineStatusProvider).isConnected;
+    final List<SourceOption> sources = ref.watch(sourceOptionsProvider);
+
     return Column(
       key: dsDetailSeedsTableKey,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        if (s.fromAggregate)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: DsBanner(
-              kind: DsBannerKind.info,
-              text: '这些不是 mikan 番剧页给的（mikan 上没找到这一部），'
-                  '是「${s.word ?? widget.subject.displayTitle}」在其他源上的搜索结果。',
-            ),
-          ),
         if (s.warning case final String warning)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: DsBanner(kind: DsBannerKind.warning, text: warning),
           ),
-        if (s.detail case final BangumiDetailView detail) ...<Widget>[
-          _groups(context, detail, showTitle, s),
-          const SizedBox(height: 10),
-        ],
-        SearchResultsTable(
-          items: s.shown,
-          embedded: true,
-          engineConnected: ref.watch(engineStatusProvider).isConnected,
-          busyItemId: _busyItemId,
-          sources: ref.watch(sourceOptionsProvider),
-          onPlay: (SourceItemView item) => unawaited(_play(item, s, showTitle)),
-          onDownload: (SourceItemView item) => runGuarded(
-            context,
-            action: () => ref.read(queuePortProvider).enqueueDownload(item),
-            success: '已加入下载队列',
-          ),
-          onSubscribe: (SourceItemView item) => runGuarded(
-            context,
-            action: () => ref.read(queuePortProvider).attachToSubsRule(item),
-            success: '已加入订阅过滤',
-          ),
-          selectedIds: _selected,
-          onToggleSelect: (SourceItemView item) => setState(() {
-            if (!_selected.remove(item.id)) _selected.add(item.id);
-          }),
-          onToggleSelectAll: (bool select) => setState(() {
-            for (final SourceItemView item in s.shown) {
-              if (!canBatchDownload(item)) continue;
-              if (select) {
-                _selected.add(item.id);
-              } else {
-                _selected.remove(item.id);
+        for (int i = 0; i < shown.length; i++) ...<Widget>[
+          _groupHeader(context, s, shown[i], showTitle, marks, jobs, torrents),
+          SearchResultsTable(
+            items: _visibleItems(shown[i]),
+            embedded: true,
+            // 表头只在最上面画一次（列宽一样，每段都来一行会把版面切碎）。
+            showHeader: i == 0,
+            selectAllScope: scope,
+            engineConnected: connected,
+            busyItemId: _busyItemId,
+            sources: sources,
+            onPlay: (SourceItemView item) =>
+                unawaited(_play(item, s, showTitle)),
+            onDownload: (SourceItemView item) => runGuarded(
+              context,
+              action: () => ref.read(queuePortProvider).enqueueDownload(item),
+              success: '已加入下载队列',
+            ),
+            onSubscribe: (SourceItemView item) => runGuarded(
+              context,
+              action: () => ref.read(queuePortProvider).attachToSubsRule(item),
+              success: '已加入订阅过滤',
+            ),
+            selectedIds: _selected,
+            onToggleSelect: (SourceItemView item) => setState(() {
+              if (!_selected.remove(item.id)) _selected.add(item.id);
+            }),
+            onToggleSelectAll: (bool select) => setState(() {
+              for (final SourceItemView item in scope) {
+                if (!canBatchDownload(item)) continue;
+                if (select) {
+                  _selected.add(item.id);
+                } else {
+                  _selected.remove(item.id);
+                }
               }
-            }
-          }),
-          marksOf: (SourceItemView item) => _marks(
-            item,
-            s,
-            showTitle,
-            watched: marks,
-            jobs: jobs,
-            torrents: torrents,
+            }),
+            marksOf: (SourceItemView item) => _marks(
+              item,
+              s,
+              showTitle,
+              watched: marks,
+              jobs: jobs,
+              torrents: torrents,
+            ),
+            groupActionLabel: (SourceItemView item) =>
+                '这一组都入队（${shown[i].count} 条）',
+            onGroupAction: (SourceItemView item) => unawaited(
+              _enqueueGroup(
+                shown[i].items,
+                s,
+                showTitle,
+                marks,
+                jobs,
+                torrents,
+              ),
+            ),
           ),
-          groupActionLabel: (SourceItemView item) =>
-              '这一组都入队（${_groupItems(item, s).length} 集）',
-          onGroupAction: (SourceItemView item) => unawaited(
-            _enqueueGroup(item, s, showTitle, marks, jobs, torrents),
-          ),
-        ),
+          if (_visibleItems(shown[i]).length < shown[i].count)
+            Padding(
+              padding: const EdgeInsets.only(top: 2, bottom: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  key: dsDetailSeedsGroupMoreKey(shown[i].key),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(0, 26),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  onPressed: () =>
+                      setState(() => _expandedGroups.add(shown[i].key)),
+                  child: Text(
+                    '本组还有 ${shown[i].count - _visibleItems(shown[i]).length} 条',
+                    style: TextStyle(
+                      color: t.accent,
+                      fontSize: DsTypeScale.caption,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
         if (_selected.isNotEmpty) ...<Widget>[
           const SizedBox(height: 8),
           Row(
@@ -543,16 +559,17 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                     ? null
                     : () async {
                         final List<SourceItemView> picked = <SourceItemView>[
-                          for (final SourceItemView item in s.shown)
+                          for (final SourceItemView item in s.episodes)
                             if (_selected.contains(item.id)) item,
                         ];
                         if (picked.isEmpty) return;
                         setState(() => _busyGroup = true);
                         try {
-                          final BatchDownloadResult result = await enqueueDownloads(
-                            ref.read(queuePortProvider).enqueueDownload,
-                            picked,
-                          );
+                          final BatchDownloadResult result =
+                              await enqueueDownloads(
+                                ref.read(queuePortProvider).enqueueDownload,
+                                picked,
+                              );
                           ref.invalidate(queueJobsProvider);
                           if (!context.mounted) return;
                           final String summary = batchDownloadSummary(result);
@@ -583,94 +600,113 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 字幕组那一排：每个组一颗「订阅」（和主页那页一致）。
-  Widget _groups(
+  /// 这一段现在该画几条（没展开就只画前 [kSeedGroupVisibleStep] 条）。
+  List<SourceItemView> _visibleItems(SeedGroup group) {
+    if (_expandedGroups.contains(group.key) ||
+        group.count <= kSeedGroupVisibleStep) {
+      return group.items;
+    }
+    return group.items.sublist(0, kSeedGroupVisibleStep);
+  }
+
+  /// 一张 mikan 番剧页里跟这一段同名的那个组（拿 RSS 地址用；没有就画不出「订阅」）。
+  ///
+  /// 比对走 `normalizeGroupKey`：番剧页给的是站点上的原始写法（`桜都字幕组`），
+  /// 而段的 key 是归一化过的（`桜都`），直接比字符串永远对不上。
+  BangumiGroupView? _detailGroupOf(LibrarySeedState s, SeedGroup group) {
+    final BangumiDetailView? detail = s.detail;
+    if (detail == null) return null;
+    for (final BangumiGroupView it in detail.groups) {
+      if (normalizeGroupKey(it.name) == group.key) return it;
+    }
+    return null;
+  }
+
+  /// 一段的抬头：组名 · 条数 ·（拿得到番剧页时）「订阅」·「这一组都入队」。
+  Widget _groupHeader(
     BuildContext context,
-    BangumiDetailView detail,
-    String showTitle,
     LibrarySeedState s,
+    SeedGroup group,
+    String showTitle,
+    Map<String, DateTime> watched,
+    List<QueueJobView> jobs,
+    List<EngineTorrentView> torrents,
   ) {
     final DsTokens t = context.ds;
-    if (detail.groups.isEmpty) return const SizedBox.shrink();
-    return Column(
-      key: dsDetailSeedsGroupsKey,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          '字幕组（${detail.groups.length}）',
-          style: TextStyle(
-            color: t.text3,
-            fontSize: DsTypeScale.caption,
-            fontWeight: FontWeight.w700,
+    final BangumiGroupView? detailGroup = _detailGroupOf(s, group);
+    return Padding(
+      key: dsDetailSeedsGroupKey(group.key),
+      padding: const EdgeInsets.only(top: 10, bottom: 6),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              '${group.label}（${group.count} 条）',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: dsTableHeaderStyle(t).copyWith(fontSize: DsTypeScale.secondary),
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        LayoutBuilder(
-          builder: (BuildContext context, BoxConstraints c) {
-            final double width = math.min(320, c.maxWidth);
-            return Wrap(
-              spacing: 12,
-              runSpacing: 6,
-              children: <Widget>[
-                for (final BangumiGroupView group in detail.groups)
-                  SizedBox(
-                    width: width,
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            group.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: t.text2, fontSize: DsTypeScale.secondary),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        GroupSubscribeButton(
-                          bangumiId: detail.bangumiId,
-                          showTitle: showTitle,
-                          group: group,
-                        ),
-                      ],
+          if (detailGroup != null && s.binding != null) ...<Widget>[
+            GroupSubscribeButton(
+              bangumiId: s.binding!.bangumiId,
+              showTitle: showTitle,
+              group: detailGroup,
+            ),
+            const SizedBox(width: 6),
+          ],
+          NeoButton(
+            label: '这一组都入队',
+            icon: Icons.playlist_add,
+            compact: true,
+            busy: _busyGroup,
+            onPressed: _busyGroup
+                ? null
+                : () => unawaited(
+                    _enqueueGroup(
+                      group.items,
+                      s,
+                      showTitle,
+                      watched,
+                      jobs,
+                      torrents,
                     ),
                   ),
-              ],
-            );
-          },
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 
-  /// 三种空 + 网络失败（用户第四十五轮：**分开写**，各给对应动作）。
+  /// 空 / 坏（每一种空各给对应动作）。
   Widget _failure(BuildContext context, LibrarySeedState s) {
     final DsTokens t = context.ds;
-    final LibrarySeedController controller = ref.read(librarySeedProvider.notifier);
+    final LibrarySeedController controller = ref
+        .read(librarySeedProvider.notifier);
     final String word = s.word ?? widget.subject.displayTitle;
+    final int sourceCount = seedSourceTargetsFor(
+      ref.watch(sourceOptionsProvider),
+      ref.watch(searchProvider).excludedSourceIds,
+    ).length;
     final (String title, String message) = switch (s.problem) {
-      LibrarySeedProblem.mikanNotFound => (
-        'mikan 上没找到「$word」',
-        'mikan 的搜索是整串匹配（多一个字就 0 行），冷门番与老番经常没有番剧页'
-            '（实测成功率 62%）。可以展开下面改个搜索词、粘一个 mikan 链接，'
-            '或者去其他源搜一次。',
+      LibrarySeedProblem.notFound => (
+        '各站都没搜到「$word」',
+        '在勾选的 $sourceCount 个站上都问过了，一条沾边的都没有。冷门番与老番常见 —— '
+            '换个词试试（日文原名 / 罗马音往往比中文名好使），'
+            '或者直接粘一个 mikan 番剧页的地址（下面「改搜索词 / 粘链接」）。',
       ),
       LibrarySeedProblem.noMagnet => (
-        '番剧页拿到了，但一集可下的种子都没有',
-        'mikan 那一页给了 ${s.episodes.length} 集，但都没有磁力/直链 —— '
-            '可能是刚开播还没放源，或者站点那边临时缺。',
-      ),
-      LibrarySeedProblem.allSourcesEmpty => (
-        '其他源也没有这一部',
-        '已经在勾选的源上都搜过「$word」，一条都没有 —— 冷门番常见，'
-            '不是搜索坏了。换个词（试试日文原名/罗马音）再看看。',
-      ),
-      LibrarySeedProblem.badInput => (
-        '这串里没有 mikan 番剧 id',
-        '粘 `https://mikanani.me/Home/Bangumi/2833` 这样的地址，或者直接写 `2833`。',
+        '搜到了条目，但没有一条能下',
+        '一共 ${s.episodes.length} 条，都没有磁力/直链 —— 可能是刚开播还没放源，'
+            '或者站点那边临时缺。稍后再点一次「重新搜一遍」。',
       ),
       LibrarySeedProblem.network || LibrarySeedProblem.none => (
         '这一步没取回来',
         s.failure?.hint ?? s.failure?.message ?? '网络或源站那边的问题，重试一下。',
+      ),
+      LibrarySeedProblem.badInput => (
+        '这串里没有 mikan 番剧 id',
+        '粘 `https://mikanani.me/Home/Bangumi/2833` 这样的地址，或者直接写 `2833`。',
       ),
     };
     return Column(
@@ -683,13 +719,10 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
           message,
           style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption, height: 1.6),
         ),
-        if (s.bindingStale)
+        if (s.warning case final String warning)
           Padding(
             padding: const EdgeInsets.only(top: 6),
-            child: DsBanner(
-              kind: DsBannerKind.warning,
-              text: '记住的那个番剧页取不回来了（可能被删或改名），已经自动重搜过一次。',
-            ),
+            child: DsBanner(kind: DsBannerKind.warning, text: warning),
           ),
         const SizedBox(height: 8),
         Wrap(
@@ -697,18 +730,11 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
           runSpacing: 6,
           children: <Widget>[
             NeoButton(
-              label: '重新搜一次',
+              label: '重新搜一遍',
               icon: Icons.refresh,
               kind: NeoButtonKind.primary,
               compact: true,
               onPressed: () => unawaited(controller.retry()),
-            ),
-            NeoButton(
-              key: dsDetailSeedsOtherSourcesKey,
-              label: '用其他源再搜一次',
-              icon: Icons.travel_explore,
-              compact: true,
-              onPressed: () => unawaited(controller.searchEverywhere(widget.subject)),
             ),
             NeoButton(
               label: '改搜索词 / 粘链接',
@@ -725,7 +751,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   /// 工具行：改搜索词 / 粘 mikan 链接或 id。
   Widget _toolsRow(LibrarySeedState s) {
     final DsTokens t = context.ds;
-    final LibrarySeedController controller = ref.read(librarySeedProvider.notifier);
+    final LibrarySeedController controller = ref
+        .read(librarySeedProvider.notifier);
     final String? word = s.word;
     if (_word.text.isEmpty && word != null) _word.text = word;
     return Column(
@@ -766,7 +793,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                 controller: _raw,
                 style: TextStyle(color: t.text, fontSize: DsTypeScale.secondary),
                 decoration: const InputDecoration(
-                  hintText: '粘 mikan 番剧页地址或 id（例如 2833）',
+                  hintText: '粘 mikan 番剧页地址或 id（例如 2833）：把它并进这里',
                   isDense: true,
                 ),
                 onSubmitted: (String value) =>

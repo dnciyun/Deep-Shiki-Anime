@@ -101,7 +101,10 @@ int itemRichness(SourceItemView item) {
 }
 
 /// [a] 是否比 [b] 更该留在池子里（同一条资源的两份拷贝之间比）。
-bool _richerThan(SourceItemView a, SourceItemView b) {
+///
+/// 第四十八轮公开：动漫库种子块的「同名合并」也要用**同一把尺子** —— 同一件事
+/// （两份拷贝留哪份）写两套比较，迟早会漂移出"聚合搜索留 A、种子块留 B"这种行为。
+bool richerItem(SourceItemView a, SourceItemView b) {
   final int ra = itemRichness(a);
   final int rb = itemRichness(b);
   if (ra != rb) return ra > rb;
@@ -130,7 +133,7 @@ List<SourceItemView> aggregateMerge(
       out.add(item);
       continue;
     }
-    if (_richerThan(item, out[existing])) out[existing] = item;
+    if (richerItem(item, out[existing])) out[existing] = item;
   }
   return out;
 }

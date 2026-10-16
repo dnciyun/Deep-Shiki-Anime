@@ -1,33 +1,42 @@
-/// 动漫库「种子」块的**领域**部分（第四十五轮）。
+/// 动漫库「种子」块的**领域**部分（第四十五轮起，第四十八轮换过引擎）。
 ///
-/// 用户原话：「能实现动漫库中直接显示种子吗，就像主页那样」——主页卡片点进去那页
-/// （`ui/bangumi_detail.dart`）就是"按字幕组列剧集 + 每集磁力"，所以这里要复刻的是
-/// **那一页的数据**，不是它的版式。
+/// 用户原话（第四十五轮）：「能实现动漫库中直接显示种子吗，就像主页那样」——主页卡片点
+/// 进去那页（`ui/bangumi_detail.dart`）就是"按字幕组列剧集 + 每集磁力"，所以这里要复刻的
+/// 是**那一页的数据**，不是它的版式。
 ///
-/// 这条链上有个绕不开的事实：**Bangumi 的条目 id 与 mikan 的番剧 id 是两套 id**
-/// （`following_store.dart` 把 `mikan:<id>` 与 `bgm:<id>` 并列成两个键，正说明是两回事），
-/// 仓库里没有任何映射表。所以"这一条 Bangumi 条目 ↔ 哪个 mikan 番剧页"只能**按番名搜出来**，
-/// 而 mikan 的搜索是**整串匹配、不分词**（实测：`间谍过家家 第2部分` 与
-/// `SPY×FAMILY 第2クール` 都是 0 行，靠别名 `SPY×FAMILY Part 2` 才有结果）
-/// —— 这就是 [librarySeedQueries] 那条"逐级退让"的阶梯存在的理由。
+/// ── 第四十八轮：引擎从「mikan 番剧页绑定」换成「主流站点关键字搜索」 ────────────────
+/// 用户原话：
+/// > 「我自己去 mikan 搜都搜索得到，这里就搜不到了，修复一下，然后改为主流搜索当引擎，
+/// >   按字幕组分隔，不同搜索引擎同名字就按合并」
 ///
-/// 另一个实测事实（见 `build/round45/report.md`）：mikan 搜索页的行里**没有**
-/// `/Home/Bangumi/<id>` 链接（1000 行里 0 条），番剧 id 只在**单集页**里
-/// （`MikanEpisodeParser` 的 `extra['bangumiId']`）。所以每试一个候选要多打一枪详情页
-/// —— [kMaxLibrarySeedDetails] 是这件事的预算上限。
+/// 为什么原来那条路必须退场（第四十八轮真机实测，`build/round48/`）：
+/// mikan 的**搜索页是好的**（「命运石之门」一页 841 行、841 行都带磁力），坏的是**下一步**
+/// ——宿主拿搜索行去**单集页**换番剧 id（`/Home/Bangumi/<id>`）。实测：
+/// * 最新那几行是 `7³ACG` 用 API 直发的合集/剧场版，那些页面**根本没有番剧链接**；
+/// * 抽样 28 行只有 **7 行**能绑上，而且那 7 行全是**另一部番**（「命运石之门 0」⇒ 番剧页
+///   1610）—— 老版 TV 的每一集都绑不到番剧页。
+/// 预算是 3 次详情，全烧在绑不上的最新行上 ⇒ 每部这样的番都报「mikan 上没找到」。
+///
+/// 所以这一轮：**引擎 = 主流站点的关键字搜索**（用户勾选的那些源，聚合搜番名），
+/// 结果**按字幕组归组**、**跨站同名合并**（见 [groupSeedItems] / [mergeSeedDuplicates]）。
+/// 番剧页那条路没有消失，但降级成**手动**的（粘 mikan 番剧页地址或 id，见
+/// `LibrarySeedController.bindRaw`）—— 它有它的价值（一整部的完整剧集表 + 每组自己的
+/// RSS 订阅），只是不该再当主力。
+///
+/// [librarySeedQueries] 那条"逐级退让"的阶梯仍然要：mikan 的搜索是**整串匹配、不分词**
+/// （实测：`间谍过家家 第2部分` 与 `SPY×FAMILY 第2クール` 都是 0 行，靠别名
+/// `SPY×FAMILY Part 2` 才有结果）。
 library;
 
+import 'package:flutter/foundation.dart';
+
+import 'aggregate.dart' show richerItem;
 import 'bangumi.dart' show BangumiSubject, BangumiInfoboxItem;
+import 'models.dart';
+import 'subtitle_groups.dart';
 
 /// 一次解析最多试几个查询词（用户第四十五轮定的阶梯正好四级）。
 const int kMaxLibrarySeedQueries = 4;
-
-/// 一次解析最多打几次"单集详情页"（每次 = 1 个候选番剧页）。
-///
-/// 为什么要有全局预算：每个候选 = 一次网络（同站 ≥1.2s），而阶梯有四级；不设预算时
-/// 最坏情况是 4×2 次详情 + 4 次搜索 ≈ 20 秒。3 次是把"冷门番也要能查到"和"别让用户
-/// 干等"之间取的中间值（典型路径只花 1 次：第一个候选的标题就对得上）。
-const int kMaxLibrarySeedDetails = 3;
 
 /// 番剧页结果的宿主侧缓存时长（第四十五轮用户选定「30 分钟」）。
 ///
@@ -73,24 +82,6 @@ class MikanSeedBinding {
       query: (map['query'] ?? '').toString(),
     );
   }
-}
-
-/// 解析过程中撞见的一个候选番剧页（拿不准时列出来让用户点）。
-class MikanSeedCandidate {
-  const MikanSeedCandidate({
-    required this.bangumiId,
-    required this.title,
-    required this.query,
-    required this.score,
-  });
-
-  final String bangumiId;
-  final String title;
-  final String query;
-
-  /// [seedTitleScore] 的分数：100 = 名字完全一样，60 = 一边包含另一边，40 = 去掉
-  /// 季/部后缀后一样，0 = 不像。
-  final int score;
 }
 
 /// 从一条 Bangumi 条目能试的搜索词，**按命中率从高到低**（第四十五轮用户选定：
@@ -307,4 +298,214 @@ String _toHalfWidth(String text) {
     }
   }
   return out.toString();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 归组与合并（第四十八轮：引擎换成主流站点搜索之后）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// "这一条在别的站也有"记在 `extra` 的这个键上（值 = 源 id 列表）。
+const String kSeedAlsoOnKey = 'alsoOn';
+
+/// [item] 在别的站也叫这个名字（同名合并记下来的）；没有就是空表。
+List<String> seedAlsoOn(SourceItemView item) {
+  final Object? raw = item.extra[kSeedAlsoOnKey];
+  if (raw is! List) return const <String>[];
+  return <String>[
+    for (final Object? value in raw)
+      if (value is String && value.isNotEmpty) value,
+  ];
+}
+
+/// 同名合并用的「标题键」。
+///
+/// ⚠️ **刻意不用 [normalizeSeedTitle]**：那个要剥掉整段方括号（服务的是"像不像这一部番"），
+/// 而方括号里装的正是**区分两条资源**的东西 —— `[1080p]` / `[720p]`、`[简繁字幕]` /
+/// `[繁日双语]`。按它归并会把两个版本合成一条，用户就再也选不到另一个版本了。
+/// 这里只做"同一串标题的不同排版"级别的归一化：全角→半角、小写、空白收敛、去首尾标点。
+String seedTitleMergeKey(String? raw) {
+  String text = _toHalfWidth((raw ?? '').trim()).toLowerCase();
+  text = text.replaceAll(RegExp(r'\s+'), ' ');
+  return text.replaceAll(RegExp(r'^[\s\-–—_.,;:|/\\·]+|[\s\-–—_.,;:|/\\·]+$'), '');
+}
+
+/// 一条条目归到哪一段（归一化组名；解析不出组名就是 [kUnknownSubtitleGroupKey]）。
+///
+/// ⚠️ 与搜索页「字幕组筛选」的**并集语义**故意不同：那里勾「喵萌奶茶屋」也要命中
+/// `喵萌奶茶屋&LoliHouse`（协作署名两边都算）；这里一条只能落在**一段**里 —— 否则
+/// "这一段有 N 条"和「这一组都入队（N 条）」都会把同一条数两次、下两次。协作署名因此
+/// 自成一段（`喵萌奶茶屋&LoliHouse`），名字照原样显示，没被藏起来。
+String seedGroupKeyOf(SourceItemView item) =>
+    normalizeGroupKey(item.group) ?? kUnknownSubtitleGroupKey;
+
+/// 「同名合并」：**同一段 + 同一标题**的条目并成一条（第四十八轮）。
+///
+/// 为什么是"同一段 + 同一标题"而不是只按标题：标题相同但**字幕组不同**的两条是
+/// **两份不同的文件**（不同字幕/不同压制的版本），合并会真的吃掉用户的选择；
+/// 而"同一个组把同一集同时发到 mikan 与动漫花园"才是同一条东西，那才是要合掉的重复。
+/// 完全同一条（同 infoHash）在更前面的 [aggregateMerge] 就并掉了，这里管的是
+/// "两个站的标题写法不同、hash 也没抽到"那一档。
+///
+/// 留下的那条：信息更全的（[richerItem]，与聚合搜索同一把尺子）；平手保持先到的。
+/// 被合掉的站记进 `extra[kSeedAlsoOnKey]`（界面上给一个小标记，别让用户以为少看了一个站）。
+List<SourceItemView> mergeSeedDuplicates(List<SourceItemView> items) {
+  final List<SourceItemView> out = <SourceItemView>[];
+  final Map<String, int> at = <String, int>{};
+  for (final SourceItemView item in items) {
+    final String title = seedTitleMergeKey(item.title);
+    // 没有标题的**不合并**：同一个组里所有"无标题"会被并成一条，等于凭空丢条目。
+    final String key = title.isEmpty
+        ? '\u0000id\u0000${item.dedupeKey}'
+        : '${seedGroupKeyOf(item)}\u0000$title';
+    final int? existing = at[key];
+    if (existing == null) {
+      at[key] = out.length;
+      out.add(item);
+      continue;
+    }
+    final SourceItemView kept = out[existing];
+    final bool takeNew = richerItem(item, kept);
+    final SourceItemView winner = takeNew ? item : kept;
+    final SourceItemView loser = takeNew ? kept : item;
+    final List<String> also = <String>{
+      ...seedAlsoOn(kept),
+      ...seedAlsoOn(item),
+      loser.sourceId,
+    }.where((String id) => id != winner.sourceId).toList()..sort();
+    out[existing] = _withSeedAlsoOn(winner, also);
+  }
+  return out;
+}
+
+/// 复制一条并把"别的站也有"写进 `extra`（[SourceItemView] 是不可变的，只能重建）。
+SourceItemView _withSeedAlsoOn(SourceItemView item, List<String> also) {
+  if (also.isEmpty) return item;
+  return SourceItemView(
+    id: item.id,
+    sourceId: item.sourceId,
+    title: item.title,
+    detailUrl: item.detailUrl,
+    torrentUrl: item.torrentUrl,
+    magnet: item.magnet,
+    infoHash: item.infoHash,
+    sizeBytes: item.sizeBytes,
+    seeders: item.seeders,
+    leechers: item.leechers,
+    downloads: item.downloads,
+    publishedAt: item.publishedAt,
+    category: item.category,
+    group: item.group,
+    episodeHints: item.episodeHints,
+    extra: <String, Object?>{
+      ...item.extra,
+      kSeedAlsoOnKey: List<String>.unmodifiable(also),
+    },
+  );
+}
+
+/// 名字在标题里出现过的那些条目（**可能为空表**）。
+///
+/// 为什么要有"可能为空"这一版、而不是直接"空了就原样给全部"：同一个判据有两个用法，
+/// 语义相反 ——
+/// * 逐级退让的阶梯拿它判**这一级算不算中**（空了就该去试下一级写法）；
+/// * 定稿时它决定**给用户看什么**，那里才需要"宁可多给几条也别空着"那层兜底
+///   （见 `LibrarySeedController._searchNames` 的 `fallback`）。
+List<SourceItemView> seedItemsMentioning(
+  List<SourceItemView> items,
+  List<String> names,
+) => <SourceItemView>[
+  for (final SourceItemView item in items)
+    if (seedTitleMentions(item.title, names)) item,
+];
+
+/// [title] 里出现过 [names] 里的任何一个名字吗。
+///
+/// ⚠️ **不要拿 [seedTitleScore] 代替它**（第四十八轮真机实测）：那个打分函数服务的是
+/// "这一条像不像那一部番"（要剥括号、要比季号），而 mikan 上大量标题把番名装在方括号里
+/// —— `[KissSub][Steins;Gate][命运石之门][12][GB_BIG5_JP][...]` 剥完括号名字就没了。
+/// 「命运石之门」841 行里有 **246 行（29%）**会被它判成无关，其中还有 KissSub 的一整套 01–12。
+///
+/// 判据本身很朴素：两边都折成「只留字母/数字/假名/汉字」的骨架再比子串 —— 这样
+/// `Steins;Gate` / `STEINS;GATE` / `Steins Gate` 是同一条，方括号、全角、`;` `·`
+/// 这些排版差异也不再影响。
+bool seedTitleMentions(String? title, Iterable<String> names) {
+  final String hay = _seedSkeleton(title);
+  if (hay.isEmpty) return false;
+  for (final String raw in names) {
+    final String needle = _seedSkeleton(raw);
+    // 一个字的名字不算命中（`零`、`Z` 这种会捞回半个站的东西）——与
+    // `series_search.dart` 的 kMinSeriesKeywordLength 同一考量。
+    if (needle.length < 2) continue;
+    if (hay.contains(needle)) return true;
+  }
+  return false;
+}
+
+/// 「骨架」：全角→半角、小写、只留字母/数字/假名/汉字。
+String _seedSkeleton(String? raw) => _toHalfWidth((raw ?? '').trim())
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^0-9a-z\u3040-\u30ff\u4e00-\u9fff]+'), '');
+
+/// 一个字幕组 = 种子块里的一段。
+@immutable
+class SeedGroup {
+  const SeedGroup({required this.key, required this.label, required this.items});
+
+  /// 归一化组名（[seedGroupKeyOf]）；[kUnknownSubtitleGroupKey] = 解析不出组名的那些。
+  final String key;
+
+  /// 给人看的组名（预置名单优先，其次取本批里最常见的原始写法）。
+  final String label;
+
+  /// 这一段里的条目（顺序 = 传进来那个池子的顺序 = 发布时间新→旧）。
+  final List<SourceItemView> items;
+
+  int get count => items.length;
+
+  bool get isUnknown => key == kUnknownSubtitleGroupKey;
+}
+
+/// 按字幕组把池子切成一段一段；**条数多的组在前**（平手按最新那条的时间，再按组名）。
+///
+/// 为什么不是"最新发过东西的组在前"（第四十八轮用真数据试过）：「命运石之门」的 841 行
+/// 分成 48 段，每组条数中位数 **3**、只有 1 条的 **13 段**，而真正成套的是
+/// `澄空学园&华盟`（93 条）、`爱恋字幕社`（67 条）、`动漫花园`（56 条）。
+/// 按"最新一条"排会让 4 条 / 2 条 / 2 条的小段占满首屏（默认露 3 段时首屏只有 8 行），
+/// 用户还得点十几次「显示更多字幕组」才看得到成套的那几家。
+/// 种子是**拿来下的**，所以"哪一家有整部"比"谁上个月又发了一条"重要。
+List<SeedGroup> groupSeedItems(List<SourceItemView> items) {
+  final List<String> order = <String>[];
+  final Map<String, List<SourceItemView>> byKey =
+      <String, List<SourceItemView>>{};
+  for (final SourceItemView item in items) {
+    final String key = seedGroupKeyOf(item);
+    List<SourceItemView>? bucket = byKey[key];
+    if (bucket == null) {
+      bucket = <SourceItemView>[];
+      byKey[key] = bucket;
+      order.add(key);
+    }
+    bucket.add(item);
+  }
+  final List<SeedGroup> groups = <SeedGroup>[
+    for (final String key in order)
+      SeedGroup(
+        key: key,
+        // 展示名只在**这一段自己的条目**里找（不扫整个池子）：`subtitleGroupLabel`
+        // 要遍历池子找原始写法，54 段 × 841 条就是四万多次归一化，纯白烧的 CPU。
+        label: subtitleGroupLabel(key, byKey[key]!),
+        items: List<SourceItemView>.unmodifiable(byKey[key]!),
+      ),
+  ];
+  groups.sort((SeedGroup a, SeedGroup b) {
+    final int byCount = b.count.compareTo(a.count);
+    if (byCount != 0) return byCount;
+    final DateTime? at = a.items.first.publishedAt;
+    final DateTime? bt = b.items.first.publishedAt;
+    if (at != null && bt != null && at != bt) return bt.compareTo(at);
+    if (at == null && bt != null) return 1;
+    if (at != null && bt == null) return -1;
+    return a.label.compareTo(b.label);
+  });
+  return groups;
 }

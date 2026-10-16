@@ -404,18 +404,6 @@ abstract interface class HostDataPort {
   /// 网络/解析失败也原样返回（不抛出），因为这一步只是"顺手补全"。
   Future<SourceItemView> ensurePlayable(SourceItemView item);
 
-  /// 取「这一条发在**哪个番剧页**」这类**只存在于单集页**的信息
-  /// （`extra['bangumiId']` / `['bangumiTitle']`），**不看有没有磁力，一律去取**。
-  ///
-  /// 为什么不能复用 [ensurePlayable]（第四十七轮真机踩到，动漫库详细页「种子」块
-  /// 全军覆没就是这个原因）：那个契约是"**缺磁力**才补"——`SourceItem.bestMagnet`
-  /// 非空时它**一次网络都不打**。而 mikan **搜索页**的行天生带磁力（`td[0]` 的
-  /// `input.js-episode-select[data-magnet]`），于是那条短路让 `bangumiId` 永远是空，
-  /// 调用方一个候选都攒不出来 ⇒ 每部番都报"mikan 上没找到"。
-  ///
-  /// 契约：拿不到就**原样返回**（不抛）——调用方按"没有候选"走它自己的空态文案。
-  Future<SourceItemView> episodeInfo(SourceItemView item);
-
   /// 这一条所在的**整部番的剧集清单**（来源支持才有；拿不到就返回空表）。
   ///
   /// 为什么必须有这一步（用户 2026-10-11 第五次报障）：

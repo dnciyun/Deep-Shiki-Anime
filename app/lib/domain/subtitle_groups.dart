@@ -373,14 +373,21 @@ List<SubtitleGroupOption> buildSubtitleGroupOptions({
 /// 为什么要"到池子里找"：长尾里 30% 的组只出现一次、不在预置表里（实测 336 个组名），
 /// 而 key 已经被归一化成小写 + 折过分隔符（`#CHAT RUMBLE#百合组` → `#chat-rumble#百合组`）
 /// —— 直接把 key 摆给用户看是"把内部口径漏出去了"。
+///
+/// ⚠️ **两种匹配都要试**（第四十八轮修）：当归组把 `item.group` **整串**归一化时
+/// （动漫库种子块的「按字幕组分段」，一条只落一段），协作署名 `喵萌奶茶屋&LoliHouse` 的 key 是
+/// `喵萌奶茶屋&lolihouse`，而 [groupKeysOf] 是**拆开**的（`喵萌奶茶屋` + `lolihouse`）
+/// —— 只按后者找，整串那个 key 永远找不到原始写法，界面上就会显示小写的内部 key。
 String subtitleGroupLabel(String key, List<SourceItemView> pool) {
   if (key == kUnknownSubtitleGroupKey) return '未知组';
   final String? preset = kPresetSubtitleGroupLabels[key];
   if (preset != null) return preset;
   for (final SourceItemView item in pool) {
-    if (!groupKeysOf(item.group).contains(key)) continue;
     final String raw = (item.group ?? '').trim();
-    if (raw.isNotEmpty) return raw;
+    if (raw.isEmpty) continue;
+    if (normalizeGroupKey(raw) == key || groupKeysOf(raw).contains(key)) {
+      return raw;
+    }
   }
   return key;
 }

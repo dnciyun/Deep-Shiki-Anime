@@ -46,6 +46,8 @@ class SearchResultsTable extends StatelessWidget {
     this.groupActionLabel,
     this.onGroupAction,
     this.embedded = false,
+    this.showHeader = true,
+    this.selectAllScope,
   });
 
   final List<SourceItemView> items;
@@ -84,6 +86,20 @@ class SearchResultsTable extends StatelessWidget {
   /// 默认 false = 搜索页那种"自己占满剩余高度、自己滚"的形态，行为一字不变。
   final bool embedded;
 
+  /// 画不画那一行表头（默认画）。
+  ///
+  /// 第四十八轮：动漫库种子块按字幕组分成了**好几张小表**，列宽都一样，
+  /// 所以只在第一张上面画一次表头 —— 每段都来一行「番名 / 大小 / 状态 / 操作」
+  /// 只会把版面切碎。
+  final bool showHeader;
+
+  /// 表头那颗勾说的"本页"是哪些条目（默认 = [items]）。
+  ///
+  /// 为什么要单独一个参数：分了段之后每一张表只装一段，而"全选本页"说的是
+  /// **整块露出来的那些**（调用方也是按整块去勾的）—— 不传它，勾选状态就会
+  /// 只看第一段，全勾满了还显示没勾。动作本身仍由 [onToggleSelectAll] 决定。
+  final List<SourceItemView>? selectAllScope;
+
   // 列宽（表头用 `dsTableHeaderStyle`；数字列 tabular）。
   //
   // 用户 2026-10-10 第 1 轮问答：9 列砍到 **5 列**——
@@ -105,8 +121,9 @@ class SearchResultsTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
     final TextStyle hs = dsTableHeaderStyle(t);
+    final List<SourceItemView> scope = selectAllScope ?? items;
     final List<SourceItemView> selectable = <SourceItemView>[
-      for (final SourceItemView item in items)
+      for (final SourceItemView item in scope)
         if (canBatchDownload(item)) item,
     ];
     final bool allSelected =
@@ -115,7 +132,8 @@ class SearchResultsTable extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         // 表头：无斑马纹、无竖线，只用一条极淡分隔（决策 A43）。
-        Container(
+        if (showHeader)
+          Container(
           padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
           decoration: BoxDecoration(
             color: t.raised,

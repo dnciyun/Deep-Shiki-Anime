@@ -1,12 +1,14 @@
-/// 动漫库「种子」块（第四十五轮）的**页面**测试。
+/// 动漫库「种子」块（第四十五轮起，第四十八轮换了引擎）的**页面**测试。
 ///
 /// 状态机在 `library_seed_test.dart` 里验；这里只验用户能看见的东西：
-/// * 两段式加载文案（「正在 mikan 找这一部…」→「正在取字幕组与剧集…」）；
-/// * 有结果时：字幕组那一排（每个组一颗「订阅」）、每集一行、行尾的
-///   「已看过 / 在队列 / 已完成」标记、「显示更多」；
-/// * 右键那一项「这一组都入队（N 集）」真的把这一组的集加进队列（跳过已看过的）；
-/// * 没有结果时：三种空分开写、给「用其他源再搜一次」这颗手动出口；
-/// * 抬头那颗「在搜索页打开」在**任何阶段**都在（它是旧按钮的降级形态）。
+/// * 加载文案（「正在各站搜…」）；
+/// * 有结果时：**一段一个字幕组**（抬头写着组名与条数）、每段一张表（表头只在最上面画一次）、
+///   行尾的「已看过 / 在队列 / 已完成」与「别的站也有」标记；
+/// * 每段先露 12 条（「本组还有 N 条」）、整块先露 4 段（「显示更多字幕组」）；
+/// * 右键 / 抬头那颗「这一组都入队」真的把这一段加进队列（跳过已看过的）；
+/// * 粘 mikan 番剧页之后，每段抬头多出「订阅」；
+/// * 没有结果时：说清是"各站都没有"、给「重新搜一遍」；
+/// * 抬头那颗「在搜索页打开」在**任何阶段**都在。
 library;
 
 import 'dart:async';
@@ -29,6 +31,7 @@ import 'package:flutter_test/flutter_test.dart';
 // 替身
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// 假源表：`hits['源:词']`。
 class _FakeSources extends UnavailableSourcePort {
   _FakeSources(this.hits);
 
@@ -38,13 +41,18 @@ class _FakeSources extends UnavailableSourcePort {
   @override
   List<SourceOption> get sources => const <SourceOption>[
     SourceOption(id: 'mikan', displayName: 'Mikan（蜜柑计划）'),
+    SourceOption(id: 'dmhy', displayName: '动漫花园（DMHY）'),
   ];
 
   @override
-  Future<SourcePageView> search(String sourceId, String keyword, {int page = 1}) async {
+  Future<SourcePageView> search(
+    String sourceId,
+    String keyword, {
+    int page = 1,
+  }) async {
     searched.add('$sourceId:$keyword');
     return SourcePageView(
-      items: hits[keyword] ?? const <SourceItemView>[],
+      items: hits['$sourceId:$keyword'] ?? const <SourceItemView>[],
       page: page,
       hasNext: false,
       fetchedAt: DateTime(2026, 10, 16, 12),
@@ -52,42 +60,32 @@ class _FakeSources extends UnavailableSourcePort {
   }
 }
 
-class _FakeHostData extends UnavailableHostDataPort {
-  _FakeHostData(this.byItem);
+/// 卡住搜索那一枪的假源（用来看加载文案）。
+class _GatedSources extends UnavailableSourcePort {
+  _GatedSources(this.gate, this.items);
 
-  final Map<String, ({String id, String title})> byItem;
+  final Completer<void> gate;
+  final List<SourceItemView> items;
 
-  /// ⚠️ 契约照真实现：番剧 id 只在单集页里，而"去单集页"这一步**不看有没有磁力**
-  /// （`episodeInfo`）；`ensurePlayable` 则是"缺磁力才补"（第四十七轮真机踩到的分界）。
   @override
-  Future<SourceItemView> episodeInfo(SourceItemView item) async {
-    final ({String id, String title})? hit = byItem[item.id];
-    if (hit == null) return item;
-    return SourceItemView(
-      id: item.id,
-      sourceId: item.sourceId,
-      title: item.title,
-      detailUrl: item.detailUrl,
-      torrentUrl: item.torrentUrl,
-      magnet: item.magnet,
-      infoHash: item.infoHash,
-      sizeBytes: item.sizeBytes,
-      publishedAt: item.publishedAt,
-      group: item.group,
-      episodeHints: item.episodeHints,
-      extra: <String, Object?>{
-        ...item.extra,
-        'bangumiId': hit.id,
-        'bangumiTitle': hit.title,
-      },
+  List<SourceOption> get sources => const <SourceOption>[
+    SourceOption(id: 'mikan', displayName: 'Mikan（蜜柑计划）'),
+  ];
+
+  @override
+  Future<SourcePageView> search(
+    String sourceId,
+    String keyword, {
+    int page = 1,
+  }) async {
+    await gate.future;
+    return SourcePageView(
+      items: items,
+      page: page,
+      hasNext: false,
+      fetchedAt: DateTime(2026, 10, 16, 12),
     );
   }
-
-  @override
-  Future<SourceItemView> ensurePlayable(SourceItemView item) async =>
-      (item.magnet ?? '').isNotEmpty || (item.infoHash ?? '').isNotEmpty
-          ? item
-          : episodeInfo(item);
 }
 
 class _FakeSchedule extends UnavailableSchedulePort {
@@ -107,7 +105,8 @@ class _FakeQueue extends UnavailableQueuePort {
   final List<SourceItemView> enqueued = <SourceItemView>[];
 
   @override
-  Stream<List<QueueJobView>> watchJobs() => Stream<List<QueueJobView>>.value(jobs);
+  Stream<List<QueueJobView>> watchJobs() =>
+      Stream<List<QueueJobView>>.value(jobs);
 
   @override
   Future<QueueJobView> enqueueDownload(SourceItemView item) async {
@@ -131,7 +130,8 @@ class _FakeEngine extends UnavailableEnginePort {
   final List<EngineTorrentView> torrents;
 
   @override
-  Stream<List<EngineTorrentView>> watch() => Stream<List<EngineTorrentView>>.value(torrents);
+  Stream<List<EngineTorrentView>> watch() =>
+      Stream<List<EngineTorrentView>>.value(torrents);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,10 +140,16 @@ class _FakeEngine extends UnavailableEnginePort {
 
 String _hash(int n) => n.toRadixString(16).padLeft(40, '0');
 
-SourceItemView _item(int n, {String group = '桜都字幕组', int day = 1}) => SourceItemView(
-  id: 'mikan:${_hash(n)}',
-  sourceId: 'mikan',
-  title: '葬送的芙莉莲 - ${n.toString().padLeft(2, '0')} [1080p][$group]',
+SourceItemView _item(
+  int n, {
+  String group = '桜都字幕组',
+  int day = 1,
+  String source = 'mikan',
+  String? title,
+}) => SourceItemView(
+  id: '$source:${_hash(n)}',
+  sourceId: source,
+  title: title ?? '葬送的芙莉莲 - ${n.toString().padLeft(2, '0')} [1080p][$group]',
   group: group,
   magnet: 'magnet:?xt=urn:btih:${_hash(n)}',
   infoHash: _hash(n),
@@ -158,29 +164,29 @@ BangumiSubject _subject() => const BangumiSubject(
   nameCn: '葬送的芙莉莲',
 );
 
-BangumiDetailView _detail(String id, List<SourceItemView> episodes) => BangumiDetailView(
-  bangumiId: id,
-  title: '葬送的芙莉莲',
-  groups: <BangumiGroupView>[
-    const BangumiGroupView(
-      id: '1',
-      name: '桜都字幕组',
-      rssUrl: 'https://mikanani.me/RSS/Bangumi?bangumiId=3141&subgroupid=1',
-    ),
-    const BangumiGroupView(
-      id: '2',
-      name: 'LoliHouse',
-      rssUrl: 'https://mikanani.me/RSS/Bangumi?bangumiId=3141&subgroupid=2',
-    ),
-  ],
-  episodes: episodes,
-);
+BangumiDetailView _detail(String id, List<SourceItemView> episodes) =>
+    BangumiDetailView(
+      bangumiId: id,
+      title: '葬送的芙莉莲',
+      groups: <BangumiGroupView>[
+        const BangumiGroupView(
+          id: '1',
+          name: '桜都字幕组',
+          rssUrl: 'https://mikanani.me/RSS/Bangumi?bangumiId=3141&subgroupid=1',
+        ),
+        const BangumiGroupView(
+          id: '2',
+          name: 'LoliHouse',
+          rssUrl: 'https://mikanani.me/RSS/Bangumi?bangumiId=3141&subgroupid=2',
+        ),
+      ],
+      episodes: episodes,
+    );
 
-/// 一次「造好 -> 等它解析完 -> 可选地做完某件事」的公共流程。
+/// 一次「造好 -> 等它解析完」的公共流程。
 class _Harness {
   _Harness({
     required this.source,
-    required this.host,
     required this.schedule,
     required this.store,
     this.queue,
@@ -188,7 +194,6 @@ class _Harness {
   });
 
   final SourcePort source;
-  final _FakeHostData host;
   final SchedulePort schedule;
   final InMemoryKeyValueStore store;
   final _FakeQueue? queue;
@@ -199,7 +204,6 @@ class _Harness {
     overrides: [
       keyValueStoreProvider.overrideWithValue(store),
       sourcePortProvider.overrideWithValue(source),
-      hostDataPortProvider.overrideWithValue(host),
       schedulePortProvider.overrideWithValue(schedule),
       if (queue != null) queuePortProvider.overrideWithValue(queue!),
       if (engine != null) enginePortProvider.overrideWithValue(engine!),
@@ -227,52 +231,118 @@ Future<void> _pump(WidgetTester tester, _Harness h) async {
 }
 
 void main() {
-  testWidgets('有结果：字幕组（带订阅）/ 每集一行 / 抬头两颗动作都在', (WidgetTester tester) async {
+  testWidgets('有结果：一段一个字幕组（组名 + 条数）/ 每段一张表 / 抬头两颗动作都在', (
+    WidgetTester tester,
+  ) async {
     final _Harness h = _Harness(
       source: _FakeSources(<String, List<SourceItemView>>{
-        '葬送的芙莉莲': <SourceItemView>[_item(1)],
+        'mikan:葬送的芙莉莲': <SourceItemView>[_item(1), _item(2)],
+        'dmhy:葬送的芙莉莲': <SourceItemView>[
+          _item(3, group: 'LoliHouse', source: 'dmhy'),
+        ],
       }),
-      host: _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      }),
-      schedule: _FakeSchedule(<String, BangumiDetailView>{
-        '3141': _detail('3141', <SourceItemView>[_item(1), _item(2), _item(3)]),
-      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
       store: InMemoryKeyValueStore(),
     );
     await _pump(tester, h);
 
     expect(find.byKey(dsDetailSeedsKey), findsOneWidget);
     expect(find.text('种子'), findsOneWidget);
-    // 抬头说清来源与用的词。
-    expect(find.textContaining('mikan 番剧页 · 2 个字幕组'), findsOneWidget);
-    expect(find.textContaining('共 3 集'), findsOneWidget);
+    // 抬头说清来源与用的词（"2 个字幕组 · 共 3 条"）。
+    expect(find.textContaining('2 个字幕组'), findsOneWidget);
+    expect(find.textContaining('共 3 条'), findsOneWidget);
     expect(find.textContaining('用的是「葬送的芙莉莲」'), findsOneWidget);
-    // 字幕组那一排：两个组、每个组旁边一颗「订阅」。
-    expect(find.byKey(dsDetailSeedsGroupsKey), findsOneWidget);
-    expect(find.text('桜都字幕组'), findsWidgets);
-    expect(find.text('LoliHouse'), findsWidgets);
-    expect(find.text('订阅'), findsNWidgets(2));
-    // 结果表：三集都在，勾选列也画了（嵌进页面时不自己滚）。
+    // 两段：条数多的在前；抬头写着组名与条数。
+    expect(find.byKey(dsDetailSeedsGroupKey('桜都')), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsGroupKey('lolihouse')), findsOneWidget);
+    expect(find.text('桜都字幕组（2 条）'), findsOneWidget);
+    expect(find.text('LoliHouse（1 条）'), findsOneWidget);
+    // 三行都在；没锚过番剧页 → 没有「订阅」（那颗要番剧 id）。
     expect(find.byKey(dsDetailSeedsTableKey), findsOneWidget);
     for (int i = 1; i <= 3; i++) {
       expect(find.textContaining('葬送的芙莉莲 - 0$i'), findsOneWidget);
     }
-    // 抬头那颗「在搜索页打开」= 旧按钮的降级形态。
+    expect(find.text('订阅'), findsNothing);
+    // 段数没超默认值 → 没有「显示更多字幕组」。
+    expect(find.byKey(dsDetailSeedsMoreKey), findsNothing);
     expect(find.byKey(dsDetailSeedsSearchPageKey), findsOneWidget);
   });
 
-  testWidgets('两段式加载文案：先"正在 mikan 找这一部"，取番剧页时换第二段', (WidgetTester tester) async {
-    // 两段各卡一枪才看得清（只 pump 一次的话微任务会把两步一口气跑完）：
-    // ① 卡住 mikan 搜索 → 第一段；② 放进结果后卡住番剧页 → 第二段。
+  testWidgets('跨站同名合并成一条：行尾带「别的站也有」的小标记', (WidgetTester tester) async {
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[_item(1)],
+        'dmhy:葬送的芙莉莲': <SourceItemView>[
+          _item(
+            9,
+            source: 'dmhy',
+            title: '葬送的芙莉莲 - 01 [1080p][桜都字幕组]',
+          ),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+
+    expect(find.text('桜都字幕组（1 条）'), findsOneWidget, reason: '两个站的一条 → 合成一段一条');
+    expect(find.byTooltip('另外 1 个站也有这一条（同名合并成了一条）'), findsOneWidget);
+  });
+
+  testWidgets('每段先露 12 条，「本组还有 N 条」再展开', (WidgetTester tester) async {
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[
+          for (int i = 1; i <= 15; i++) _item(i, day: i),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+
+    expect(find.text('桜都字幕组（15 条）'), findsOneWidget);
+    // 组内按发布 新→旧：藏起来的是**最老的**那三条。
+    expect(find.textContaining('葬送的芙莉莲 - 15'), findsOneWidget);
+    expect(find.textContaining('葬送的芙莉莲 - 03'), findsNothing, reason: '最老的三条先藏着');
+    expect(find.text('本组还有 3 条'), findsOneWidget);
+
+    await tester.tap(find.byKey(dsDetailSeedsGroupMoreKey('桜都')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('葬送的芙莉莲 - 01'), findsOneWidget);
+    expect(find.text('本组还有 3 条'), findsNothing);
+  });
+
+  testWidgets('字幕组超过 4 段才出现「显示更多字幕组」', (WidgetTester tester) async {
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[
+          for (int i = 1; i <= 12; i++)
+            _item(i, group: '组$i', day: i),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+
+    expect(find.textContaining('12 个字幕组'), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsMoreKey), findsOneWidget);
+    expect(find.textContaining('还有 8 个'), findsOneWidget);
+
+    await tester.tap(find.byKey(dsDetailSeedsMoreKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(dsDetailSeedsMoreKey), findsNothing, reason: '12 段全露出来了');
+    expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsOneWidget);
+  });
+
+  testWidgets('加载文案：正在各站搜这一部', (WidgetTester tester) async {
     final Completer<void> searchGate = Completer<void>();
-    final Completer<BangumiDetailView> pageGate = Completer<BangumiDetailView>();
     final _Harness h = _Harness(
       source: _GatedSources(searchGate, <SourceItemView>[_item(1)]),
-      host: _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      }),
-      schedule: _GatedSchedule(pageGate),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
       store: InMemoryKeyValueStore(),
     );
     tester.view.physicalSize = const Size(1400, 1400);
@@ -280,16 +350,12 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(h.widget());
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.textContaining('正在 mikan 找这一部（第 1 步'), findsOneWidget);
+
+    expect(find.byKey(dsDetailSeedsLoadingKey), findsOneWidget);
+    expect(find.textContaining('正在各站搜'), findsWidgets);
 
     searchGate.complete();
-    await tester.pump(const Duration(milliseconds: 20));
-    await tester.pump(const Duration(milliseconds: 20));
-    expect(find.textContaining('正在取字幕组与剧集（第 2 步'), findsOneWidget);
-
-    pageGate.complete(_detail('3141', <SourceItemView>[_item(1)]));
     await tester.pumpAndSettle();
-    expect(find.textContaining('正在取字幕组与剧集'), findsNothing);
     expect(find.byKey(dsDetailSeedsTableKey), findsOneWidget);
   });
 
@@ -298,7 +364,12 @@ void main() {
     final SourceItemView two = _item(2);
     final SourceItemView three = _item(3);
     final _FakeQueue queue = _FakeQueue(<QueueJobView>[
-      QueueJobView(id: 'job1', item: two, createdAt: DateTime(2026, 10, 16), updatedAt: DateTime(2026, 10, 16)),
+      QueueJobView(
+        id: 'job1',
+        item: two,
+        createdAt: DateTime(2026, 10, 16),
+        updatedAt: DateTime(2026, 10, 16),
+      ),
     ]);
     final _FakeEngine engine = _FakeEngine(<EngineTorrentView>[
       EngineTorrentView(
@@ -311,27 +382,22 @@ void main() {
     ]);
     final _Harness h = _Harness(
       source: _FakeSources(<String, List<SourceItemView>>{
-        '葬送的芙莉莲': <SourceItemView>[_item(1)],
+        'mikan:葬送的芙莉莲': <SourceItemView>[one, two, three],
       }),
-      host: _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      }),
-      schedule: _FakeSchedule(<String, BangumiDetailView>{
-        '3141': _detail('3141', <SourceItemView>[one, two, three]),
-      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
       store: InMemoryKeyValueStore(),
       queue: queue,
       engine: engine,
     );
     await _pump(tester, h);
 
-    // 已看过：按"番剧 id + 番名 + 组名 + 集"那套键打勾（与播放记录同一口径）。
+    // 没锚过 mikan 番剧页时，观看记录的键退回**番名**（见 `_marks`）。
     final ProviderContainer container = ProviderScope.containerOf(
       tester.element(find.byKey(dsDetailSeedsKey)),
     );
     await container.read(watchedMarksProvider.notifier).mark(<String>[
       subscriptionItemWatchKey(
-        bangumiId: '3141',
+        bangumiId: '葬送的芙莉莲',
         title: '葬送的芙莉莲',
         group: '桜都字幕组',
         item: one,
@@ -344,21 +410,18 @@ void main() {
     expect(find.byTooltip('已完成'), findsOneWidget);
   });
 
-  testWidgets('右键「这一组都入队（N 集）」：把这一组的集加进队列，跳过已看过的', (WidgetTester tester) async {
+  testWidgets('抬头那颗「这一组都入队」：把这一段加进队列，跳过已看过的', (
+    WidgetTester tester,
+  ) async {
     final SourceItemView one = _item(1);
     final SourceItemView two = _item(2);
     final SourceItemView other = _item(3, group: 'LoliHouse');
     final _FakeQueue queue = _FakeQueue(const <QueueJobView>[]);
     final _Harness h = _Harness(
       source: _FakeSources(<String, List<SourceItemView>>{
-        '葬送的芙莉莲': <SourceItemView>[_item(1)],
+        'mikan:葬送的芙莉莲': <SourceItemView>[one, two, other],
       }),
-      host: _FakeHostData(<String, ({String id, String title})>{
-        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
-      }),
-      schedule: _FakeSchedule(<String, BangumiDetailView>{
-        '3141': _detail('3141', <SourceItemView>[one, two, other]),
-      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
       store: InMemoryKeyValueStore(),
       queue: queue,
     );
@@ -369,7 +432,7 @@ void main() {
     );
     await container.read(watchedMarksProvider.notifier).mark(<String>[
       subscriptionItemWatchKey(
-        bangumiId: '3141',
+        bangumiId: '葬送的芙莉莲',
         title: '葬送的芙莉莲',
         group: '桜都字幕组',
         item: one,
@@ -377,42 +440,94 @@ void main() {
     ]);
     await tester.pumpAndSettle();
 
-    // 右键第一行 → 菜单里那一项写着这一组有几集（3 集里 2 集是桜都）。
-    await tester.tap(find.textContaining('葬送的芙莉莲 - 01'), buttons: kSecondaryButton);
-    await tester.pumpAndSettle();
-    expect(find.text('这一组都入队（2 集）'), findsOneWidget);
-
-    await tester.tap(find.text('这一组都入队（2 集）'));
+    // 两段各有一颗「这一组都入队」；点第一段（桜都：01 已看过、02 没看过）。
+    await tester.tap(find.text('这一组都入队').first);
     await tester.pumpAndSettle();
 
-    // 只入队没看过的那一集（01 已看过）。
-    expect(queue.enqueued.map((SourceItemView i) => i.id), <String>[two.id]);
+    expect(
+      queue.enqueued.map((SourceItemView i) => i.id),
+      <String>[two.id],
+      reason: '只入队这一段里没看过的那一条（LoliHouse 那条不在这一段）',
+    );
   });
 
-  testWidgets('mikan 没找到：三种空分开写 + 「用其他源再搜一次」是手动出口', (WidgetTester tester) async {
+  testWidgets('右键菜单里那一项写着这一组有几条', (WidgetTester tester) async {
+    final _FakeQueue queue = _FakeQueue(const <QueueJobView>[]);
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[
+          _item(1),
+          _item(2),
+          _item(3, group: 'LoliHouse'),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+      queue: queue,
+    );
+    await _pump(tester, h);
+
+    await tester.tap(
+      find.textContaining('葬送的芙莉莲 - 01'),
+      buttons: kSecondaryButton,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('这一组都入队（2 条）'), findsOneWidget);
+    await tester.tap(find.text('这一组都入队（2 条）'));
+    await tester.pumpAndSettle();
+    expect(queue.enqueued, hasLength(2));
+  });
+
+  testWidgets('粘 mikan 番剧页：它的剧集并进来，每段抬头多出「订阅」', (
+    WidgetTester tester,
+  ) async {
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[_item(1)],
+      }),
+      schedule: _FakeSchedule(<String, BangumiDetailView>{
+        '3141': _detail('3141', <SourceItemView>[
+          _item(2),
+          _item(3, group: 'LoliHouse'),
+        ]),
+      }),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+    expect(find.text('订阅'), findsNothing, reason: '还没有番剧 id 之前画不出组订阅');
+
+    await tester.tap(find.text('改搜索词 / 粘链接'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(dsDetailSeedsRawFieldKey), '3141');
+    await tester.tap(find.byKey(dsDetailSeedsApplyRawKey));
+    await tester.pumpAndSettle();
+
+    expect(find.text('桜都字幕组（2 条）'), findsOneWidget, reason: '搜索那一条 + 番剧页那一条');
+    expect(find.text('LoliHouse（1 条）'), findsOneWidget);
+    expect(find.text('订阅'), findsNWidgets(2), reason: '每个组旁边一颗');
+  });
+
+  testWidgets('各站都没搜到：说清是"空"、给「重新搜一遍」与手动出口', (
+    WidgetTester tester,
+  ) async {
     final _Harness h = _Harness(
       source: _FakeSources(const <String, List<SourceItemView>>{}),
-      host: _FakeHostData(const <String, ({String id, String title})>{}),
       schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
       store: InMemoryKeyValueStore(),
     );
     await _pump(tester, h);
 
     expect(find.byKey(dsDetailSeedsFailedKey), findsOneWidget);
-    expect(find.textContaining('mikan 上没找到「'), findsOneWidget);
-    expect(find.byKey(dsDetailSeedsOtherSourcesKey), findsOneWidget);
+    expect(find.textContaining('各站都没搜到「葬送的芙莉莲」'), findsOneWidget);
     expect(find.byKey(dsDetailSeedsRetryKey), findsOneWidget);
-    // 手动出口：点了才去打其他源（不会自己打）。
-    expect((h.source as _FakeSources).searched.every((String q) => q.startsWith('mikan:')), isTrue);
-    await tester.tap(find.byKey(dsDetailSeedsOtherSourcesKey));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('其他源也没有这一部'), findsOneWidget);
+    // 阶梯有哪几级就试哪几级 × 两个源（这一部是"中文名 → 原名"两级）。
+    expect((h.source as _FakeSources).searched, hasLength(2 * 2));
   });
 
-  testWidgets('「在搜索页打开」在任何阶段都点得到（旧按钮的降级形态）', (WidgetTester tester) async {
+  testWidgets('「在搜索页打开」在任何阶段都点得到', (WidgetTester tester) async {
     final _Harness h = _Harness(
       source: _FakeSources(const <String, List<SourceItemView>>{}),
-      host: _FakeHostData(const <String, ({String id, String title})>{}),
       schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
       store: InMemoryKeyValueStore(),
     );
@@ -421,38 +536,4 @@ void main() {
     await tester.pumpAndSettle();
     expect(h.searchPageTaps, 1);
   });
-}
-
-/// 卡住 mikan 搜索那一枪的假源（用来看"第一段"加载文案）。
-class _GatedSources extends UnavailableSourcePort {
-  _GatedSources(this.gate, this.items);
-
-  final Completer<void> gate;
-  final List<SourceItemView> items;
-
-  @override
-  List<SourceOption> get sources => const <SourceOption>[
-    SourceOption(id: 'mikan', displayName: 'Mikan（蜜柑计划）'),
-  ];
-
-  @override
-  Future<SourcePageView> search(String sourceId, String keyword, {int page = 1}) async {
-    await gate.future;
-    return SourcePageView(
-      items: items,
-      page: page,
-      hasNext: false,
-      fetchedAt: DateTime(2026, 10, 16, 12),
-    );
-  }
-}
-
-/// 卡住番剧页那一枪的假端口（用来看"第二段"加载文案）。
-class _GatedSchedule extends UnavailableSchedulePort {
-  _GatedSchedule(this.gate);
-
-  final Completer<BangumiDetailView> gate;
-
-  @override
-  Future<BangumiDetailView> bangumi(String bangumiId) => gate.future;
 }

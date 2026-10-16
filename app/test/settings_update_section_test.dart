@@ -10,6 +10,7 @@ library;
 
 import 'dart:io';
 
+import 'package:dsanima/domain/app_version.dart' show kAppVersion;
 import 'package:dsanima/domain/models.dart';
 import 'package:dsanima/domain/ports.dart';
 import 'package:dsanima/domain/unavailable.dart';
@@ -21,6 +22,13 @@ import 'package:dsanima_core/update/update.dart' as core_update;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// 假 release 的版本 = **比当前构建高一格**（patch +1）。
+///
+/// 写死 `v1.0.3` 会随发布版一起"过期"（第四十八轮：app 抬到 `1.0.3+4` 之后，
+/// 这一页就再也出不来「发现新版本」了 —— 用例红得毫无线索）。
+String get _newerTag =>
+    'v${kAppVersion.major}.${kAppVersion.minor}.${kAppVersion.patch + 1}';
 
 class _Lifecycle implements LifecyclePort {
   @override
@@ -43,10 +51,10 @@ class _FakeUpdatePort implements UpdatePort {
     seenSlug = repoSlug;
     seenToken = token;
     return core_update.ReleaseInfo.tryParse(<String, Object?>{
-      'tag_name': 'v1.0.3',
-      'name': 'DSAnima 1.0.2',
+      'tag_name': _newerTag,
+      'name': 'DSAnima $_newerTag',
       'body': '## 修复\n- 点下一集有反馈了',
-      'html_url': 'https://github.com/abc/DSAnima/releases/tag/v1.0.3',
+      'html_url': 'https://github.com/abc/DSAnima/releases/tag/$_newerTag',
       'draft': false,
       'assets': <Object?>[
         <String, Object?>{
@@ -218,7 +226,7 @@ void main() {
       'ghp_from_settings',
       reason: '界面上那一格的值要真的传到端口（第四十轮：不然填了等于没填）',
     );
-    expect(find.textContaining('发现新版本 v1.0.3'), findsOneWidget);
+    expect(find.textContaining('发现新版本 $_newerTag'), findsOneWidget);
     expect(find.text('下载更新包'), findsOneWidget);
     // 还没下载 → 不该出现"重启并更新"那颗按钮（不偷偷替换用户的程序）。
     expect(find.text('立即重启并更新'), findsNothing);

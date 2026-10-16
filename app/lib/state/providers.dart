@@ -1714,56 +1714,68 @@ final Provider<RecycleToTrash> recycleBinProvider =
     Provider<RecycleToTrash>((Ref ref) => moveToRecycleBin);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 动漫库「种子」（第四十五轮）
+// 动漫库「种子」（第四十五轮起，第四十八轮把引擎换成主流站点搜索）
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// 用户原话：「能实现动漫库中直接显示种子吗，就像主页那样」——主页卡片点进去那页
-// （`ui/bangumi_detail.dart`）就是「按字幕组列剧集 + 每集磁力」，所以这里复刻的是**那份数据**。
+// 用户原话（第四十五轮）：「能实现动漫库中直接显示种子吗，就像主页那样」——主页卡片点
+// 进去那页（`ui/bangumi_detail.dart`）就是「按字幕组列剧集 + 每集磁力」。
 //
-// 整条链路上唯一的硬骨头：**Bangumi 的条目 id 与 mikan 的番剧 id 是两套 id**，
-// 之间没有映射表，只能按番名搜出来（`domain/library_seed.dart` 的库注释详述了实测口径：
-// mikan 搜索整串匹配不分词、搜索页行里没有番剧链接、番剧页才带标题回验）。
-// 搜出来的对应关系**落盘记住**，所以这件事一部番一辈子只做一次。
+// 用户原话（第四十八轮）：「我自己去 mikan 搜都搜索得到，这里就搜不到了，修复一下，
+// 然后改为主流搜索当引擎，按字幕组分隔，不同搜索引擎同名字就按合并」。
+//
+// 第四十八轮之前，引擎是「按番名搜 mikan → 拿搜索行去单集页换番剧 id → 读番剧页」。
+// 那条路的病根在真机上是量得到的（`build/round48/`）：「命运石之门」的搜索页有 841 行、
+// 841 行都带磁力，但抽样 28 行只有 **7 行**能换出番剧 id，而且**最新那 3 行一个都没有**
+// （它们是 `7³ACG` 用 API 直发的合集/剧场版，页面里根本没有番剧链接）——3 次详情预算
+// 全烧在它们身上，于是每部这样的番都报「mikan 上没找到」。
+//
+// 现在是：**引擎 = 用户勾选的那些主流站点的关键字搜索**（[_seedFanOut]，与搜索页同一套
+// 并发/超时口径），番名阶梯照旧逐级退让；结果过一遍相关度、跨站同名合并、再**按字幕组
+// 归段**（`domain/library_seed.dart` 的 `filterSeedItems` / `mergeSeedDuplicates` /
+// `groupSeedItems`）。mikan 番剧页那条路降级成**手动**（[LibrarySeedController.bindRaw]，
+// 粘地址或 id）：它给的东西更完整（整部剧集表 + 每组自己的 RSS 订阅），只是不该再当主力。
 
-/// 种子块一屏先显示几条（「显示更多」每次再加这么多）。
-const int kSeedVisibleStep = 20;
+/// 种子块先露几个字幕组（「显示更多字幕组」每次再按 [kSeedGroupsStep] 加）。
+const int kSeedVisibleGroups = 4;
 
-/// 种子块正在做哪一段（用户第四十五轮选定「两段式文案」）。
+/// 「显示更多字幕组」一次多露几个。
+///
+/// 为什么比首屏多：实测「命运石之门」841 行切成 **54 段**，其中 16 段只有 1 条 ——
+/// 一次露 4 段要点十几次才翻完，而小段渲染起来很便宜（每段最多 [kSeedGroupVisibleStep] 行）。
+const int kSeedGroupsStep = 8;
+
+/// 每一段（字幕组）里先露几条；「本组还有 N 条」再展开（界面上的临时状态，不落盘）。
+const int kSeedGroupVisibleStep = 12;
+
+/// 种子块正在做哪一段。
 enum LibrarySeedPhase {
   /// 还没开始（页面刚挂载，`ensure` 之前）。
   idle,
 
-  /// 第一段：正在 mikan 找这一部（搜番名 + 认番剧页）。
+  /// 正在主流站点上搜这一部（番名阶梯：中文名 → 原名 → 别名 → 短名）。
   searching,
 
-  /// 第二段：番剧页认出来了，正在取字幕组与剧集。
+  /// 搜完了，正在取用户指定的那张 mikan 番剧页（只有手动粘过才有这一步）。
   fetching,
 
-  /// 有候选但**拿不准**（多个候选同分，或没有一个像同一部）→ 列出来让用户点。
-  needsPick,
-
-  /// 有结果了（mikan 番剧页，或聚合兜底）。
+  /// 有结果了（已经按字幕组分好段）。
   ready,
 
   /// 空 / 坏：具体看 [LibrarySeedState.problem]。
   failed,
 }
 
-/// 「空」与「坏」要分开说（用户第四十五轮选定：三种空分开写、各给对应动作）。
+/// 「空」与「坏」要分开说（第四十五轮定下，第四十八轮换了名目）。
 enum LibrarySeedProblem {
   none,
 
-  /// mikan 搜不到这一部（或候选都不像同一部）。实测这条路的成功率**只有 62%**。
-  mikanNotFound,
+  /// 勾选的源都问过了，一条沾边的都没有（或用户手打的词一个站都没结果）。
+  notFound,
 
-  /// 找到了番剧页，但里面一集可下的磁力都没有。
+  /// 搜到了条目，但没有一条带可下的源（磁力 / 直链 / infoHash 都没有）。
   noMagnet,
 
-  /// 聚合兜底也没搜到 —— 冷门番常见（实测有 4 部番在 5 个源上几乎全 0 行，
-  /// 那不是"搜坏了"，是真没人做）。
-  allSourcesEmpty,
-
-  /// 请求失败（网络 / 源站错误）。
+  /// 请求失败（网络 / 源站错误 / 一个源都没勾）。
   network,
 
   /// 用户粘进来的东西里没有番剧 id。
@@ -1780,14 +1792,11 @@ class LibrarySeedState {
     this.binding,
     this.detail,
     this.episodes = const <SourceItemView>[],
-    this.candidates = const <MikanSeedCandidate>[],
-    this.fromAggregate = false,
-    this.visible = kSeedVisibleStep,
+    this.groups = const <SeedGroup>[],
+    this.visibleGroups = kSeedVisibleGroups,
     this.problem = LibrarySeedProblem.none,
     this.failure,
     this.warning,
-    this.bindingStale = false,
-    this.userQuery = false,
   });
 
   /// 这份状态属于哪条条目（换条目时页面据此丢弃旧数据）。
@@ -1795,60 +1804,48 @@ class LibrarySeedState {
 
   final LibrarySeedPhase phase;
 
-  /// 这一轮**实际用的**查询词（用户第四十五轮：「块上显示实际用的词」）。
+  /// 这一轮**实际用的**查询词（块上要显示"用的是哪个词"）。
   final String? query;
 
-  /// 「这条条目 ↔ mikan 番剧页」的绑定（认出来之后就有）。
+  /// 「这条条目 ↔ mikan 番剧页」的手动锚点（用户粘过 / 认下来过才有）。
   final MikanSeedBinding? binding;
 
-  /// mikan 番剧页（含字幕组列表）；聚合兜底时为 null。
+  /// 那张 mikan 番剧页（含字幕组列表与各自的 RSS）；没有就是 null。
+  ///
+  /// 有它才能画每个字幕组旁边那颗「订阅」（mikan 的组订阅靠番剧 id + 组 RSS 地址）。
   final BangumiDetailView? detail;
 
-  /// 种子（按发布时间新→旧；缺时间的沉底）。
+  /// 全部条目（相关度筛过、跨站同名合并过、新→旧排过；播放列表与批量下载用它）。
   final List<SourceItemView> episodes;
 
-  /// 拿不准时列出来的候选番剧页。
-  final List<MikanSeedCandidate> candidates;
+  /// **按字幕组分好的段**（界面按它渲染；顺序 = 条数多的在前，见 [groupSeedItems]）。
+  final List<SeedGroup> groups;
 
-  /// 这批结果是**聚合兜底**搜来的（不是 mikan 番剧页）。
-  final bool fromAggregate;
+  /// 现在露几段（「显示更多字幕组」加 [kSeedGroupsStep]）。
+  final int visibleGroups;
 
-  /// 现在露出几条（「显示更多」加它）。
-  final int visible;
   final LibrarySeedProblem problem;
   final DsFailure? failure;
 
-  /// 聚合兜底时"哪几个源没回来"（部分失败照常出结果，但要说明）。
+  /// 部分源没回来 / 手动锚点失效这类"结果照常给、但要说一句"的提示。
   final String? warning;
-
-  /// 落盘的那份映射取不回来了（404 / 网络），提示用户改绑。
-  final bool bindingStale;
-
-  /// [query] 是**用户手打**的词（而不是阶梯里自动退让到的那一级）。
-  ///
-  /// 为什么要分：阶梯跑完时 [query] 停在**最后一级**（最不像的那个词），而"用其他源再搜
-  /// 一次"该拿的是**第一级**（中文名，实测跨源命中率最高）；只有用户自己打的词才优先。
-  final bool userQuery;
 
   bool get loading =>
       phase == LibrarySeedPhase.searching || phase == LibrarySeedPhase.fetching;
 
-  /// 现在该显示的 20 条窗口。
-  List<SourceItemView> get shown => visible >= episodes.length
-      ? episodes
-      : episodes.sublist(0, visible);
+  /// 现在该显示的段。
+  List<SeedGroup> get shownGroups => visibleGroups >= groups.length
+      ? groups
+      : groups.sublist(0, visibleGroups);
 
-  /// 还有几条没露出来（0 = 「显示更多」该消失）。
-  int get remaining => episodes.length - shown.length;
+  /// 还有几段没露出来（0 = 「显示更多字幕组」该消失）。
+  int get remainingGroups => groups.length - shownGroups.length;
 
   /// 实际用的词（没搜过时为 null）。
   String? get word {
     final String text = (query ?? binding?.query ?? '').trim();
     return text.isEmpty ? null : text;
   }
-
-  /// mikan 番剧页的字幕组名（聚合兜底时为空）。
-  List<String> get groupNames => detail?.groupNames ?? const <String>[];
 
   LibrarySeedState copyWith({
     int? subjectId,
@@ -1858,16 +1855,13 @@ class LibrarySeedState {
     BangumiDetailView? detail,
     bool clearDetail = false,
     List<SourceItemView>? episodes,
-    List<MikanSeedCandidate>? candidates,
-    bool? fromAggregate,
-    int? visible,
+    List<SeedGroup>? groups,
+    int? visibleGroups,
     LibrarySeedProblem? problem,
     DsFailure? failure,
     bool clearFailure = false,
     String? warning,
     bool clearWarning = false,
-    bool? bindingStale,
-    bool? userQuery,
   }) => LibrarySeedState(
     subjectId: subjectId ?? this.subjectId,
     phase: phase ?? this.phase,
@@ -1875,14 +1869,11 @@ class LibrarySeedState {
     binding: binding ?? this.binding,
     detail: clearDetail ? null : (detail ?? this.detail),
     episodes: episodes ?? this.episodes,
-    candidates: candidates ?? this.candidates,
-    fromAggregate: fromAggregate ?? this.fromAggregate,
-    visible: visible ?? this.visible,
+    groups: groups ?? this.groups,
+    visibleGroups: visibleGroups ?? this.visibleGroups,
     problem: problem ?? this.problem,
     failure: clearFailure ? null : (failure ?? this.failure),
     warning: clearWarning ? null : (warning ?? this.warning),
-    bindingStale: bindingStale ?? this.bindingStale,
-    userQuery: userQuery ?? this.userQuery,
   );
 }
 
@@ -1905,55 +1896,63 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     unawaited(resolve(subject));
   }
 
-  /// 解析：先看落盘的绑定（再走 30 分钟缓存），没有才按番名逐级搜。
+  /// 解析（第四十八轮起 = 主流站点的关键字搜索）。
+  ///
+  /// 两件事**同时**跑：
+  /// 1. 番名阶梯 × 勾选的源（主路径，见 [_searchNames]）；
+  /// 2. 如果用户手动锚过一张 mikan 番剧页，顺手把它也取回来并进池子（通常命中 30 分钟
+  ///    缓存，一次网络都不打）。
+  ///
+  /// [force]（「重新搜一遍」）= 绕开番剧页那份 30 分钟缓存。
+  /// ⚠️ **锚点本身不因为 force 丢掉**：那是用户手动指的页面（第四十八轮修）——
+  /// 旧写法把 force 当成"连锚点一起忘掉"，于是用户点一次「重新搜一遍」，
+  /// 手动粘的那张番剧页就再也不参与了。
   Future<void> resolve(BangumiSubject subject, {bool force = false}) async {
     _subject = subject;
-    final LibrarySeedService service = ref.read(librarySeedServiceProvider);
     final int run = ++_run;
-    final MikanSeedBinding? remembered = force ? null : service.bindingFor(subject.id);
+    final LibrarySeedService service = ref.read(librarySeedServiceProvider);
+    final MikanSeedBinding? anchor = service.bindingFor(subject.id);
+    final List<String> names = _seedNamesOf(subject);
+    final List<String> ladder = librarySeedQueries(subject);
     state = LibrarySeedState(
       subjectId: subject.id,
-      phase: remembered == null
-          ? LibrarySeedPhase.searching
-          : LibrarySeedPhase.fetching,
-      query: remembered?.query,
-      binding: remembered,
+      phase: LibrarySeedPhase.searching,
+      query: anchor?.query ?? (ladder.isEmpty ? null : ladder.first),
+      binding: anchor,
     );
 
-    if (remembered != null) {
-      final BangumiDetailView? hit = service.cachedDetail(remembered.bangumiId);
-      if (hit != null) {
-        _applyDetail(subject, remembered, hit, run);
-        return;
-      }
-      try {
-        final BangumiDetailView detail = await ref
-            .read(schedulePortProvider)
-            .bangumi(remembered.bangumiId);
-        if (_stale(run)) return;
-        if (seedTitleScore(detail.displayTitle, _seedNamesOf(subject)) >= 60) {
-          service.putDetail(remembered.bangumiId, detail);
-          _applyDetail(subject, remembered, detail, run);
-          return;
-        }
-        // 站点把这一页换掉了（同一 id 变成别的番）：绑定作废，重新按番名找。
-        await service.forgetBinding(subject.id);
-        if (_stale(run)) return;
-      } catch (error, stackTrace) {
-        if (_stale(run)) return;
-        // 用户第四十五轮选定：映射失效（404 / 被删）**自动重搜一次**；
-        // 重搜也找不到时，`_resolveByNames` 会按"网络失败"报出来（而不是静默空着）。
-        await service.forgetBinding(subject.id);
-        if (_stale(run)) return;
-        final DsFailure failure = describeFailure(error, stackTrace: stackTrace);
-        await _resolveByNames(subject, run, networkFailure: failure);
-        return;
-      }
+    final List<SourceOption> targets = seedSourceTargetsFor(
+      ref.read(sourceOptionsProvider),
+      ref.read(searchProvider).excludedSourceIds,
+    );
+    if (targets.isEmpty) {
+      _fail(
+        run,
+        LibrarySeedProblem.network,
+        failure: const DsFailure(
+          '一个源都没有勾（或者勾上的源都不支持关键字搜索）',
+          hint: '到搜索页右上角的「源」面板把源勾上，再回这一页',
+        ),
+      );
+      return;
     }
-    await _resolveByNames(subject, run);
+
+    // 两件事同时发出去：等主路径的时候，锚点那一页已经在路上了。
+    final Future<_SeedSearch> searching =
+        _searchNames(subject, names, ladder, targets, run, onlyQueries: null);
+    final Future<_SeedAnchor> anchoring = _fetchAnchor(
+      subject,
+      anchor,
+      run,
+      fresh: force,
+    );
+    final _SeedSearch search = await searching;
+    final _SeedAnchor fetched = await anchoring;
+    if (_stale(run)) return;
+    _apply(subject, search, fetched, run);
   }
 
-  /// 「重新搜一次」（绕开 30 分钟缓存与落盘绑定）。
+  /// 「重新搜一次」（绕开 30 分钟番剧页缓存与落盘锚点）。
   Future<void> retry() async {
     final BangumiSubject? subject = _subject;
     if (subject == null) return;
@@ -1970,38 +1969,39 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
       subjectId: subject.id,
       phase: LibrarySeedPhase.searching,
       query: word,
-      candidates: const <MikanSeedCandidate>[],
       problem: LibrarySeedProblem.none,
       clearFailure: true,
-      fromAggregate: false,
-      bindingStale: false,
-      userQuery: true,
+      clearWarning: true,
+      episodes: const <SourceItemView>[],
+      groups: const <SeedGroup>[],
+      visibleGroups: kSeedVisibleGroups,
     );
-    await _resolveByNames(subject, run, onlyQueries: <String>[word]);
+    final List<SourceOption> targets = seedSourceTargetsFor(
+      ref.read(sourceOptionsProvider),
+      ref.read(searchProvider).excludedSourceIds,
+    );
+    final List<String> names = _seedNamesOf(subject);
+    final _SeedSearch search = targets.isEmpty
+        ? const _SeedSearch()
+        : await _searchNames(
+            subject,
+            names,
+            const <String>[],
+            targets,
+            run,
+            onlyQueries: <String>[word],
+          );
+    if (_stale(run)) return;
+    _apply(subject, search, const _SeedAnchor(), run, typedQuery: word);
   }
 
-  /// 点了候选番剧页之一（拿不准时列出来的那些）。
-  Future<void> pickCandidate(
-    BangumiSubject subject,
-    MikanSeedCandidate candidate,
-  ) async {
-    _subject = subject;
-    final int run = ++_run;
-    await _bind(
-      subject,
-      MikanSeedBinding(
-        bangumiId: candidate.bangumiId,
-        title: candidate.title,
-        query: candidate.query,
-      ),
-      run,
-    );
-  }
-
-  /// 直接粘 mikan 链接 / id 绑定。
+  /// 粘 mikan 番剧页地址 / id：把它**并进**当前池子（并落盘记住）。
+  ///
+  /// 用户明确指定了"就是这一页"，所以它的条目**不再过相关度筛**（见 [_seedPool]），
+  /// 而且它给的东西是搜索给不了的：整部的剧集表 + 每个字幕组自己的 RSS（那颗「订阅」）。
   Future<void> bindRaw(BangumiSubject subject, String raw) async {
-    final String? id = parseMikanBangumiId(raw);
     _subject = subject;
+    final String? id = parseMikanBangumiId(raw);
     if (id == null) {
       state = state.copyWith(
         subjectId: subject.id,
@@ -2015,313 +2015,297 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
       return;
     }
     final int run = ++_run;
-    await _bind(
-      subject,
-      MikanSeedBinding(bangumiId: id, title: '', query: state.word ?? ''),
-      run,
+    final MikanSeedBinding binding = MikanSeedBinding(
+      bangumiId: id,
+      title: '',
+      query: state.word ?? '',
     );
-  }
-
-  /// 「用其他源再搜一次」（**手动**降级，不自动打聚合 —— 用户第四十五轮选定）。
-  Future<void> searchEverywhere(BangumiSubject subject) async {
-    _subject = subject;
-    final int run = ++_run;
-    final List<String> ladder = librarySeedQueries(subject);
-    // 用户手打过词就用他的；否则用阶梯的**第一级**（中文名）—— 阶梯跑完时
-    // `state.word` 停在最后一级（最不像的那个），拿它去问 8 个源是白问。
-    final String query =
-        ((state.userQuery ? state.word : null) ??
-                (ladder.isEmpty ? subject.displayTitle : ladder.first))
-            .trim();
     state = state.copyWith(
       subjectId: subject.id,
       phase: LibrarySeedPhase.fetching,
-      query: query,
+      query: binding.query,
+      binding: binding,
       problem: LibrarySeedProblem.none,
       clearFailure: true,
       clearWarning: true,
-      fromAggregate: true,
-      userQuery: state.userQuery,
-      candidates: const <MikanSeedCandidate>[],
     );
-
-    final List<SourceOption> all = ref.read(sourceOptionsProvider);
-    final Set<String> excluded = ref
-        .read(settingsProvider)
-        .aggregateExcludedSourceIds
-        .toSet();
-    final List<SourceOption> targets = selectedSources(
-      all,
-      excluded,
-      needSearch: true,
-    );
-    if (targets.isEmpty) {
-      state = state.copyWith(
-        phase: LibrarySeedPhase.failed,
-        problem: LibrarySeedProblem.allSourcesEmpty,
-        warning: '一个源都没有勾（或者勾上的源都不支持搜索）——到搜索页右上角把源勾上',
-      );
-      return;
-    }
-
-    final List<AggregateSourceResult> results = await _seedFanOut(
-      ref.read(sourcePortProvider),
-      targets,
-      query,
+    await ref.read(librarySeedServiceProvider).saveBinding(subject.id, binding);
+    final _SeedAnchor anchor = await _fetchAnchor(
+      subject,
+      binding,
+      run,
+      fresh: true,
     );
     if (_stale(run)) return;
-    List<SourceItemView> merged = const <SourceItemView>[];
-    for (final AggregateSourceResult result in results) {
-      merged = aggregateMerge(merged, result.items);
-    }
-    merged = aggregateSort(merged);
-    final String banner = aggregateFailureBanner(results);
-    if (merged.isEmpty) {
-      state = state.copyWith(
-        phase: LibrarySeedPhase.failed,
-        problem: LibrarySeedProblem.allSourcesEmpty,
-        episodes: const <SourceItemView>[],
-        warning: banner.isEmpty ? null : banner,
+    final BangumiDetailView? detail = anchor.detail;
+    if (detail == null) {
+      _fail(
+        run,
+        LibrarySeedProblem.network,
+        failure: DsFailure(
+          '这张 mikan 番剧页没取回来',
+          hint: anchor.failure?.message ?? '地址/id 对不对？或者网络/代理不通。',
+        ),
       );
       return;
     }
-    state = LibrarySeedState(
+    final MikanSeedBinding saved = MikanSeedBinding(
+      bangumiId: binding.bangumiId,
+      title: detail.displayTitle,
+      query: binding.query,
+    );
+    await ref.read(librarySeedServiceProvider).saveBinding(subject.id, saved);
+    if (_stale(run)) return;
+    _publish(
+      run,
       subjectId: subject.id,
-      phase: LibrarySeedPhase.ready,
-      query: query,
-      fromAggregate: true,
-      episodes: merged,
-      visible: kSeedVisibleStep,
-      warning: banner.isEmpty ? null : banner,
+      pool: _seedPool(state.episodes, detail.episodes),
+      query: saved.query,
+      binding: saved,
+      detail: detail,
     );
   }
 
-  /// 「显示更多」：多露 20 条。
-  void showMore() {
-    if (state.remaining <= 0) return;
-    state = state.copyWith(visible: state.visible + kSeedVisibleStep);
+  /// 「显示更多字幕组」：多露 [kSeedGroupsStep] 个。
+  void showMoreGroups() {
+    if (state.remainingGroups <= 0) return;
+    state = state.copyWith(visibleGroups: state.visibleGroups + kSeedGroupsStep);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
   // 内部
   // ───────────────────────────────────────────────────────────────────────────
 
-  /// 逐级搜番名：① mikan 搜索 → ② 挑最像的几条 → ③ 升级到单集页拿番剧 id +
-  /// 番剧标题 → ④ 回验；命中即停（典型路径只花 1 次搜索 + 1 次详情）。
-  Future<void> _resolveByNames(
+  /// 引擎：把番名阶梯逐级丢给**勾选的那些主流站点**，命中即停。
+  ///
+  /// 「命中」的判据是 [seedItemsMentioning]：这一级回来的条目里，标题真的有名字
+  /// （不是打分 —— 理由见那个函数的注释，用打分当判据会漏掉 29%）。
+  /// 分级与"命中即停"的理由同 [librarySeedQueries]：mikan 的搜索是整串匹配，多一个字就
+  /// 0 行，所以中文名不中就去试原名/别名/短名；而一旦某一级有货就**不再往下试**
+  /// （每一级都要问所有源一轮）。
+  ///
+  /// 四级都没命中、但源站确实给了东西时（例如只有英文写法命中不了的站），把**最后那一批**
+  /// 原样带回去（[fallback]）—— 本地判据不该有权说"各站都没有"，那是用户报的那个毛病。
+  ///
+  /// [onlyQueries] 非空 = 用户手打了词：只试这一个，不静默换别的（第四十五轮的口径）。
+  Future<_SeedSearch> _searchNames(
     BangumiSubject subject,
+    List<String> names,
+    List<String> ladder,
+    List<SourceOption> targets,
     int run, {
-    List<String>? onlyQueries,
-    DsFailure? networkFailure,
+    required List<String>? onlyQueries,
   }) async {
+    final List<String> queries = onlyQueries ?? ladder;
+    if (queries.isEmpty || targets.isEmpty) return const _SeedSearch();
     final SourcePort port = ref.read(sourcePortProvider);
-    final List<String> names = _seedNamesOf(subject);
-    final List<String> queries = onlyQueries ?? librarySeedQueries(subject);
-    final bool single = onlyQueries != null;
-    if (queries.isEmpty) {
-      _fail(
-        run,
-        networkFailure == null
-            ? LibrarySeedProblem.mikanNotFound
-            : LibrarySeedProblem.network,
-        failure: networkFailure,
-      );
-      return;
-    }
-
-    final List<MikanSeedCandidate> found = <MikanSeedCandidate>[];
-    int details = 0;
-    DsFailure? lastFailure = networkFailure;
-
+    List<AggregateSourceResult> last = const <AggregateSourceResult>[];
+    List<SourceItemView> lastPool = const <SourceItemView>[];
+    String? lastQuery;
     for (final String query in queries) {
-      if (_stale(run)) return;
+      if (_stale(run)) return const _SeedSearch();
       state = state.copyWith(
         subjectId: subject.id,
         phase: LibrarySeedPhase.searching,
         query: query,
-        candidates: const <MikanSeedCandidate>[],
         problem: LibrarySeedProblem.none,
         clearFailure: true,
-        fromAggregate: false,
       );
-
-      final SourcePageView page;
-      try {
-        page = await port.search('mikan', query);
-      } catch (error, stackTrace) {
-        if (_stale(run)) return;
-        lastFailure = describeFailure(error, stackTrace: stackTrace);
-        if (single) {
-          // 手打的词只试一次：失败就直接说原因，不悄悄换别的词去搜。
-          _fail(run, LibrarySeedProblem.network, failure: lastFailure);
-          return;
-        }
+      final List<AggregateSourceResult> results = await _seedFanOut(
+        port,
+        targets,
+        query,
+      );
+      if (_stale(run)) return const _SeedSearch();
+      last = results;
+      List<SourceItemView> merged = const <SourceItemView>[];
+      for (final AggregateSourceResult result in results) {
+        merged = aggregateMerge(merged, result.items);
+      }
+      // 这一级一个站都没给东西 → 退到下一级（不是"报错"，是"这个写法在源站上不认"）。
+      if (merged.isEmpty) continue;
+      final List<SourceItemView> hits = seedItemsMentioning(merged, names);
+      if (hits.isEmpty) {
+        // 兜底：下一级也空的时候，至少还有东西给用户看（词要记住是**哪一级**给的，
+        // 块上那句"用的是「…」"说的就是它）。
+        lastPool = merged;
+        lastQuery = query;
         continue;
       }
-      if (_stale(run)) return;
-
-      for (final SourceItemView item in _seedRankMikan(page.items, names)) {
-        if (details >= kMaxLibrarySeedDetails) break;
-        details++;
-        final SourceItemView rich;
-        try {
-          // ⚠️ 这里**必须**用 `episodeInfo`，不能用 `ensurePlayable`（第四十七轮真机踩到）：
-          // 后者的契约是"缺磁力才补，有磁力就一次网络都不打"，而 mikan **搜索页**的行
-          // 天生带磁力 ⇒ `extra['bangumiId']` 永远是空 ⇒ 候选一条都攒不出来，
-          // 每部番都报"mikan 上没找到"（用户报的"什么都搜不到了"就是它）。
-          rich = await ref.read(hostDataPortProvider).episodeInfo(item);
-        } catch (_) {
-          continue; // 这一条升级不了（离线 / 结构变了）→ 试下一条
-        }
-        if (_stale(run)) return;
-        final String id = '${rich.extra['bangumiId'] ?? ''}'.trim();
-        if (id.isEmpty) continue;
-        final String title = '${rich.extra['bangumiTitle'] ?? ''}'.trim();
-        final String label = title.isNotEmpty
-            ? title
-            : (rich.title ?? 'mikan #$id');
-        final int score = seedTitleScore(title.isEmpty ? label : title, names);
-        if (!found.any((MikanSeedCandidate c) => c.bangumiId == id)) {
-          found.add(
-            MikanSeedCandidate(
-              bangumiId: id,
-              title: label,
-              query: query,
-              score: score,
-            ),
-          );
-        }
-        if (score >= 100) break; // 完全同名：这一轮不用再试别的候选
-      }
-
-      // 有候选就别再往下试别的查询词（省请求）；完全同名更是直接收工。
-      if (found.isNotEmpty) break;
+      return _SeedSearch(items: hits, results: results, query: query);
     }
-
-    if (found.isEmpty) {
-      _fail(
-        run,
-        lastFailure == null
-            ? LibrarySeedProblem.mikanNotFound
-            : LibrarySeedProblem.network,
-        failure: lastFailure,
-      );
-      return;
-    }
-
-    found.sort(
-      (MikanSeedCandidate a, MikanSeedCandidate b) =>
-          b.score.compareTo(a.score),
-    );
-    final int best = found.first.score;
-    final int bestCount = found
-        .where((MikanSeedCandidate c) => c.score == best)
-        .length;
-    if (best >= 60 && bestCount == 1) {
-      // 只有一个明显最像的 → 自动绑定（用户第四十五轮：先自动挑，拿不准才问）。
-      await _bind(
-        subject,
-        MikanSeedBinding(
-          bangumiId: found.first.bangumiId,
-          title: found.first.title,
-          query: found.first.query,
-        ),
-        run,
-      );
-      return;
-    }
-    state = state.copyWith(
-      phase: LibrarySeedPhase.needsPick,
-      candidates: found,
-      problem: LibrarySeedProblem.none,
-      clearFailure: true,
+    return _SeedSearch(
+      fallback: lastPool,
+      query: lastPool.isEmpty ? null : lastQuery,
+      results: last,
     );
   }
 
-  /// 认下这个番剧页 → 取字幕组与剧集 → 落盘绑定。
-  Future<void> _bind(
+  /// 取用户锚定的那张 mikan 番剧页（30 分钟缓存优先；[fresh] = 绕开缓存）。
+  ///
+  /// 取不回来（404 / 被删 / 网络）：**忘掉这个锚点**并记一句提示 —— 绝不能让一张取不回来
+  /// 的页面拖垮这一块。现在的主力是各站搜索，番剧页只是"更完整的一份数据"。
+  Future<_SeedAnchor> _fetchAnchor(
     BangumiSubject subject,
-    MikanSeedBinding binding,
-    int run,
-  ) async {
+    MikanSeedBinding? binding,
+    int run, {
+    bool fresh = false,
+  }) async {
+    if (binding == null) return const _SeedAnchor();
     final LibrarySeedService service = ref.read(librarySeedServiceProvider);
-    state = state.copyWith(
-      subjectId: subject.id,
-      phase: LibrarySeedPhase.fetching,
-      binding: binding,
-      query: binding.query,
-      candidates: const <MikanSeedCandidate>[],
-      problem: LibrarySeedProblem.none,
-      clearFailure: true,
-      fromAggregate: false,
-      bindingStale: false,
-    );
+    if (!fresh) {
+      final BangumiDetailView? cached = service.cachedDetail(binding.bangumiId);
+      if (cached != null) return _SeedAnchor(binding: binding, detail: cached);
+    }
     try {
       final BangumiDetailView detail = await ref
           .read(schedulePortProvider)
           .bangumi(binding.bangumiId);
-      if (_stale(run)) return;
-      final List<SourceItemView> episodes = aggregateSort(detail.episodes);
-      final List<SourceItemView> usable = episodes
-          .where((SourceItemView e) => e.hasTorrentSource || e.canDownload)
-          .toList(growable: false);
-      if (usable.isEmpty) {
-        // 「找到了页面但没有可下的磁力」是**独立的一种空**（用户第四十五轮选定）。
-        service.dropDetail(binding.bangumiId);
-        state = state.copyWith(
-          phase: LibrarySeedPhase.failed,
-          problem: LibrarySeedProblem.noMagnet,
-          detail: detail,
-          episodes: episodes,
-          visible: kSeedVisibleStep,
-        );
-        return;
-      }
-      final MikanSeedBinding saved = MikanSeedBinding(
-        bangumiId: binding.bangumiId,
-        title: detail.displayTitle,
-        query: binding.query,
-      );
+      if (_stale(run)) return const _SeedAnchor();
       service.putDetail(binding.bangumiId, detail);
-      unawaited(service.saveBinding(subject.id, saved));
-      _applyDetail(subject, saved, detail, run);
+      return _SeedAnchor(binding: binding, detail: detail);
     } catch (error, stackTrace) {
-      if (_stale(run)) return;
-      service.dropDetail(binding.bangumiId);
-      state = state.copyWith(
-        phase: LibrarySeedPhase.failed,
-        problem: LibrarySeedProblem.network,
+      if (_stale(run)) return const _SeedAnchor();
+      await service.forgetBinding(subject.id);
+      return _SeedAnchor(
         failure: describeFailure(error, stackTrace: stackTrace),
-        bindingStale: true,
       );
     }
   }
 
-  void _applyDetail(
+  /// 搜索到的东西 + 锚定的番剧页 → 定稿。
+  ///
+  /// [typedQuery] = 用户手打的词：阶梯那条路失败时**不带** query（见 [_fail] 的注释），
+  /// 但用户自己打的词要说出来 —— 「各站都没搜到「Frieren」」比「各站都没搜到这一部」有用。
+  void _apply(
     BangumiSubject subject,
-    MikanSeedBinding binding,
-    BangumiDetailView detail,
-    int run,
-  ) {
+    _SeedSearch search,
+    _SeedAnchor anchor,
+    int run, {
+    String? typedQuery,
+  }) {
     if (_stale(run)) return;
-    state = LibrarySeedState(
+    final List<AggregateSourceResult> failed = aggregateFailures(search.results);
+    final bool allFailed =
+        search.results.isNotEmpty && failed.length == search.results.length;
+    final DsFailure? anchorFailure = anchor.failure;
+    final String? anchorNote = anchorFailure == null
+        ? null
+        : '记住的那张 mikan 番剧页取不回来了（${anchorFailure.message}），'
+              '这一轮用的是各站搜索的结果。';
+    // 四级都没命中名字、但源站给了东西 → 原样给用户（本地判据无权宣布"各站都没有"）。
+    final List<SourceItemView> found = search.items.isNotEmpty
+        ? search.items
+        : search.fallback;
+    if (found.isEmpty && anchor.detail == null) {
+      // 一条都没有：分开说"全失败（网络）"与"都成功了但都没有"（第四十五轮定的口径）。
+      _fail(
+        run,
+        allFailed ? LibrarySeedProblem.network : LibrarySeedProblem.notFound,
+        failure: allFailed
+            ? DsFailure(
+                '勾选的源全都没回来（${search.results.length} 个）',
+                hint: '${failed.first.failure}；检查网络/代理，'
+                    '或到搜索页的「源」面板换个源再来',
+              )
+            : null,
+        warning: anchorNote,
+        query: search.query ?? typedQuery ?? anchor.binding?.query,
+      );
+      return;
+    }
+    _publish(
+      run,
       subjectId: subject.id,
-      phase: LibrarySeedPhase.ready,
-      query: binding.query,
-      binding: binding,
-      detail: detail,
-      episodes: aggregateSort(detail.episodes),
-      visible: kSeedVisibleStep,
+      pool: _seedPool(
+        found,
+        anchor.detail?.episodes ?? const <SourceItemView>[],
+      ),
+      query: search.query ?? typedQuery ?? anchor.binding?.query,
+      binding: anchor.binding,
+      detail: anchor.detail,
+      results: search.results,
+      warning: anchorNote,
     );
   }
 
-  void _fail(int run, LibrarySeedProblem problem, {DsFailure? failure}) {
+  /// 合成池子：搜索来的（已过相关度筛）+ 锚定番剧页来的（**不过筛**，用户自己指定了
+  /// "就是这一页"）→ 去重 → 同名合并 → 新→旧排。
+  List<SourceItemView> _seedPool(
+    Iterable<SourceItemView> searched,
+    Iterable<SourceItemView> anchored,
+  ) => aggregateSort(
+    mergeSeedDuplicates(
+      aggregateMerge(List<SourceItemView>.of(searched), anchored),
+    ),
+  );
+
+  /// 定稿：分段 + 判"有没有可下的"。**池子为空由调用方先说清是哪一种空**。
+  void _publish(
+    int run, {
+    required int subjectId,
+    required List<SourceItemView> pool,
+    String? query,
+    MikanSeedBinding? binding,
+    BangumiDetailView? detail,
+    List<AggregateSourceResult> results = const <AggregateSourceResult>[],
+    String? warning,
+  }) {
     if (_stale(run)) return;
-    state = state.copyWith(
+    final List<SeedGroup> groups = groupSeedItems(pool);
+    if (!pool.any((SourceItemView item) => item.canDownload)) {
+      // 「搜到了条目但没有一条带源」是独立的一种空（第四十五轮选定）。
+      state = state.copyWith(
+        subjectId: subjectId,
+        phase: LibrarySeedPhase.failed,
+        problem: LibrarySeedProblem.noMagnet,
+        query: query,
+        binding: binding,
+        detail: detail,
+        episodes: pool,
+        groups: groups,
+        visibleGroups: kSeedVisibleGroups,
+        warning: warning,
+        clearWarning: warning == null,
+      );
+      return;
+    }
+    final String banner = aggregateFailureBanner(results);
+    final String note = <String>[
+      ?warning,
+      if (banner.isNotEmpty) banner,
+    ].join(' ');
+    state = LibrarySeedState(
+      subjectId: subjectId,
+      phase: LibrarySeedPhase.ready,
+      query: query,
+      binding: binding,
+      detail: detail,
+      episodes: pool,
+      groups: groups,
+      warning: note.isEmpty ? null : note,
+    );
+  }
+
+  void _fail(
+    int run,
+    LibrarySeedProblem problem, {
+    DsFailure? failure,
+    String? warning,
+    String? query,
+  }) {
+    if (_stale(run)) return;
+    // ⚠️ 这里**重建** state 而不是 `copyWith`：阶梯跑完时 `state.query` 停在**最后一级**
+    // （最不像的那个写法），拿它去写「各站都没搜到「…」」是在怪用户——所以失败态默认
+    // **不带 query**（界面会退回这一部番自己的名字），要保留就显式传进来。
+    state = LibrarySeedState(
+      subjectId: state.subjectId,
       phase: LibrarySeedPhase.failed,
+      query: query,
+      binding: state.binding,
       problem: problem,
       failure: failure,
-      clearFailure: failure == null,
+      warning: warning,
     );
   }
 
@@ -2344,39 +2328,51 @@ List<String> _seedNamesOf(BangumiSubject subject) {
   return out;
 }
 
-/// mikan 搜索结果按"像不像这一部"排序（分高的在前；同分按时间新→旧）。
+/// 一轮"问所有源"的结果（[_searchNames] 的返回值）。
 ///
-/// 只排前几条去升级单集页（每条 = 一次网络），所以分数必须由 [seedTitleScore] 给。
-///
-/// ⚠️ **先算一次分，再排**（第四十七轮）：旧写法把 `seedTitleScore` 直接写在
-/// `sort` 的比较器里，而比较器要跑 O(n log n) 次 —— mikan 搜索页一次给 1000 行，
-/// 于是**同一批条目被打分了两万多次**，纯 CPU 97ms 全压在 UI isolate 上（用户报的
-/// "点进去必卡一下"里有它一份）。打分是纯函数，每条算一次就够。
-List<SourceItemView> _seedRankMikan(
-  List<SourceItemView> items,
-  List<String> names,
-) {
-  final List<({SourceItemView item, int score})> scored =
-      <({SourceItemView item, int score})>[
-    for (final SourceItemView item in items)
-      (item: item, score: seedTitleScore(item.title ?? '', names)),
-  ];
-  // 分数为 0 的一条都不试（搜了 1000 行但没一条沾边时，别拿它们去打详情页）。
-  final List<({SourceItemView item, int score})> ranked = scored
-      .where((({SourceItemView item, int score}) s) => s.score > 0)
-      .toList(growable: false);
-  ranked.sort((({SourceItemView item, int score}) a, ({SourceItemView item, int score}) b) {
-    final int byScore = b.score.compareTo(a.score);
-    if (byScore != 0) return byScore;
-    final DateTime? at = a.item.publishedAt;
-    final DateTime? bt = b.item.publishedAt;
-    if (at != null && bt != null && at != bt) return bt.compareTo(at);
-    if (at == null && bt != null) return 1;
-    if (at != null && bt == null) return -1;
-    return 0;
+/// [items] 是**名字真的命中**的那些；[fallback] 是"每一级都没命中、但源站确实给了东西"
+/// 时留着的那一批（见 [_searchNames] 末尾）；[results] 是**原始**的每源结果（哪几个源
+/// 没回来要说给用户听）；[query] 是真正命中的那个词（四级阶梯里是哪一级）。
+@immutable
+class _SeedSearch {
+  const _SeedSearch({
+    this.items = const <SourceItemView>[],
+    this.fallback = const <SourceItemView>[],
+    this.results = const <AggregateSourceResult>[],
+    this.query,
   });
-  return <SourceItemView>[for (final ({SourceItemView item, int score}) r in ranked) r.item];
+
+  final List<SourceItemView> items;
+  final List<SourceItemView> fallback;
+  final List<AggregateSourceResult> results;
+  final String? query;
 }
+
+/// 用户锚定的那张 mikan 番剧页取回来的结果。
+@immutable
+class _SeedAnchor {
+  const _SeedAnchor({this.binding, this.detail, this.failure});
+
+  final MikanSeedBinding? binding;
+  final BangumiDetailView? detail;
+
+  /// 取不回来时的原因（取不回来 = 已经把这个锚点忘了，见 `_fetchAnchor`）。
+  final DsFailure? failure;
+}
+
+/// 种子块要问哪些源 = **用户勾选的那些**（与搜索页「源」面板同一份真相）。
+///
+/// 真相只有一份：`SearchQueryController` 的排除名单（用户点面板时它就落盘到
+/// `AppSettings.aggregateExcludedSourceIds`，见 `_persistExclusions`）。调用点读**实时**
+/// 那一份而不是设置里那份：用户刚在搜索页改完勾选、还没落盘完成就点进动漫库，
+/// 也该按他刚勾的来。
+///
+/// 参数是两个清单而不是 `Ref`：调用方一半是 controller（`Ref`）、一半是界面（`WidgetRef`），
+/// 两者没有共同的父类型能读 provider。
+List<SourceOption> seedSourceTargetsFor(
+  List<SourceOption> all,
+  Set<String> excluded,
+) => selectedSources(all, excluded, needSearch: true);
 
 /// 种子块的聚合兜底：把 [query] 在 [targets] 上搜一遍（并发与超时口径同搜索页）。
 Future<List<AggregateSourceResult>> _seedFanOut(
