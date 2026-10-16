@@ -770,7 +770,7 @@ void main() {
       await controller.resolve(_subject());
       expect(c.read(librarySeedProvider).shownGroups, hasLength(kSeedVisibleGroups));
 
-      // 第四十八轮·补三：用户「展开全部不把全部打开，就展开所有字幕组」——
+      // 第四十八轮·补四：用户「展开全部不把全部打开，就展开所有字幕组」——
       // 展开全部不该还留着 8 段要再点一次「显示更多字幕组」。
       controller.showAllGroups();
       final LibrarySeedState all = c.read(librarySeedProvider);

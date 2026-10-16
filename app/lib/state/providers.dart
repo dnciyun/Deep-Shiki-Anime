@@ -2075,7 +2075,7 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
   /// 「展开全部字幕组」：段**一次全露**（界面那颗「展开全部」用）。
   ///
   /// 与 [showMoreGroups] 的分工：那颗是"一屏一屏地加"，这颗是"这次我全都要" ——
-  /// 第四十八轮·补三用户的原话是「展开全部不把全部打开，就展开所有字幕组」：
+  /// 第四十八轮·补四用户的原话是「展开全部不把全部打开，就展开所有字幕组」：
   /// 展开全部却还留着 8 段要再点一次「显示更多」，那不叫全部。
   void showAllGroups() {
     if (state.remainingGroups <= 0) return;

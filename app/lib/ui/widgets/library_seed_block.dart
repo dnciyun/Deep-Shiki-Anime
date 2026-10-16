@@ -18,7 +18,7 @@
 ///   而且「这一组都入队」在收起状态下照样点得到；
 /// * 展开之后先露 [kSeedGroupVisibleStep] 条，其余藏在「本组还有 N 条」后面；
 /// * 段本身先露 [kSeedVisibleGroups] 个，其余的走「显示更多字幕组」；
-/// * **「展开全部 ⇄ 收起全部」是真·全开全收**（第四十八轮·补三，用户原话「展开全部不把
+/// * **「展开全部 ⇄ 收起全部」是真·全开全收**（第四十八轮·补四，用户原话「展开全部不把
 ///   全部打开，就展开所有字幕组」+「只有展开没有收起」）：
 ///   展开 = 段全露出来 + 每段都展开 + 段内**不再截断**（「本组还有 N 条」一个都不剩）；
 ///   收起 = 段窗口退回 [kSeedVisibleGroups] 个 + 全收，也就是**回到刚进这一页的样子**
@@ -83,7 +83,7 @@ Key dsDetailSeedsGroupKey(String key) => ValueKey<String>('seed-group-$key');
 Key dsDetailSeedsGroupToggleKey(String key) =>
     ValueKey<String>('seed-group-toggle-$key');
 
-/// 某一段展开后末尾那颗「收起这一组」（第四十八轮·补三）。
+/// 某一段展开后末尾那颗「收起这一组」（第四十八轮·补四）。
 Key dsDetailSeedsGroupCollapseKey(String key) =>
     ValueKey<String>('seed-group-collapse-$key');
 
@@ -121,7 +121,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   final Set<String> _openGroups = <String>{};
 
   /// 哪几段把「本组还有 N 条」也点开了（= 这一段全露）。收起那一段时一起丢掉，
-  /// 再展开又回到"先露 12 条"。「展开全部」会把**每一段**都放进来（第四十八轮·补三：
+  /// 再展开又回到"先露 12 条"。「展开全部」会把**每一段**都放进来（第四十八轮·补四：
   /// 用户要的"全部打开"就是连段内的截断也一起打开）。
   final Set<String> _fullGroups = <String>{};
 
@@ -339,7 +339,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     }
   });
 
-  /// 「展开全部」= **真·全开**（第四十八轮·补三）。
+  /// 「展开全部」= **真·全开**（第四十八轮·补四）。
   ///
   /// 三件事一起做，少一件用户就会说"展开全部不把全部打开"：
   /// 1. 段全露出来（`showAllGroups` —— 原来只开"现在露出来的那几段"，剩下 8 段还得再点
@@ -364,7 +364,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
 
   /// 「收起全部」= **真·全收**：回到刚进这一页的样子 —— 段窗口也退回 [kSeedVisibleGroups] 个。
   ///
-  /// 段窗口一起退，是因为「显示更多字幕组」原本只会越加越多（单向路）。用户第四十八轮·补三
+  /// 段窗口一起退，是因为「显示更多字幕组」原本只会越加越多（单向路）。用户第四十八轮·补四
   /// 说的「只有展开没有收起」，两个地方都算：这颗按钮一直是"展开"，以及"显示更多"加出去就收不回来。
   void _collapseAllGroups(LibrarySeedController controller) {
     controller.collapseGroups();
@@ -411,7 +411,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             padding: const EdgeInsets.only(bottom: 10),
             trailing: _headerActions(s),
           ),
-          // 控制行画在结果**上面**（第四十八轮·补三）：这里面有「展开全部 / 收起全部」，
+          // 控制行画在结果**上面**（第四十八轮·补四）：这里面有「展开全部 / 收起全部」，
           // 而它只要落在结果下面，用户点完"展开"就等于把它推出了屏幕 —— 只剩展开、没有收起。
           if (s.phase == LibrarySeedPhase.ready) ...<Widget>[
             _controls(s),
@@ -443,7 +443,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             onPressed: controller.showMoreGroups,
           ),
         // 每段默认收起，所以给一颗"全开 / 全收"的开关：想通览条目的人不用一段段点，
-        // 想收回去的人也不用一段段收（第四十八轮·补三：见 `_expandAllGroups`）。
+        // 想收回去的人也不用一段段收（第四十八轮·补四：见 `_expandAllGroups`）。
         if (s.shownGroups.isNotEmpty)
           NeoButton(
             key: dsDetailSeedsExpandAllKey,
@@ -690,7 +690,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
 
   /// 一段展开后末尾那行小链接：段内还剩几条可放 + 「收起这一组」。
   ///
-  /// 为什么末尾也要一颗"收起"（第四十八轮·补三）：一段 80 行，看完想收起来时不该再滚回
+  /// 为什么末尾也要一颗"收起"（第四十八轮·补四）：一段 80 行，看完想收起来时不该再滚回
   /// 抬头去点那颗小箭头 —— 用户的原话是「只有展开没有收起」（抬头那颗箭头的"收起"只写在
   /// 悬停提示里，看不出也够不着）。
   Widget _groupFoot(SeedGroup group, DsTokens t) {
