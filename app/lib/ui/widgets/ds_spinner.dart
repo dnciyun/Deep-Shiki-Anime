@@ -162,18 +162,23 @@ class _DsSpinnerPainter extends CustomPainter {
       );
     }
 
-    // 12 点方向起画。Flutter 画布 y 轴朝下，所以正角度就是屏幕上的顺时针。
-    const double start = -math.pi / 2;
-    final double sweep = 2 * math.pi * DsSpinner.sweepRatio;
-    final double head = start + 2 * math.pi * spin.value;
+    const double sweep = 2 * math.pi * DsSpinner.sweepRatio;
     final Paint arc = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeWidth = strokeWidth
       // 头亮尾淡：起点（弧头）是强调色，终点（弧尾）透明度归零。
+      //
+      // ⚠️ **这两个角度必须是常量**（第四十八轮修「转一半就重来」）：引擎会把
+      // `SweepGradient` 的 start/endAngle 绕回 `[0, 2π)`，所以一旦像第一版那样把旋转量
+      // **累加进角度**（`startAngle: head`、`endAngle: head + sweep`），一圈转到
+      // `(2π − sweep) / 2π ≈ 5/12` 之后 `end` 就越过 2π 被绕回来、`end < start`，
+      // 渐变的跨度与前后关系当场翻转（实测像素曲线在那里从"一段平滑衰减"变成两三段，
+      // 看起来就是"转了一半重新开始"，见 `test/round48_spinner_probe.dart`）。
+      // 现在角度固定、**转的是画布**（见下），渐变永远在 `[0, 2π)` 内，与转多少无关。
       ..shader = SweepGradient(
-        startAngle: head,
-        endAngle: head + sweep,
+        startAngle: 0,
+        endAngle: sweep,
         colors: <Color>[
           color,
           // 尾端要淡到全透明，但**必须保留色相** —— 用 `Colors.transparent`
@@ -181,7 +186,18 @@ class _DsSpinnerPainter extends CustomPainter {
           color.withValues(alpha: 0),
         ],
       ).createShader(arcRect);
-    canvas.drawArc(arcRect, head, sweep, false, arc);
+
+    // 12 点方向起画（画布旋转之后，起画点跟着转，观感与第一版一致）。
+    // ⚠️ 不 `setState`、不重建 widget：只在这里按当前 `spin.value` 转坐标系。
+    // ⚠️ 弧与**渐变必须同一个起画角**：`SweepGradient` 的 0 在 3 点钟方向，
+    // 所以这里也从 0 起画（再整体转 -90°，初始就落在 12 点）。分开取角度的话，
+    // 渐变会相对弧线偏 90°，看上去就是"亮的一截 + 隔一段又冒一个小尾巴"。
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(2 * math.pi * spin.value - math.pi / 2);
+    canvas.translate(-center.dx, -center.dy);
+    canvas.drawArc(arcRect, 0, sweep, false, arc);
+    canvas.restore();
   }
 
   @override
