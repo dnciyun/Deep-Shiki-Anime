@@ -341,9 +341,28 @@ abstract class TorrentEnginePort {
   Uri streamUrl(int id, int fileIndex);
 }
 
+/// `excludePatterns` 的正则编译缓存。
+///
+/// `isExcluded` 会在"每个任务每次 pump"里被调用（几十次/轮），每次都重新编正则没必要。
+/// 键 = 模式原文；值 = 编译结果，`null` = 这条不是合法正则（走子串回落）。
+final Map<String, RegExp?> _excludeRegexCache = <String, RegExp?>{};
+
+RegExp? _excludeRegex(String pattern) {
+  if (_excludeRegexCache.containsKey(pattern)) return _excludeRegexCache[pattern];
+  RegExp? compiled;
+  try {
+    compiled = RegExp(pattern, caseSensitive: false);
+  } on FormatException {
+    compiled = null;
+  }
+  // 用户能加的条数是个位数；这个上限只为防"配置文件被塞进几千条"。
+  if (_excludeRegexCache.length > 256) _excludeRegexCache.clear();
+  _excludeRegexCache[pattern] = compiled;
+  return compiled;
+}
+
 /// 省流量策略（spec §4.3「设置加入省流量列表」）。
-class BandwidthPolicy {
-  const BandwidthPolicy({
+class BandwidthPolicy {  const BandwidthPolicy({
     this.preheatAhead = 0,
     this.stopSeedingAfterPlayback = false,
     this.stopSeedingAfterDownload = false,
@@ -403,13 +422,27 @@ class BandwidthPolicy {
   /// 生效的预热量：0（关）… 3。再多既吃带宽也吃磁盘，档位就到这里。
   int get effectivePreheatAhead => preheatAhead < 0 ? 0 : (preheatAhead > 3 ? 3 : preheatAhead);
 
-  /// [text] 是否命中省流量列表（大小写不敏感子串匹配）。
+  /// [text] 是否命中省流量列表。
+  ///
+  /// 第四十二轮 UX #25：这个列表在界面上叫「排除**正则**」，示例也是正则
+  /// （`合集|总集篇|HEVC.*10bit`），而实现原来是**大小写不敏感的子串匹配** ——
+  /// 用户照着示例填 `合集|总集篇`，当子串永远匹配不到任何东西，于是"设了没反应"，
+  /// 一句解释都没有（静默假成功，`docs/HANDOFF.md` §9 明令禁止）。
+  ///
+  /// 现在按界面承诺走正则；**编不出来**的（老版本存下的、从配置文件导进来的）
+  /// 退回子串匹配 —— 那是尽力而为，不是假装正则生效。
   bool isExcluded(String? text) {
     if (text == null || text.isEmpty) return false;
-    final lower = text.toLowerCase();
     for (final p in excludePatterns) {
-      final pattern = p.trim().toLowerCase();
-      if (pattern.isNotEmpty && lower.contains(pattern)) return true;
+      final pattern = p.trim();
+      if (pattern.isEmpty) continue;
+      final RegExp? re = _excludeRegex(pattern);
+      if (re != null) {
+        if (re.hasMatch(text)) return true;
+        continue;
+      }
+      // 不是合法正则：按子串匹配（老数据/导入数据）。
+      if (text.toLowerCase().contains(pattern.toLowerCase())) return true;
     }
     return false;
   }
@@ -1204,17 +1237,24 @@ class QueueManager {
     final bool needsEngineLookup = !deleteFiles &&
         jobs.any((QueueJob j) => j.engineId != null && j.state != JobState.completed);
     final Set<int>? completeIds = needsEngineLookup ? await _completeEngineIds() : null;
-    String? warning;
+    // 第四十二轮 UX #31：旧实现是 `warning ??= await _tryEngineRemove(...)` ——
+    // 只有**第一条**失败被回报，后面对话框一关，剩下的失败谁也不知道。
+    // 现在全部收齐再合成一句话（单条时文案与旧版完全一致，测试与用户看到的都不变）。
+    final List<String> warnings = <String>[];
     for (final QueueJob job in jobs) {
       final engineId = job.engineId;
       if (engineId == null) continue;
       if (await _keepEngineTorrent(job, deleteFiles: deleteFiles, completeIds: completeIds)) {
         continue;
       }
-      warning ??= await _tryEngineRemove(engineId, deleteFiles: deleteFiles);
+      final String? warning =
+          await _tryEngineRemove(engineId, deleteFiles: deleteFiles);
+      if (warning != null) warnings.add(warning);
     }
     await _forgetJobs(jobs);
-    return warning;
+    if (warnings.isEmpty) return null;
+    if (warnings.length == 1) return warnings.first;
+    return '${warnings.first}（另有 ${warnings.length - 1} 条同样没删掉）';
   }
 
   /// 清理已完成任务记录（不影响引擎里的 torrent）。
@@ -1502,6 +1542,9 @@ class QueueManager {
     if (inflight != null) return inflight;
     late final Future<void> attempt;
     attempt = _doStart(job, magnet: magnet, onlyFiles: onlyFiles).whenComplete(() {
+      // 摘掉 in-flight 记录：返回值是 Map 里存着的那个 Future（调用方正在 await
+      // 它），不是丢了一个没人等的任务。
+      // ignore: discarded_futures
       if (identical(_starting[job.id], attempt)) _starting.remove(job.id);
     });
     _starting[job.id] = attempt;
@@ -1538,11 +1581,45 @@ class QueueManager {
       }
     } catch (e) {
       job.state = JobState.failed;
-      job.error = 'addMagnet 失败: $e';
+      job.error = _startFailureText(e);
     }
     job.updatedAt = _clock();
     await _persist();
     _emit();
+  }
+
+  /// 「加种失败」给用户看的一句话（第四十二轮 UX #7）。
+  ///
+  /// 旧实现是 `job.error = 'addMagnet 失败: $e'`，界面上那一行就是
+  /// `错误：addMagnet 失败: EngineException[504]: metadata_timeout (POST http://…)`，
+  /// 后面还可能跟着「响应体: …」「原因: …」好几行。失败的任务**没有别的信息源**
+  /// （这就是那一行存在的全部意义），所以它必须是"发生了什么 + 怎么办"：
+  /// * 504（元数据超时）几乎是磁力太冷门/没人做种，用户能做的是换一条种子；
+  /// * 401/403 是边车 token 不对，重启边车就好；
+  /// * 404 是接口对不上，多半是 exe 不是随包那个。
+  /// 认不出的异常只留**第一行**并截断 —— 不把库内部结构倒给用户。
+  String _startFailureText(Object e) {
+    final String first = e.toString().split('\n').first.trim();
+    final RegExpMatch? m =
+        RegExp(r'^EngineException\[(\d+)\]:\s*(.*)$').firstMatch(first);
+    if (m != null) {
+      final int code = int.parse(m.group(1)!);
+      final String why = _shorten(m.group(2)!);
+      return switch (code) {
+        504 => '拿不到种子元数据（引擎等超时了）：这一步要连上做种者，'
+            '磁力太冷门或没人做种就会失败 —— 换一条种子，或稍后再试',
+        401 || 403 => '边车拒绝了这次加种（HTTP $code）：到「设置 → 引擎」重启一次边车',
+        404 => '边车不认这个接口（HTTP 404）：版本可能对不上，'
+            '到「设置 → 引擎」确认用的是随包的 rqbit-engine.exe',
+        _ => '加种失败（HTTP $code）：$why',
+      };
+    }
+    return '加种失败：${_shorten(first)}';
+  }
+
+  static String _shorten(String raw, {int max = 140}) {
+    final String oneLine = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return oneLine.length <= max ? oneLine : '${oneLine.substring(0, max)}…';
   }
 
   /// 本集下完 → 继续把后面的补到"档位那么多"（第三十八轮：从 1 集变成 N 集）。

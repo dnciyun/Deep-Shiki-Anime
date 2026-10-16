@@ -149,7 +149,7 @@ void main() {
         minScore: 8,
         tag: '百合',
       );
-      expect(q.description, '「芙莉莲」 · 2024 年 1 月番 · TV · ≥8 分 · 标签「百合」');
+      expect(q.description, '「芙莉莲」 · 2024 年 1 月番 · TV · ≥8 分 · 类型「百合」');
       expect(q.isDefault, isFalse);
       expect(const BangumiLibraryQuery().description, '全部动画');
       expect(const BangumiLibraryQuery().isDefault, isTrue);
@@ -157,6 +157,38 @@ void main() {
       expect(q, BangumiLibraryQuery.fromJson(q.toJson()));
       expect(q.hashCode, BangumiLibraryQuery.fromJson(q.toJson()).hashCode);
       expect(q.cacheKey, isNot(const BangumiLibraryQuery(keyword: '芙莉莲').cacheKey));
+    });
+
+    test('cacheKey 必须含标签（第四十四轮）：少了它，"只换类型"会命中上一档的页缓存', () {
+      // 用户：「加入类型的筛选」。而 cacheKey 同时是**页缓存键**（`cacheKey|offset|limit`）
+      // 与**在途去重键** —— 它漏掉 tag 的话：点了「异世界」会拿到上一次无标签那一页
+      // （最多错 10 分钟），筛选在途改标签那次查询则根本不发。
+      const BangumiLibraryQuery a = BangumiLibraryQuery(tag: '异世界');
+      const BangumiLibraryQuery b = BangumiLibraryQuery(tag: '校园');
+      const BangumiLibraryQuery none = BangumiLibraryQuery();
+      expect(a.cacheKey, isNot(b.cacheKey));
+      expect(a.cacheKey, isNot(none.cacheKey));
+      expect(a.cacheKey, isNot(const BangumiLibraryQuery(form: BangumiLibraryForm.tv).cacheKey));
+      // 大小写/空白不影响 == 的写法与 cacheKey 保持一致（否则同一次查询会有两个键）。
+      expect(const BangumiLibraryQuery(tag: ' 异世界 ').cacheKey, a.cacheKey);
+      expect(a.cacheKey, contains('t=异世界'));
+    });
+
+    test('类型清单：都是实测有内容的标签，没有重复、没有空串', () {
+      // 清单本身是 `tool/round44_genre_probe.py` 本机实测挑出来的（每个 ≥176 条）。
+      // 这里只钉"清单的形状"：非空、无重复、无空白、名字都不带首尾空格。
+      expect(kLibraryGenreTags, isNotEmpty);
+      expect(kLibraryGenreTags.toSet(), hasLength(kLibraryGenreTags.length), reason: '不许重复');
+      for (final String tag in kLibraryGenreTags) {
+        expect(tag.trim(), tag);
+        expect(tag, isNotEmpty);
+      }
+      // 用户点名的三个必须在里面（原话：「比如异世界 玄幻 校园这些」）。
+      expect(kLibraryGenreTags, containsAll(<String>['异世界', '玄幻', '校园']));
+      // 实测只有个位数条目的两个复合标签**故意不收**（点了等于给一屏空结果）。
+      expect(isLibraryGenre('奇幻冒险'), isFalse);
+      expect(isLibraryGenre('悬疑推理'), isFalse);
+      expect(isLibraryGenre(' 异世界 '), isTrue, reason: '两头的空白不算另一个标签');
     });
 
     test('放送形态的本地精确判据：platform 必须就是它', () {

@@ -14,6 +14,7 @@
 /// 几十个行内转圈，不能让它们把整棵树卷进重绘。
 library;
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -91,7 +92,8 @@ class _DsSpinnerState extends State<DsSpinner> with SingleTickerProviderStateMix
     if (reduce) {
       _spin.stop();
     } else if (!_spin.isAnimating) {
-      _spin.repeat();
+      // 无限循环的 TickerFuture 永远不会 resolve，这里明确表示"有意丢弃"。
+      unawaited(_spin.repeat());
     }
   }
 

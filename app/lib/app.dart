@@ -32,6 +32,7 @@ import 'ui/first_run.dart';
 import 'ui/preview_page.dart';
 import 'ui/shell.dart';
 import 'ui/widgets/ds_theme_reveal.dart';
+import 'ui/widgets/global_failure_listener.dart';
 
 /// 外观切换的**颜色插值**时长：第三十三轮起是 **0**（不做插值）。
 ///
@@ -145,8 +146,13 @@ class DsanimaApp extends ConsumerWidget {
       themeAnimationCurve: Curves.easeOutCubic,
       // 圆形揭开的宿主：包在**整个 MaterialApp 内容**外面（含弹出的详情/对话框），
       // 这样"旧界面快照"盖住的是整窗，不会露出半边新半边旧的接缝。
-      builder: (BuildContext context, Widget? child) =>
-          DsThemeRevealHost(child: child ?? const SizedBox.shrink()),
+      //
+      // 再外面套一层 [DsGlobalFailureListener]（第四十二轮 §2.1）：未捕获异常原来只写
+      // stderr，用户侧零反馈；这一层把它变成一条带「怎么办」的提示。位置就在
+      // `ScaffoldMessenger` 里面、业务树与所有弹层外面 —— 向导页和主外壳都覆盖得到。
+      builder: (BuildContext context, Widget? child) => DsGlobalFailureListener(
+        child: DsThemeRevealHost(child: child ?? const SizedBox.shrink()),
+      ),
       home: _WindowEnvBridge(
         child: previewMode ? const PreviewPage() : const DsanimaHome(),
       ),

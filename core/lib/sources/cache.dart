@@ -237,8 +237,17 @@ class SourceCache {
       items: items,
       hasNext: entry.payload['hasNext'] == true,
       page: (entry.payload['page'] as num?)?.toInt() ?? request.page,
-      fetchedAt: clock(),
+      // 第四十二轮 UX #10：这里原来写的是 `clock()`（= **现在**），于是"这份缓存是
+      // 4 分钟前写的"到界面上永远显示「刚刚」。给缓存**真正写下去的时间**。
+      //
+      // 注意时区：缓存写盘时统一存 UTC（见 `put` 的 `toUtc()`），这里原样返回。
+      // 它只该被当作**时刻**用（`difference` / `isAfter` 跨时区都正确）——
+      // 不要拿它和本地时间做字符串比较。
+      fetchedAt: entry.storedAt,
       fromCache: true,
+      // 只有"TTL 已过 + 允许 stale"才算回落（= 网络那一步真的失败过）；
+      // 新鲜命中根本没发过请求，界面不许报「网络抓取失败」。
+      staleFallback: allowStale && entry.age > ttlFor(request.kind),
     );
   }
 

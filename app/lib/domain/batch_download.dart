@@ -29,6 +29,7 @@ class BatchDownloadResult {
     required this.queued,
     required this.skipped,
     required this.failures,
+    this.failedItems = const <SourceItemView>[],
   });
 
   /// 真的进了下载队列的条数。
@@ -39,6 +40,12 @@ class BatchDownloadResult {
 
   /// 失败的「标题：原因」列表（按处理顺序）。
   final List<String> failures;
+
+  /// 失败的那些**条目**（与 [failures] 一一对应，顺序相同）。
+  ///
+  /// 第四十二轮 UX #32：只有文案的话，UI 没法把"失败的条目"重新勾回给用户 ——
+  /// 而"只勾那几条再下一次"正是这条提示让人做的事。
+  final List<SourceItemView> failedItems;
 
   bool get isEmpty => queued == 0 && skipped == 0 && failures.isEmpty;
 }
@@ -54,6 +61,7 @@ Future<BatchDownloadResult> enqueueDownloads(
   int queued = 0;
   int skipped = 0;
   final List<String> failures = <String>[];
+  final List<SourceItemView> failedItems = <SourceItemView>[];
   int done = 0;
   for (final SourceItemView item in items) {
     done++;
@@ -70,6 +78,7 @@ Future<BatchDownloadResult> enqueueDownloads(
       final String reason =
           failure.hint == null ? failure.message : '${failure.message}（${failure.hint}）';
       failures.add('${item.displayTitle}：$reason');
+      failedItems.add(item);
     }
     onProgress?.call(done, items.length);
   }
@@ -77,6 +86,7 @@ Future<BatchDownloadResult> enqueueDownloads(
     queued: queued,
     skipped: skipped,
     failures: List<String>.unmodifiable(failures),
+    failedItems: List<SourceItemView>.unmodifiable(failedItems),
   );
 }
 

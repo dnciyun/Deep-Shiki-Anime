@@ -131,6 +131,15 @@ EngineTorrentView _torrent(int id, String name) => EngineTorrentView(
       files: const <EngineFileView>[],
     );
 
+QueueJobView _job(String id, JobState state, {int? engineId}) => QueueJobView(
+  id: id,
+  item: SourceItemView(id: 'item-$id', sourceId: 'nyaa', title: '某番 - $id'),
+  state: state,
+  engineId: engineId,
+  createdAt: DateTime(2026, 10, 15),
+  updatedAt: DateTime(2026, 10, 15),
+);
+
 void main() {
   group('托盘端口（TrayManagerPort）', () {
     test('show() 设置图标/tooltip/右键菜单，并把菜单 key 映射成命令', () async {
@@ -145,12 +154,15 @@ void main() {
       expect(backend.tooltips.single, 'DSAnima');
       expect(backend.menu.map((TrayMenuItemSpec m) => m.key), <String>[
         trayKeyRestore,
+        trayKeyShowPlayer,
         trayKeyPauseAll,
         trayKeyResumeAll,
         trayKeyExit,
       ]);
       expect(backend.menu.map((TrayMenuItemSpec m) => m.label), <String>[
         '显示主窗口',
+        // 第四十二轮 UX #48：收起的播放窗口以前只能"先唤主窗口 → 再点侧栏"。
+        '显示播放器窗口',
         '暂停全部',
         '继续全部',
         '退出',
@@ -159,6 +171,7 @@ void main() {
       final List<TrayCommand> commands = <TrayCommand>[];
       port.commands.listen(commands.add);
       backend.emit(trayKeyRestore);
+      backend.emit(trayKeyShowPlayer);
       backend.emit(trayKeyPauseAll);
       backend.emit(trayKeyResumeAll);
       backend.emit(trayKeyExit);
@@ -166,6 +179,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(commands, <TrayCommand>[
         TrayCommand.restore,
+        TrayCommand.showPlayer,
         TrayCommand.pauseAll,
         TrayCommand.resumeAll,
         TrayCommand.exitApp,
@@ -217,20 +231,59 @@ void main() {
   });
 
   group('托盘菜单动作：暂停全部 / 继续全部', () {
-    test('逐个 pause/resume，单个失败不中断', () async {
+    test('逐个 pause/resume，单个失败不中断，并如实回报 ok/total/okIds', () async {
       final FakeEnginePort engine = FakeEnginePort(<EngineTorrentView>[
         _torrent(1, 'A'),
         _torrent(2, 'B'),
         _torrent(3, 'C'),
       ]);
-      expect(await pauseAllTorrents(engine), 3);
+      // 第四十二轮 UX #8/#30：回的是 `(ok, total, okIds)` —— 只有成功条数时，部分失败
+      // 会被说成"已**全部**暂停"；`okIds` 则用来把**队列侧**的状态也只同步那几个。
+      // （逐字段断言：record 的 `==` 对 List 字段是**引用**比较。）
+      final TrayToggleResult paused = await pauseAllTorrents(engine);
+      expect(paused.ok, 3);
+      expect(paused.total, 3);
+      expect(paused.okIds, <int>[1, 2, 3]);
       expect(engine.calls, <String>['pause:1', 'pause:2', 'pause:3']);
 
       engine.calls.clear();
       engine.failOnId = 2;
-      expect(await resumeAllTorrents(engine), 2,
-          reason: '第 2 个失败（刚被删），剩下两个照常继续');
+      final TrayToggleResult resumed = await resumeAllTorrents(engine);
+      expect(resumed.ok, 2, reason: '第 2 个失败（刚被删），剩下两个照常继续');
+      expect(resumed.total, 3, reason: '总数要带出来，提示才能说"没全部成功"');
+      expect(resumed.okIds, <int>[1, 3], reason: 'okIds 里不许有失败那个');
       expect(engine.calls, <String>['resume:1', 'resume:3']);
+    });
+
+    test('队列侧要同步哪些任务：只认"引擎真的动成功"且"确实需要改"的那些（UX #30）', () {
+      final List<QueueJobView> jobs = <QueueJobView>[
+        _job('a', JobState.downloading, engineId: 1),
+        _job('b', JobState.paused, engineId: 2),
+        _job('c', JobState.downloading, engineId: 3), // 引擎那一步失败（不在 okIds 里）
+        _job('d', JobState.completed, engineId: 4), // 已完成：不该被"暂停全部"搅动
+        _job('e', JobState.queued), // 还没交给引擎
+      ];
+
+      expect(
+        queueSyncTargets(jobs: jobs, engineIds: <int>[1, 2, 3, 4], pause: true),
+        <String>['a', 'c'],
+        reason: '暂停：只找 downloading，而且 engineIds 里必须真的有它',
+      );
+      expect(
+        queueSyncTargets(jobs: jobs, engineIds: <int>[1, 2], pause: true),
+        <String>['a'],
+        reason: 'c 那个引擎 id 没在里面（引擎那一步没成功）⇒ 队列不许说它已暂停',
+      );
+      expect(
+        queueSyncTargets(jobs: jobs, engineIds: <int>[1, 2, 3, 4], pause: false),
+        <String>['b'],
+        reason: '继续：只找 paused（downloading 的不用管）',
+      );
+      expect(
+        queueSyncTargets(jobs: jobs, engineIds: const <int>[], pause: true),
+        isEmpty,
+        reason: '一个都没成功就什么都不改',
+      );
     });
   });
 

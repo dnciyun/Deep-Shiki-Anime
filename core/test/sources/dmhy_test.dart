@@ -160,6 +160,41 @@ void main() {
     });
   });
 
+  group('DmhyListParser：字幕组优先读站点 team 字段（第四十五轮）', () {
+    // 用户第四十五轮要加「字幕组筛选」，于是把各源的组名可靠度过了一遍：dmhy 明明有
+    // 站点登记的团队字段，core 却只看标题前导方括号（那常常是**搬运者**）。
+    // fixture 是手工构造的最小页（见文件里的注释），只钉这三条。
+    late ParseOutcome outcome;
+
+    setUpAll(() {
+      outcome = DmhyListParser.parse(
+        loadFixture('dmhy_list_team.html'),
+        sourceId: 'dmhy',
+        clock: () => _now,
+      );
+    });
+
+    test('有 team 链接时以站点字段为准（标题里那个方括号可能是搬运者）', () {
+      final item = outcome.items[0];
+      expect(item.group, '动漫国字幕组');
+      expect(item.extra['siteGroup'], '动漫国字幕组');
+      expect(item.title, startsWith('[搬运]'),
+          reason: '标题前导方括号是 `[搬运]` —— 旧实现会把这个当组名');
+    });
+
+    test('没有 team 链接（个人发布）→ 退回标题前导方括号', () {
+      final item = outcome.items[1];
+      expect(item.group, '7³ACG');
+      expect(item.extra['siteGroup'], isNull);
+    });
+
+    test('team 链接文本为空 → 不编一个空组名，仍然退回标题', () {
+      final item = outcome.items[2];
+      expect(item.group, '云光字幕组');
+      expect(item.extra['siteGroup'], isNull);
+    });
+  });
+
   group('DmhySource：身份、URL、缓存', () {
     late DmhySource source;
 

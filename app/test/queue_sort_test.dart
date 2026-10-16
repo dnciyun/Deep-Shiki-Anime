@@ -147,14 +147,14 @@ void main() {
     after.dispose();
   });
 
-  test('落盘：存储里是脏值/老值时回退优先级，不崩也不乱排', () {
+  test('落盘：存储里是脏值/老值时回退优先级，不崩也不乱排', () async {
     expect(queueSortOrderFromCode('name'), QueueSortOrder.name);
     expect(queueSortOrderFromCode(''), QueueSortOrder.priority);
     expect(queueSortOrderFromCode(null), QueueSortOrder.priority);
     expect(queueSortOrderFromCode('早就删掉的维度'), QueueSortOrder.priority);
 
     final InMemoryKeyValueStore store = InMemoryKeyValueStore();
-    store.put(QueueSortController.storageKey, 42); // 类型都不对
+    await store.put(QueueSortController.storageKey, 42); // 类型都不对
     final ProviderContainer c = ProviderContainer(
       overrides: [keyValueStoreProvider.overrideWithValue(store)],
     );

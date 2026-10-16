@@ -58,14 +58,30 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
     final List<FollowingEntry> entries = ref.watch(followingProvider);
-    final ScheduleView? schedule = ref.watch(scheduleProvider).value;
-    final List<QueueJobView> jobs = ref.watch(queueJobsProvider).value ?? const <QueueJobView>[];
+    final AsyncValue<ScheduleView> scheduleValue = ref.watch(scheduleProvider);
+    final ScheduleView? schedule = scheduleValue.value;
+    final AsyncValue<List<QueueJobView>> jobsValue = ref.watch(queueJobsProvider);
+    final List<QueueJobView> jobs = jobsValue.value ?? const <QueueJobView>[];
+    final AsyncValue<List<EngineTorrentView>> torrentsValue =
+        ref.watch(engineTorrentsProvider);
     final List<EngineTorrentView> torrents =
-        ref.watch(engineTorrentsProvider).value ?? const <EngineTorrentView>[];
+        torrentsValue.value ?? const <EngineTorrentView>[];
+    final AsyncValue<List<SubscriptionView>> subsValue =
+        ref.watch(subscriptionsProvider);
     final List<SubscriptionView> subs =
-        ref.watch(subscriptionsProvider).value ?? const <SubscriptionView>[];
+        subsValue.value ?? const <SubscriptionView>[];
     final DateTime now = ref.watch(todayProvider);
     final int todayDow = ref.watch(todayDowProvider);
+
+    // 取数失败必须说出来（第四十二轮 UX #4，二级）：卡片上的「今天有更新 / 下载到几成」
+    // 由这四个 provider 拼出来，旧实现一律 `?? const []`（`schedule` 直接可空）——
+    // mikan 追番表拉取失败时页面照常渲染成"今天没有更新"，用户不会想到是没读到。
+    final List<String> staleSources = <String>[
+      if (scheduleValue.error != null && !scheduleValue.isLoading) '更新表（mikan）',
+      if (subsValue.error != null && !subsValue.isLoading) '订阅列表',
+      if (jobsValue.error != null && !jobsValue.isLoading) '下载队列',
+      if (torrentsValue.error != null && !torrentsValue.isLoading) '引擎进度',
+    ];
 
     final List<FollowingCard> all = buildFollowingCards(
       entries: entries,
@@ -126,6 +142,35 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
             ],
           ),
         ),
+        if (staleSources.isNotEmpty) ...<Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+            child: DsBanner(
+              kind: DsBannerKind.error,
+              text: '${staleSources.join('、')} 没读出来：卡片上的"今天有更新 / 下载到几成"'
+                  '会显示成没有 —— 那是没读到，不是真的没有。',
+              action: NeoButton(
+                label: '重试',
+                icon: Icons.refresh,
+                kind: NeoButtonKind.primary,
+                onPressed: () {
+                  if (scheduleValue.error != null) {
+                    ref.invalidate(scheduleProvider);
+                  }
+                  if (subsValue.error != null) {
+                    ref.invalidate(subscriptionsProvider);
+                  }
+                  if (jobsValue.error != null) {
+                    ref.invalidate(queueJobsProvider);
+                  }
+                  if (torrentsValue.error != null) {
+                    ref.invalidate(engineTorrentsProvider);
+                  }
+                },
+              ),
+            ),
+          ),
+        ],
         Expanded(
           child: entries.isEmpty ? _empty() : (cards.isEmpty ? _filteredEmpty() : _grid(cards)),
         ),

@@ -4,6 +4,8 @@
 /// 源未接通就明说「源未接通」，不假装完成。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -120,7 +122,17 @@ class _FirstRunPageState extends ConsumerState<FirstRunPage> {
     }
   }
 
+  /// 「跳过向导」/「完成」共用：把草稿落盘并置 `firstRunCompleted`。
+  ///
+  /// 这里是 `needsFirstRunProvider`（`state/providers.dart:379`）唯一放行条件，
+  /// 所以**任何失败都必须变成屏幕上的一句话**，否则用户看到的是"点了没反应，
+  /// App 永远进不去"（第四十二轮 UX #1，一级）。三条纪律：
+  /// ① `replace()` 是**故意 rethrow** 的（`providers.dart:368`），必须由本函数接住；
+  /// ② `_busy` 全程覆盖写盘，按钮要变灰、要能看见「处理中…」；
+  /// ③ 失败文案要**指向真实原因**（`documents` 被 OneDrive 接管 / 满盘 / 杀软锁目录），
+  ///    不能让上一次「请先勾选合规声明」的陈旧 `_failure` 留着指错方向。
   Future<void> _finish() async {
+    if (_busy) return; // 写盘可能慢，防连点重复落盘
     if (!_complianceChecked) {
       setState(() {
         // 合规声明在第 ③ 步：先把用户带到那一步，再把错误显示出来 ——
@@ -138,13 +150,36 @@ class _FirstRunPageState extends ConsumerState<FirstRunPage> {
       firstRunCompleted: true,
       complianceAccepted: true,
     );
-    await ref.read(settingsProvider.notifier).replace(next);
+    setState(() {
+      _busy = true;
+      _failure = null;
+      _complianceMissing = false;
+    });
+    try {
+      await ref.read(settingsProvider.notifier).replace(next);
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      final DsFailure base = describeFailure(error, stackTrace: stackTrace);
+      setState(() {
+        _busy = false;
+        _failure = DsFailure(
+          '设置没能保存到本机，所以向导没法完成',
+          hint: '常见原因：「文档」目录被 OneDrive 接管后不可写、磁盘已满、'
+              '或安全软件锁住了配置目录。腾出空间 / 解除锁定后再点一次「完成」；'
+              '也可以先退出 App，稍后重开会再次进入向导',
+          detail: base.detail ?? base.message,
+        );
+      });
+      return;
+    }
     if (!mounted) return;
     try {
       await ref.read(lifecyclePortProvider).applySettings(next);
     } catch (_) {
       // 已经保存；向导不因为「引擎还没起」而卡住，设置页会显示未生效原因。
     }
+    if (!mounted) return;
+    setState(() => _busy = false);
   }
 
   /// 「下一步」：每一步都做**真校验**，通不过就把错误显示在当前这一步。
@@ -230,7 +265,7 @@ class _FirstRunPageState extends ConsumerState<FirstRunPage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
                       _StepRail(current: _step, onSelect: (int i) {
-                        if (i <= _step) setState(() => _step = i);
+                        if (!_busy && i <= _step) setState(() => _step = i);
                       }),
                       Expanded(
                         child: Padding(
@@ -255,13 +290,18 @@ class _FirstRunPageState extends ConsumerState<FirstRunPage> {
                       if (_busy) const DsLoading(label: '处理中…', compact: true),
                       const Spacer(),
                       TextButton(
-                        onPressed: () => _finish(),
+                        // 不裸调：`_finish` 自己是全域的（内部 try/catch + `_busy`），
+                        // `unawaited` 只是把这个意图写明，避免未处理的异步异常。
+                        onPressed:
+                            _busy ? null : () => unawaited(_finish()),
                         child: const Text('跳过向导（之后可在设置里改）'),
                       ),
                       const SizedBox(width: 8),
                       if (_step > 0)
                         OutlinedButton(
-                          onPressed: () => setState(() => _step -= 1),
+                          onPressed: _busy
+                              ? null
+                              : () => setState(() => _step -= 1),
                           child: const Text('上一步'),
                         ),
                       const SizedBox(width: 8),
@@ -346,6 +386,8 @@ class _FirstRunPageState extends ConsumerState<FirstRunPage> {
           ),
           if (_failure != null) ...<Widget>[
             const SizedBox(height: 14),
+            // 这一步**故意不给** `onRetry`：这里的失败只有"还没选下载目录"一种，
+            // 它不是"重试就能过"的动作，重试按钮只会误导（要用户做的动作就在上面）。
             DsErrorPanel(failure: _failure!),
           ],
         ],
@@ -421,7 +463,13 @@ class _FirstRunPageState extends ConsumerState<FirstRunPage> {
           ],
           if (_failure != null) ...<Widget>[
             const SizedBox(height: 12),
-            DsErrorPanel(failure: _failure!),
+            // 这一步的失败都是"引擎没起来 / /health 不通"，**重试就是再起一次**，
+            // 所以错误面板自带重试（第四十二轮 UX #43）。
+            DsErrorPanel(
+              failure: _failure!,
+              onRetry: _busy ? null : () => unawaited(_startEngine()),
+              retryLabel: engine.running ? '重新启动引擎' : '启动引擎',
+            ),
           ],
         ],
       );
@@ -539,7 +587,14 @@ class _FirstRunPageState extends ConsumerState<FirstRunPage> {
           // 第 ③ 步也必须渲染 _failure：合规声明就在这一步，旧实现只在前两步渲染，
           // 于是「没勾就点完成」完全没有提示（用户报的「引导不完全」）。
           if (_failure != null) ...<Widget>[
-            DsErrorPanel(failure: _failure!),
+            // 第 ③ 步的失败有两种：没勾合规声明（下方勾选就是动作）、以及**落盘失败**
+            // （首启向导最容易卡死的一种）。后者是"再存一次就能过"（比如腾出磁盘后），
+            // 所以给重试。
+            DsErrorPanel(
+              failure: _failure!,
+              onRetry: _busy ? null : () => unawaited(_finish()),
+              retryLabel: '再存一次',
+            ),
             const SizedBox(height: 12),
           ],
           if (_draft.downloadDir != null)

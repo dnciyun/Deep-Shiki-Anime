@@ -166,6 +166,7 @@ class AggregateSourceResult {
     this.hasNext = false,
     this.failure,
     this.fromCache = false,
+    this.staleFallback = false,
     this.fetchedAt,
   });
 
@@ -179,6 +180,9 @@ class AggregateSourceResult {
   /// 失败原因（已归一化的用户可读文本）；null = 这个源成功了。
   final String? failure;
   final bool fromCache;
+
+  /// 这个源是**网络失败后回落过期缓存**（UX #10；与"新鲜命中"要分开说）。
+  final bool staleFallback;
   final DateTime? fetchedAt;
 
   bool get ok => failure == null;
@@ -201,6 +205,24 @@ String aggregateFailureBanner(List<AggregateSourceResult> results, {int max = 3}
   ];
   final String tail = failed.length > max ? ' …共 ${failed.length} 个' : '';
   return '$head${shown.join('、')}$tail';
+}
+
+/// 结果行里那个"来源"该显示成什么（第四十二轮 UX #16）。
+///
+/// 旧实现直接打印 `item.sourceId` —— 表格里出现的是 `mikan`、`dmhy-batch`、
+/// `acgnx-batch`、`rss:8f3a1c…` 这类**内部 id**。用户既看不懂，也认不出哪个是自己
+/// 订阅的那个源，更没法把它和「源」面板里的名字对上。
+///
+/// 规则（宁可难看也不要显示一个错的源名）：
+/// * 源表里查得到 → 用它的 `displayName`（= 「源」面板、设置里看到的同一个名字）；
+/// * `rss:<订阅 id>` → 「订阅源」（订阅名在订阅那一侧，结果行拿不到，也不编）；
+/// * 查不到（源被移除 / 注册表变了）→ 原样显示 id。
+String sourceLabelFor(String sourceId, List<SourceOption> options) {
+  for (final SourceOption o in options) {
+    if (o.id == sourceId) return o.displayName;
+  }
+  if (sourceId.startsWith('rss:')) return '订阅源';
+  return sourceId;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

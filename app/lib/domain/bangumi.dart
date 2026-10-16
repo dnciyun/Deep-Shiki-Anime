@@ -685,6 +685,8 @@ class BangumiSubjectExtra {
   const BangumiSubjectExtra({
     this.characters = const <BangumiCharacter>[],
     this.related = const <BangumiRelated>[],
+    this.charactersError,
+    this.relatedError,
   });
 
   static const BangumiSubjectExtra empty = BangumiSubjectExtra();
@@ -692,7 +694,24 @@ class BangumiSubjectExtra {
   final List<BangumiCharacter> characters;
   final List<BangumiRelated> related;
 
+  /// 角色那一路**没拉到**时的异常；`null` = 这一路成功了（哪怕结果是空表）。
+  ///
+  /// 第四十四轮加（用户原话：「优化详细页反馈。加载关联等没有反馈，是突然出现在下面的」）：
+  /// 两条端点各自失败时，旧实现只把那半边的空表交出去，调用方**分不出**
+  /// 「这部真的没有角色」与「角色没拉到」—— 详情页下面那一块于是静静地什么都不显示。
+  /// 有了它，那一块才能照实说「没拉到（原因）+ 重试」。
+  ///
+  /// ⚠️ 只在内存里传，**不落盘**（[toJson] 不带它们，见 `BangumiLibraryPort.extras` 的第 2 条
+  /// 契约：有失败就不写缓存，所以盘上读回来的永远是"成功的那一份"）。
+  final Object? charactersError;
+
+  /// 关联条目那一路没拉到时的异常（语义同 [charactersError]）。
+  final Object? relatedError;
+
   bool get isEmpty => characters.isEmpty && related.isEmpty;
+
+  /// 有没有哪一路没拉到（详情页靠它决定要不要挂一条"部分没拉到"的横幅）。
+  bool get hasFailures => charactersError != null || relatedError != null;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'characters': <Object?>[

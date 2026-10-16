@@ -672,7 +672,13 @@ void main() {
       expect(find.text(column), findsWidgets, reason: '缺表头列：$column');
     }
     for (final String gone in <String>['#', '集数', '画质', '字幕', '字幕组', '做种']) {
-      expect(find.text(gone), findsNothing, reason: '$gone 这一列应该已经合并/删掉了');
+      // 第四十五轮起把这条守卫**收窄到表格内部**：查询条上多了一颗「字幕组」筛选 chip，
+      // 它本来就写着「字幕组」三个字。这里要防的是"列回潮"，不是"这个词出现在别处"。
+      expect(
+        find.descendant(of: find.byType(SearchResultsTable), matching: find.text(gone)),
+        findsNothing,
+        reason: '$gone 这一列应该已经合并/删掉了',
+      );
     }
     // 行内容
     expect(find.textContaining('葬送的芙莉莲 - 第 01 话'), findsWidgets);
@@ -925,6 +931,27 @@ void main() {
     await tester.tap(find.text('暂停').first);
     await tester.pumpAndSettle();
     expect(queue.calls, contains('pause:1'));
+  });
+
+  testWidgets('队列页：失败的任务有「重试」这条出路（第四十二轮 UX #7）', (WidgetTester tester) async {
+    // 旧实现只在 `paused` 时才渲染那颗按钮 ⇒ 失败行是个**死路**：既没有「继续」、
+    // 也没有自动重试，唯一的出路是"移除 → 回搜索页重找"。core 的 `resumeJob`
+    // 本来就把 `failed` 当合法输入（放回 queued / 重新加种），只是界面没给入口。
+    _sizeTo(tester, const Size(1400, 1400));
+
+    final FakeQueuePort queue = FakeQueuePort(<QueueJobView>[
+      _job('9', JobState.paused, priority: 10),
+      _job('10', JobState.failed, priority: 10),
+    ]);
+    await tester.pumpWidget(harness(const QueuePage(), queue: queue));
+    await tester.pumpAndSettle();
+
+    expect(find.text('继续'), findsOneWidget, reason: '暂停的那条照旧是「继续」');
+    expect(find.text('重试'), findsOneWidget, reason: '失败的那条要有「重试」');
+
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(queue.calls, contains('resume:10'));
   });
 
   testWidgets('队列页：「一起下载 N 条」写的是同一份设置，改完当场生效（第二十三轮）', (

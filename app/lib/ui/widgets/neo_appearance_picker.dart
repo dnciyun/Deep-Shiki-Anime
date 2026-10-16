@@ -96,6 +96,9 @@ class _AppearanceCell extends StatefulWidget {
 class _AppearanceCellState extends State<_AppearanceCell> {
   bool _hover = false;
 
+  /// 键盘焦点在不在这一格上（第四十二轮 UX #40）。
+  bool _focused = false;
+
   /// 这一格在**屏幕上的中心**（圆以它为中心张开）。
   Offset _globalCenter() {
     final RenderBox? box = context.findRenderObject() as RenderBox?;
@@ -125,41 +128,51 @@ class _AppearanceCellState extends State<_AppearanceCell> {
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),
         onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => widget.onTap(_globalCenter()),
-          child: AnimatedContainer(
-            key: Key('${widget.keyPrefix}-${widget.appearance.code}'),
-            duration: motion.hover,
-            curve: DsMotion.hoverCurve,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-            decoration: BoxDecoration(
-              color: background,
-              borderRadius: BorderRadius.circular(t.radiusControl),
-              // 选中格 = 该外观自己的 accent + 2px（规范 §5.6）；未选中 = 1px line。
-              border: Border.all(color: selected ? own.accent : t.line, width: selected ? 2 : 1),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: widget.appearance.tokens.accent,
-                    shape: BoxShape.circle,
+        // 第四十二轮 UX #40：这一格以前是裸 `GestureDetector` —— Tab 整块跳过、
+        // 没有焦点框、回车/空格都没反应（鼠标能做的事键盘一样都做不了）。
+        // `InkWell` 自带焦点遍历与回车/空格激活；外面再补一层 Semantics
+        // （"这是一颗按钮、当前选没选中"），读屏软件才念得对。
+        child: Semantics(
+          button: true,
+          selected: selected,
+          child: InkWell(
+            onTap: () => widget.onTap(_globalCenter()),
+            onFocusChange: (bool focused) => setState(() => _focused = focused),
+            borderRadius: BorderRadius.circular(t.radiusControl),
+            child: AnimatedContainer(
+              key: Key('${widget.keyPrefix}-${widget.appearance.code}'),
+              duration: motion.hover,
+              curve: DsMotion.hoverCurve,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: BorderRadius.circular(t.radiusControl),
+                // 选中格 = 该外观自己的 accent + 2px（规范 §5.6）；未选中 = 1px line。
+                // 键盘焦点再盖一层 accent（不然"焦点在哪"完全看不出来）。
+                border: Border.all(color: _focused ? t.accent : (selected ? own.accent : t.line), width: (_focused || selected) ? 2 : 1),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: widget.appearance.tokens.accent,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 7),
-                Text(
-                  widget.appearance.label,
-                  style: TextStyle(
-                    color: foreground,
-                    fontSize: DsTypeScale.caption,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  const SizedBox(width: 7),
+                  Text(
+                    widget.appearance.label,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: DsTypeScale.caption,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

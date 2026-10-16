@@ -1,5 +1,5 @@
 /// 动漫库条目详情（第三十三轮；**第三十四轮填内容 · 第三十五轮重排 · 第三十六轮修细节 ·
-/// 第三十七轮补两个通栏盒子**）。
+/// 第三十七轮补两个通栏盒子 · 第四十四轮补"加载/失败反馈"**）。
 ///
 /// 用户原话（第三十三轮）：「点今日推荐也会跳到这里面」+ 问答里选定的：详情展示
 /// 封面/评分/简介/放送日/集数，并且能「按这个名字搜种子」和「加入追番」。
@@ -8,6 +8,24 @@
 /// 用户原话（第三十六轮）：「详细页细节没处理好，而且左右两边留白不好看，
 /// 细节比如封面框有色边」。
 /// 用户原话（第三十七轮）：「现在下面又留空太多了，可以参考bangumi那样的布局」。
+/// 用户原话（第四十四轮）：「优化详细页反馈。加载关联等没有反馈，是突然出现在下面的」。
+///
+/// ## 第四十四轮：为什么"没有反馈"不是动画问题，是状态没表达出来
+///
+/// 那两块（角色 / 关联条目）由两个端点拼出来，而 [BangumiClient] 的限速闸门会把两条请求的
+/// **开始时刻**排开 1.1s（Bangumi 的硬要求）—— 也就是说冷启点开一部，这两块**必然**
+/// 比详情晚一秒以上才出现。而旧实现这一秒里界面状态是"没有"：`_extra == null` 同时表示
+/// "还在拉""没拉到""拉到了但为空"，于是在用户眼里就是"下面本来什么都没有 → 忽然蹦出一大块"，
+/// 端点挂了的话则永远是"什么都没有"（连"没拉到"都不说）。
+///
+/// 现在这三件事分开表达（[_ExtrasState]），并各自有画面：
+/// 占位盒（`正在加载角色与关联条目…`）→ 内容盒；失败 ⇒ "没拉到（原因）+ 重试"；
+/// 只拉到一半 ⇒ 点名是哪一块没拉到 + 重试。整块外面套 `AnimatedSize`，
+/// 高度变化是连续长上去的，不是当帧跳一下。
+///
+/// 顺带修掉一个"重试没用"的机制问题：`state/bangumi_library.dart` 的 `extras()` 原来
+/// **无论成败都进程内缓存**，于是那颗新加的「重试」拿回来的还是内存里那份缺一半的。
+/// 现在只有两条都成功才记（内存 + 盘）。
 ///
 /// ## 第三十七轮：为什么"下面留空"不是版面问题，是内容不够
 ///
@@ -88,18 +106,21 @@
 ///   从真实条目的标签上点是最不容易过时的方式）。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/bangumi.dart';
-import '../domain/bangumi_library.dart';
 import '../domain/error_text.dart';
 import '../state/library_provider.dart';
 import '../state/providers.dart';
+import '../theme/motion.dart';
 import '../theme/tokens.dart';
 import 'home_page.dart' show openRecommendSearch;
 import 'widgets/cover.dart';
 import 'widgets/follow_button.dart';
+import 'widgets/library_seed_block.dart';
 import 'widgets/neo.dart';
 import 'widgets/state_views.dart';
 
@@ -113,10 +134,12 @@ Future<void> openLibraryDetail(BuildContext context, BangumiSubject subject) {
 }
 
 /// 跳到动漫库并按某个标签筛（详情页的标签胶囊用它）。
+///
+/// ⚠️ 第四十四轮改成 `copyWith`：旧实现 `patch(BangumiLibraryQuery(tag: tag))` 是**整份换掉**，
+/// 于是"在动漫库筛着 2024 年，从详情页点了个标签回来，年份/形态/评分全没了" ——
+/// 用户点的是"再加一个条件"，不是"重置之后再筛"。右栏的类型胶囊走的是同一个 setter。
 void openLibraryWithTag(WidgetRef ref, String tag) {
-  ref.read(libraryQueryProvider.notifier).patch(
-        BangumiLibraryQuery(tag: tag),
-      );
+  ref.read(libraryQueryProvider.notifier).setTag(tag);
   ref.read(navProvider.notifier).select(ShellTab.library);
 }
 
@@ -166,6 +189,14 @@ const Key dsDetailSideKey = Key('library-detail-side');
 const Key dsDetailCharactersKey = Key('library-detail-characters');
 const Key dsDetailRelatedKey = Key('library-detail-related');
 
+/// 这两块**还在路上 / 没拉到**时的两个占位盒子的 key（第四十四轮，「加载关联等没有反馈」）。
+const Key dsDetailExtrasLoadingKey = Key('library-detail-extras-loading');
+const Key dsDetailExtrasFailedKey = Key('library-detail-extras-failed');
+
+/// 两块没拉到 / 只拉到一半时，那颗「重试」的 key（两处不会同时出现，但 key 分开更好断言）。
+const Key dsDetailExtrasRetryKey = Key('library-detail-extras-retry');
+const Key dsDetailExtrasPartialRetryKey = Key('library-detail-extras-partial-retry');
+
 /// 一个角色格子多宽（头像正方形 + 名字两行 + 声优一行）。
 const double kDetailCharacterCellWidth = 112;
 
@@ -199,7 +230,11 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
   /// 收结果时 `ListView(children:)` 里前面那些 index 一个都不动，已建好的元素（包括
   /// `DsCover` 自己的 state、资料表的"展开"状态）都被复用；套一层 `FutureBuilder`
   /// 反而会让它在两棵树之间来回换。
-  BangumiSubjectExtra? _extra;
+  ///
+  /// ⚠️ 第四十四轮从 `BangumiSubjectExtra?` 换成三态（[_ExtrasState]）：一个 `null`
+  /// 同时表示"还在拉""没拉到""拉到了但为空"三件事，界面上就是"下面什么都没有 → 突然
+  /// 冒出一大块通栏盒子"（用户原话：「加载关联等没有反馈，是突然出现在下面的」）。
+  _ExtrasState _extras = const _ExtrasLoading();
 
   @override
   void initState() {
@@ -213,23 +248,41 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.subject.id != widget.subject.id) {
       _detail = ref.read(bangumiLibraryProvider).detail(widget.subject.id);
-      _extra = null;
       _loadExtra(widget.subject.id);
     }
   }
 
-  /// 拉角色 / 关联条目。**失败了就当没有这两块**（端口契约允许各自为空）——
-  /// 它们是装饰，不该把已经画好的详情变成一句错误提示；主内容的失败提示走 [_note]。
+  /// 拉角色 / 关联条目。**失败了不把整页变成错误页**（端口契约允许各自为空）——
+  /// 它们是装饰，主内容的失败提示走 [_note]；但**这两块自己没拉到要如实说**
+  /// （[_ExtrasFailed] / [BangumiSubjectExtra.hasFailures]），并且给一颗能真正重来的「重试」。
+  ///
+  /// 调用点只有 [initState] / [didUpdateWidget]（这两个位置都在 build 之前，直接赋值即可），
+  /// 界面上的「重试」走 [_retryExtras]（那条路上要 `setState`）。
   void _loadExtra(int id) {
-    ref.read(bangumiLibraryProvider).extras(id).then(
-      (BangumiSubjectExtra value) {
-        if (!mounted || widget.subject.id != id) return;
-        setState(() => _extra = value);
-      },
-      onError: (Object _) {
-        // 静默：下次再点开这部还会重试（服务层有失败就不落盘）。
-      },
-    );
+    _extras = const _ExtrasLoading();
+    unawaited(_fetchExtra(id));
+  }
+
+  Future<void> _fetchExtra(int id) async {
+    try {
+      final BangumiSubjectExtra value =
+          await ref.read(bangumiLibraryProvider).extras(id);
+      // 晚到的结果不许盖掉"已经换了一部"的页面。
+      if (!mounted || widget.subject.id != id) return;
+      setState(() => _extras = _ExtrasReady(value));
+    } catch (error) {
+      if (!mounted || widget.subject.id != id) return;
+      setState(() => _extras = _ExtrasFailed(error));
+    }
+  }
+
+  /// 就地重拉这两块（回到占位态 → 结果/失败）。
+  ///
+  /// 服务层**不缓存缺一半的结果**（见 `state/bangumi_library.dart` 的 `extras`），
+  /// 所以这个「重试」是真的再打一次网络，而不是拿回同一份缺的。
+  void _retryExtras() {
+    setState(() => _extras = const _ExtrasLoading());
+    unawaited(_fetchExtra(widget.subject.id));
   }
 
   @override
@@ -290,10 +343,29 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
     } else {
       blocks = _stackedLayout(context, ref, full, note, width);
     }
-    return <Widget>[...blocks, ..._extraSections(context)];
+    return <Widget>[...blocks, _extrasArea(context)];
   }
 
-  /// 信息带下面的两个通栏盒子：角色 / 关联条目（第三十七轮）。
+  /// 信息带下面那两块整体（第四十四轮：三态 + 出现时不再"蹦"一下）。
+  ///
+  /// 用 `AnimatedSize` 而不是条件抽/插：这两块是**通栏**的（一屏几百像素），
+  /// 从"占位"换成"内容"时高度会变很多，`AnimatedSize` 让它在这一个 token 时长里
+  /// 连续长上去，而不是当帧跳一下（`DsMotion` 尊重系统「减少动画」——那时时长归零、
+  /// 就等于旧行为，这是对的）。
+  Widget _extrasArea(BuildContext context) {
+    final List<Widget> children = _extraSections(context);
+    return AnimatedSize(
+      duration: DsMotion.of(context).page,
+      curve: DsMotion.pageCurve,
+      alignment: Alignment.topCenter,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
+    );
+  }
+
+  /// 信息带下面的两个通栏盒子：角色 / 关联条目（第三十七轮）+ 它们的三种状态（第四十四轮）。
   ///
   /// **为什么加它们**（用户第三十七轮：「现在下面又留空太多了，可以参考bangumi那样的布局」）：
   /// 三栏版面在 2560 屏（2048 逻辑宽）上只有 525/559/707 高，而可视高度约 1050 ——
@@ -302,19 +374,86 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
   /// 这里照这个形状补上两块：它们通栏、有真实数据（实测 芙莉莲 91 位角色、21 条关联），
   /// 页面自然就比窗口高了 —— 空白不是靠拉高某一块填的，而是真的有内容。
   ///
+  /// **三种状态都要画出来**（第四十四轮，用户：「加载关联等没有反馈，是突然出现在下面的」）：
+  /// * 还在拉 ⇒ 一块「正在加载角色与关联条目」的占位（形状、位置就是它们将来的位置，
+  ///   看完不是"下面什么都没有"，而是"这两块在路上"）；
+  /// * 没拉到 ⇒ 一块「没拉到（原因）+ 重试」，**不**把整页变成错误页（上面那些信息是好的）；
+  /// * 拉到一半（一条挂一条成）⇒ 挂一条黄色横幅点名**是哪一块**没拉到 + 重试，另一半照常画。
+  ///
   /// 数据来源：`GET /v0/subjects/{id}/characters` 与 `/v0/subjects/{id}/subjects`
   /// （实测见 `tool/round37_subject_probe.py`）；两块都能单独为空（实测孤独摇滚两条都回 `[]`），
   /// 为空就不画那一块，也不留一条空盒子。
   List<Widget> _extraSections(BuildContext context) {
-    final BangumiSubjectExtra? extra = _extra;
-    if (extra == null || extra.isEmpty) return const <Widget>[];
-    return <Widget>[
-      const SizedBox(height: 16),
-      if (extra.characters.isNotEmpty) _charactersCard(context, extra.characters),
-      if (extra.characters.isNotEmpty && extra.related.isNotEmpty)
-        const SizedBox(height: 12),
-      if (extra.related.isNotEmpty) _relatedCard(context, extra.related),
+    switch (_extras) {
+      case _ExtrasLoading():
+        return <Widget>[
+          const SizedBox(height: 16),
+          _card(
+            context,
+            key: dsDetailExtrasLoadingKey,
+            title: '角色与关联条目',
+            subtitle: '正在加载…',
+            child: const DsLoading(label: '正在问 Bangumi（角色 / 关联条目）…', compact: true),
+          ),
+        ];
+      case _ExtrasFailed(:final Object error):
+        return <Widget>[
+          const SizedBox(height: 16),
+          _card(
+            context,
+            key: dsDetailExtrasFailedKey,
+            title: '角色与关联条目',
+            subtitle: '这一块没拉到',
+            child: NeoBanner(
+              kind: NeoBannerKind.warning,
+              text: '${describeFailure(error).message}\n'
+                  '这两块是补充内容，上面那些信息不受影响。',
+              action: TextButton(
+                key: dsDetailExtrasRetryKey,
+                onPressed: _retryExtras,
+                child: const Text('重试'),
+              ),
+            ),
+          ),
+        ];
+      case _ExtrasReady(:final BangumiSubjectExtra value):
+        if (value.isEmpty && !value.hasFailures) return const <Widget>[];
+        return <Widget>[
+          const SizedBox(height: 16),
+          if (value.hasFailures) ...<Widget>[
+            _extrasPartialFailure(context, value),
+            if (value.characters.isNotEmpty || value.related.isNotEmpty)
+              const SizedBox(height: 12),
+          ],
+          if (value.characters.isNotEmpty) _charactersCard(context, value.characters),
+          if (value.characters.isNotEmpty && value.related.isNotEmpty)
+            const SizedBox(height: 12),
+          if (value.related.isNotEmpty) _relatedCard(context, value.related),
+        ];
+    }
+  }
+
+  /// 只拉到一半时的那条横幅：**点名**是哪一块没拉到（第四十四轮）。
+  ///
+  /// 旧实现这种情况下连一句提示都没有：`extras()` 把失败那半边当空表返回，
+  /// 页面于是画了角色、没画关联条目 —— 用户看得出"少了点什么"却无从判断
+  /// （是这部没有关联条目？还是没拉到？），也没有重试的入口。
+  Widget _extrasPartialFailure(BuildContext context, BangumiSubjectExtra value) {
+    final List<String> missing = <String>[
+      if (value.charactersError != null) '角色',
+      if (value.relatedError != null) '关联条目',
     ];
+    final Object? first = value.charactersError ?? value.relatedError;
+    return NeoBanner(
+      kind: NeoBannerKind.warning,
+      text: '${missing.join('、')}没拉到（${describeFailure(first!).message}）。'
+          '${value.isEmpty ? '这两块这次都没有内容' : '其余照常显示'}；不影响上面的信息。',
+      action: TextButton(
+        key: dsDetailExtrasPartialRetryKey,
+        onPressed: _retryExtras,
+        child: const Text('重试'),
+      ),
+    );
   }
 
   /// 两栏（默认）：左栏 = 海报 + 分数/事实 + 动作 + 收藏统计 + 标签；
@@ -361,6 +500,9 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
                 _titleBlock(context, full),
                 const SizedBox(height: 14),
                 _ratingCard(context, full),
+                // ← 种子块（两栏：评分统计之后、资料与简介之前）
+                const SizedBox(height: 12),
+                _seedBlock(full),
                 if (full.infobox.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 12),
                   _infoboxCard(context, full),
@@ -420,6 +562,9 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
                 _ratingCard(context, full),
                 const SizedBox(height: 12),
                 _collectionCard(context, full),
+                // ← 种子块（三栏：中栏的统计之后；资料/标签/简介在第三栏，列序仍在它后面）
+                const SizedBox(height: 12),
+                _seedBlock(full),
                 if (note != null) ...<Widget>[const SizedBox(height: 12), note],
               ],
             ),
@@ -486,6 +631,9 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
       _ratingCard(context, full),
       const SizedBox(height: 12),
       _collectionCard(context, full),
+      // ← 种子块（窄窗：统计之后、资料与简介之前）
+      const SizedBox(height: 12),
+      _seedBlock(full),
       if (full.infobox.isNotEmpty) ...<Widget>[
         const SizedBox(height: 12),
         _infoboxCard(context, full),
@@ -508,11 +656,27 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
       return NeoBanner(
         kind: NeoBannerKind.warning,
         text: '详情没拉到（${describeFailure(snapshot.error!).message}），'
-            '上面这些是列表里已有的信息；再点一次卡片可以重试。',
+            '上面这些是列表里已有的信息。',
+        // 第四十二轮 UX #22：旧文案让人"再点一次卡片可以重试" —— 可这一屏是**整页
+        // push** 进来的，屏幕上根本没有卡片可点（用户只能退回去、再从网格里找回
+        // 那一张）。这里就地给一颗「重试」，行为与文案都对得上。
+        action: TextButton(
+          onPressed: _retryDetail,
+          child: const Text('重试'),
+        ),
       );
     }
     if (!snapshot.hasData) return const DsLoading(label: '正在补详情…', compact: true);
     return null;
+  }
+
+  /// 就地重拉详情（失败**不缓存**，所以重试真的会再打一次网络，见
+  /// `bangumi_library.dart` 的 `detail()`：只有成功才进内存/落盘）。
+  void _retryDetail() {
+    setState(() {
+      _detail = ref.read(bangumiLibraryProvider).detail(widget.subject.id);
+    });
+    _retryExtras();
   }
 
   // ── 版面零件 ───────────────────────────────────────────────────────────────
@@ -570,28 +734,33 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
   /// `openRecommendSearch` 只做了「填关键字 + 切 shell 的 tab」—— 路由还压在上面，
   /// 用户看到的就是"点了没走，还得自己按返回"。所以先 `maybePop` 再切
   ///（与下面标签胶囊那条路同一套做法，两条路必须一致）。
+  /// ⚠️ **第四十五轮**：原来那颗「按这个名字搜种子」删掉了 —— 现在种子就在本页
+  /// （[_seedBlock]），那颗按钮的旧行为（关掉详情页、跳去搜索页）反而成了绕路。
+  /// 「去搜索页做跨番搜索」这条路降级成种子块里的一个小链接，没丢。
   Widget _actions(BuildContext context, WidgetRef ref, BangumiSubject full) {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
-        NeoButton(
-          key: const Key('library-detail-search-seeds'),
-          label: '按这个名字搜种子',
-          icon: Icons.search,
-          kind: NeoButtonKind.primary,
-          onPressed: () {
-            Navigator.of(context).maybePop();
-            openRecommendSearch(ref, full);
-          },
-        ),
         // 追番 id 用 `bgm:<id>`（`followingIdFor` 的既定优先级），
         // 从库里追、从今日推荐追会落到**同一条**记录。
         FollowButton(entry: followingEntryFromBangumi(full)),
       ],
     );
   }
+
+  /// 种子块（第四十五轮）：位置按用户选定的「封面 / 评分统计之后、资料与简介之前」，
+  /// 三种版面各有一个锚点（见 [_twoColumn] / [_threeColumn] / [_stackedLayout] 里
+  /// 那三处 `← 种子块` 注释）。
+  Widget _seedBlock(BangumiSubject full) => LibrarySeedBlock(
+    subject: full,
+    onOpenSearchPage: () {
+      // 与旧按钮同一套：先关掉详情页，再切到搜索页并带上这个名字。
+      unawaited(Navigator.of(context).maybePop());
+      openRecommendSearch(ref, full);
+    },
+  );
 
   /// 评分分布（`rating.count`）：10 档细条 + 票数 + 占比。
   ///
@@ -763,10 +932,14 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
         runSpacing: 6,
         children: <Widget>[
           for (final String tag in full.tags.take(24))
-            _TagChip(
-              tag: tag,
+            // 第四十四轮：不再自己画一颗 `_TagChip`，改用通用的 [NeoPill]（同一套形态）——
+            // 顺带把"鼠标专用"这个毛病一起修了：这里点一下会跳回动漫库，键盘也该做得到。
+            NeoPill(
+              key: Key('library-tag-$tag'),
+              label: tag,
+              tooltip: '回动漫库按「$tag」筛',
               onTap: () {
-                Navigator.of(context).maybePop();
+                unawaited(Navigator.of(context).maybePop());
                 openLibraryWithTag(ref, tag);
               },
             ),
@@ -915,6 +1088,37 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
   }
 }
 
+/// 角色 / 关联条目那两块的状态（第四十四轮，用户：「优化详细页反馈。加载关联等没有反馈，
+/// 是突然出现在下面的」）。
+///
+/// 旧实现只有一个 `BangumiSubjectExtra? _extra`，而 `null` 同时表示三件事：
+/// "还在拉""没拉到""拉到了但两块都为空"。于是
+/// * 拉的时候下面**什么都没有**（那两块是通栏的、一跳几百像素 ⇒ "突然出现在下面"）；
+/// * 两条端点都挂时也是**什么都没有**，用户永远分不出"这部没有角色"与"网络没拉到"。
+/// 拆成三态之后：占位 / 内容（部分失败再挂横幅）/ 失败+重试。
+sealed class _ExtrasState {
+  const _ExtrasState();
+}
+
+/// 还在拉（画占位，形状与位置就是将来那两块的位置）。
+class _ExtrasLoading extends _ExtrasState {
+  const _ExtrasLoading();
+}
+
+/// 拿到了（可能是空表，也可能缺一半 —— 缺的那半看 `hasFailures`）。
+class _ExtrasReady extends _ExtrasState {
+  const _ExtrasReady(this.value);
+
+  final BangumiSubjectExtra value;
+}
+
+/// 两条端点都没拿到（端口在这种情况下会抛）。
+class _ExtrasFailed extends _ExtrasState {
+  const _ExtrasFailed(this.error);
+
+  final Object error;
+}
+
 /// 资料表：键 + 值两列；超过 [kDetailInfoboxPreviewRows] 行时折叠，按钮展开。
 ///
 /// ⚠️ 值那一列用 `Text` 而**不是** `SelectableText`（第三十五轮）：`SelectableText` 即使
@@ -983,35 +1187,6 @@ class _InfoboxTableState extends State<_InfoboxTable> {
           ),
         ],
       ],
-    );
-  }
-}
-
-class _TagChip extends StatelessWidget {
-  const _TagChip({required this.tag, required this.onTap});
-
-  final String tag;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final DsTokens t = context.ds;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          key: Key('library-tag-$tag'),
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-          decoration: BoxDecoration(
-            color: t.sunken,
-            borderRadius: BorderRadius.circular(t.radiusPill),
-            border: Border.all(color: t.line, width: 1),
-          ),
-          child: Text(tag, style: TextStyle(color: t.text2, fontSize: DsTypeScale.caption)),
-        ),
-      ),
     );
   }
 }

@@ -151,7 +151,8 @@ class AcgnxSource extends CachedSourceClient {
 /// 字段来源（逐条实测）：
 /// * `title`（CDATA，站点把 `&` 写成 `&amp;`，这里解码常见实体）；
 /// * `link` / `guid`：`show-<infohash>.html`（hash 的**第二来源**）；
-/// * `author`（CDATA）：字幕组 / 发布组；
+/// * `author`（CDATA）：**镜像站名**（`動漫花園鏡像` 这类）—— **不是**字幕组，
+///   第四十五轮实测确认，见下面 `group:` 那一处注释；
 /// * `enclosure@url`：真正的 magnet（带 `tr=`）；
 /// * `category`：站点分类（CDATA，如 `季度全集`）；
 /// * `description`（CDATA 里是 HTML）：`组名 | 标题 | 16.9GB | 分类 | <infohash>`。
@@ -222,10 +223,15 @@ class AcgnxFeedParser {
           _childText(node, 'category'),
           fallbackCategory,
         ]),
-        group: firstNonEmpty(<String?>[
-          _childText(node, 'author'),
-          parsed.group,
-        ]),
+        // ⚠️ **不要**拿 `<author>` 当字幕组（第四十五轮实测修正）。
+        //
+        // ACGNX 的 `<author>` 写的是**镜像站名**（`動漫花園鏡像` / `萌番組鏡像` / `華盟RIP鏡像`），
+        // 不是"这一版是谁做的"。以前这里是 `firstNonEmpty([author, parsed.group])`，
+        // 于是搜索页的字幕组筛选面板里会冒出一个叫「動漫花園鏡像」的选项，播放列表归组、
+        // 订阅规则的 `groupAllow` 也全都拿着这个假组名在算。
+        // 现在只认标题里那个前导方括号（`TitleParser.extractGroup`）；解析不出来就留空
+        // —— 留空 = 归进「未知组」，比编一个镜像名诚实。
+        group: parsed.group,
         episodeHints: parsed.episodeHints,
         extra: <String, dynamic>{
           ...parsed.toExtra(),

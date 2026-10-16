@@ -237,6 +237,18 @@ class DsBanner extends StatelessWidget {
 }
 
 /// 把 `AsyncValue` 渲染成三态（有数据优先渲染数据，避免刷新时闪白）。
+///
+/// **失败必须可见**（第四十二轮 UX #3，二级）：旧实现先判 `value.value != null`，
+/// 而 `AsyncValue.value` 在出错时**不会抛**、riverpod 的 `copyWithPrevious` 还会把
+/// 上一次的旧值留在 `value` 里（`async_value.dart:551` / `:877`），于是错误面板与
+/// 重试按钮在**任何一次成功之后**永远不可达 —— 引擎中途挂掉时队列/已完结照常显示
+/// 旧列表，用户看不到任何异常，也点不到重试。现在：
+/// * 无数据 + 出错 ⇒ 整屏 [DsErrorPanel]（带重试）；
+/// * 有数据 + 出错 ⇒ 顶部错误横幅（带重试）+ 旧数据继续可读（不闪白、不藏错）；
+/// * 重试在途（`isLoading`）期间不报错，免得重试时闪一下。
+///
+/// ⚠️ 布局契约：本组件要求**有界高度**（"有数据 + 出错"分支会把数据包进
+/// `Expanded`）。全仓 5 处调用点都在 `Expanded` 下，符合契约。
 class DsAsync<T> extends ConsumerWidget {
   const DsAsync({
     super.key,
@@ -258,17 +270,43 @@ class DsAsync<T> extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final T? data = value.value;
-    if (data != null) {
-      if (isEmpty?.call(data) ?? false) {
-        return empty ?? const DsEmpty(title: '这里还没有内容');
-      }
-      return builder(context, data);
-    }
-    if (value.isLoading) return DsLoading(label: loadingLabel);
     final Object? error = value.error;
-    return DsErrorPanel(
-      failure: describeFailure(error ?? '未知错误'),
-      onRetry: onRetry,
+    // 重试在途时按"还没结果"处理：不弹错、也不把旧数据当结论。
+    if (error == null || value.isLoading) {
+      if (data != null) {
+        if (isEmpty?.call(data) ?? false) {
+          return empty ?? const DsEmpty(title: '这里还没有内容');
+        }
+        return builder(context, data);
+      }
+      return DsLoading(label: loadingLabel);
+    }
+    final DsFailure failure = describeFailure(error);
+    if (data == null) {
+      return DsErrorPanel(failure: failure, onRetry: onRetry);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: DsBanner(
+            kind: DsBannerKind.error,
+            text: '${failure.message}'
+                '${failure.hint == null ? '' : '\n怎么办：${failure.hint}'}'
+                '\n下面是上一次成功读到的内容。',
+            action: onRetry == null
+                ? null
+                : NeoButton(
+                    label: '重试',
+                    icon: Icons.refresh,
+                    kind: NeoButtonKind.primary,
+                    onPressed: onRetry,
+                  ),
+          ),
+        ),
+        Expanded(child: builder(context, data)),
+      ],
     );
   }
 }

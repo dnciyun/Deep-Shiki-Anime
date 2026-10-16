@@ -45,6 +45,7 @@ import 'queue_page.dart';
 import 'search_page.dart';
 import 'settings_page.dart';
 import 'widgets/brand_icon.dart';
+import 'widgets/feedback.dart';
 import 'widgets/neo.dart';
 
 class DsShell extends ConsumerStatefulWidget {
@@ -116,7 +117,19 @@ class _DsShellState extends ConsumerState<DsShell> {
     for (final QueueJobView j in jobs ?? const <QueueJobView>[]) {
       if (j.id == jobId) job = j;
     }
-    if (job == null) return;
+    if (job == null) {
+      // 第四十二轮 UX #49：这条任务已经不在了（用户先在队列页删掉、或这次启动前就
+      // 清理过），旧实现**直接 return** —— 点了系统通知什么都没发生，用户只会以为
+      // 应用卡了/通知坏了。说一句，并告诉他这条通知指的是哪一集。
+      if (!mounted) return;
+      showWarning(
+        context,
+        '这条通知对应的任务已经不在队列里了',
+        hint: '可能已经下完（去「已完成」看看）或被你移除过；'
+            '点通知只能打开还在队列里的任务',
+      );
+      return;
+    }
     await ref.read(playbackProvider.notifier).playItem(job.item);
     // 起播即弹播放窗口（用户 2026-10-10：只有弹窗播放），主窗口不切页。
   }
@@ -931,19 +944,13 @@ class _EnginePanel extends ConsumerWidget {
   /// 重启边车：复用**设置页那条真实链路**（`applySettings`），不另写一套启动逻辑。
   Future<void> _restart(BuildContext context, WidgetRef ref) async {
     final AppSettings settings = ref.read(settingsProvider);
-    try {
-      await ref.read(lifecyclePortProvider).applySettings(settings);
-      if (context.mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('边车已重启')));
-      }
-    } catch (error) {
-      final DsFailure failure = describeFailure(error);
-      if (context.mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(content: Text('重启失败：${failure.message}｜怎么办：${failure.hint ?? '—'}')),
-        );
-      }
-    }
+    // 第四十二轮 UX #14：这两条原来是自己拼的裸 SnackBar（与全仓那套"凸起面 + 左侧
+    // 语义色细条 + 图标 + 怎么办"不是一套），统一走 `feedback.dart`。
+    await runGuarded(
+      context,
+      action: () => ref.read(lifecyclePortProvider).applySettings(settings),
+      success: '边车已重启',
+    );
   }
 }
 
@@ -984,7 +991,7 @@ class _ResumePlayingRowState extends ConsumerState<_ResumePlayingRow> {
     final String message = !windowOpen
         ? '播放窗口已关闭：$title\n点一下重新打开并继续播放'
         : visible
-        ? '弹出播放窗口正在播放：$title\n点一下暂停 / 继续'
+        ? '弹出播放窗口正在播放：$title\n点一下暂停 / 继续\n右键可以彻底关闭它（把那扇窗的引擎一起释放）'
         : '播放器已收起（还在后台，引擎留着，唤回是秒开）：$title\n'
               '点一下唤回并继续播放\n右键可以彻底关闭它（把那扇窗的引擎一起释放）';
     final Color fg = visible ? t.success : (_hover ? t.text : t.text2);
@@ -1012,20 +1019,17 @@ class _ResumePlayingRowState extends ConsumerState<_ResumePlayingRow> {
           child: GestureDetector(
             key: dsResumePlayingKey,
             behavior: HitTestBehavior.opaque,
-            onTap: () {
-              if (visible) {
-                unawaited(ref.read(playbackProvider.notifier).pauseWindow());
-              } else {
-                // 收起/关掉之后点它：走"重新唤出并继续"那条真实路径
-                // （`open()` 会复用同一扇窗，子窗口收到播放请求会把自己 show 出来）。
-                unawaited(ref.read(playbackProvider.notifier).reopenPlayerWindow());
-              }
-            },
+            onTap: () => unawaited(_playRowTap(visible)),
             // 右键 = 彻底关闭（拆掉那扇窗、释放它那份内存）。
             // 为什么藏在这里：用户 2026-10-10 起明确要求界面上别再堆按钮，
             // 而"彻底关闭"是低频动作（默认关闭只是收起来，随时能秒开）。
-            onSecondaryTap: visible
-                ? () => unawaited(ref.read(playerWindowServiceProvider).destroy())
+            //
+            // 第四十二轮 UX #42：① 原来只在 `visible` 时才绑这个回调，而 tooltip
+            // 在**收起态**就已经承诺了"右键可以彻底关闭它" —— 承诺与行为对不上；
+            // ② 真能右键时它**没有二次确认**，一下就销毁窗口 + 释放引擎。
+            // 现在：只要这扇窗还在（含收起）就能右键，但会先问一句。
+            onSecondaryTap: windowOpen
+                ? () => unawaited(_confirmDestroyWindow())
                 : null,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -1053,5 +1057,57 @@ class _ResumePlayingRowState extends ConsumerState<_ResumePlayingRow> {
         ),
       ),
     );
+  }
+
+  /// 点这一行：在播 = 暂停，收起/关掉 = 唤回并继续。
+  ///
+  /// 第四十二轮 UX #9：两条路都会把失败写进 `playbackProvider.failure`
+  /// （`pauseWindow` / `reopenPlayerWindow`），而旧调用方从未读它 ——
+  /// 主窗口唯一的播放入口失败了却一声不响。这里补上"读完就报"。
+  Future<void> _playRowTap(bool visible) async {
+    final PlaybackController playback = ref.read(playbackProvider.notifier);
+    if (visible) {
+      await playback.pauseWindow();
+    } else {
+      // 收起/关掉之后点它：走"重新唤出并继续"那条真实路径
+      // （`open()` 会复用同一扇窗，子窗口收到播放请求会把自己 show 出来）。
+      await playback.reopenPlayerWindow();
+    }
+    if (!mounted) return;
+    final DsFailure? failure = ref.read(playbackProvider).failure;
+    if (failure != null) showFailure(context, failure);
+  }
+
+  /// 右键「彻底关闭」：先问一句（这一步会释放播放器引擎，不是"收起来"）。
+  Future<void> _confirmDestroyWindow() async {
+    if (!mounted) return;
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('彻底关闭播放窗口？'),
+        content: const Text(
+          '会把那扇窗连同它的播放器引擎一起释放。\n'
+          '默认的「关闭」只是收起来（随时秒开）—— 只有确定这一轮不看了才用这个。\n'
+          '正在播的会停；下载任务不受影响，进度都留着。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('彻底关闭'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await ref.read(playerWindowServiceProvider).destroy();
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      showFailure(context, describeFailure(error, stackTrace: stackTrace));
+    }
   }
 }

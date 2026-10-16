@@ -24,5 +24,16 @@ linter:
     # avoid_print: false  # Uncomment to disable the `avoid_print` rule
     # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
 
+    # ---- 第四十二轮加入：异步失败的静态守卫（docs/ROUND42-UX.md §2.2） -------------
+    # 本轮走查发现的 14 处「失败对用户完全不可见」，共同机制是**漏包 await / 漏接异常**；
+    # 而旧配置下这类漏网既不会报错、也发现不了（它们只掉进 main.dart 那个"白窗排查用"
+    # 的 stderr 通道）。下面两条 lint 就是补上这层守卫 —— 漏网点会直接在
+    # `flutter analyze` 里列出来，而不是等用户在界面上"点了没反应"才发现。
+    # * unawaited_futures：async 函数体里丢下一个 Future 不管（最常见的一种）；
+    # * discarded_futures：更严，连 void 回调里的 `() => _doAsync()` 也抓。
+    # 确认"故意不等"时，用 `unawaited(...)`（dart:async）显式写明意图。
+    unawaited_futures: true
+    discarded_futures: true
+
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

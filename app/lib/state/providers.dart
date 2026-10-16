@@ -15,6 +15,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/aggregate.dart';
+import '../domain/bangumi.dart';
 import '../domain/completed.dart';
 import '../domain/download_dir.dart' show effectiveDownloadDir;
 import '../domain/error_text.dart';
@@ -23,11 +24,17 @@ import '../domain/ports.dart';
 import '../domain/queue_sort.dart';
 import '../domain/reveal_in_explorer.dart';
 import '../domain/recycle_bin.dart';
+import '../domain/library_seed.dart';
 import '../domain/settings_effect.dart';
+import '../domain/subtitle_groups.dart';
 import '../domain/unavailable.dart';
 import '../theme/tokens.dart';
 import 'completed_covers.dart';
 import 'infra.dart';
+// ⚠️ `export` 不会把名字带进**本文件**的作用域：下面这段用到的 `schedulePortProvider`
+// 与 `librarySeedServiceProvider` 都要显式 import（虽然同一批文件也被 export 出去）。
+import 'library_seed_service.dart' show LibrarySeedService, librarySeedServiceProvider;
+import 'schedule_provider.dart' show schedulePortProvider;
 // 存储/支持目录/选择器/托盘/通知/磁盘探测都在 infra.dart；
 // 宿主侧持久化状态（继续观看、可清理标记）在 host_store.dart；
 // 主页（mikan 追番表）状态在 schedule_provider.dart；
@@ -39,6 +46,8 @@ export 'completed_covers.dart';
 export 'following_provider.dart';
 export 'host_store.dart';
 export 'infra.dart';
+// 动漫库「种子」块的宿主侧服务（第四十五轮：绑定落盘 + 番剧页 30 分钟缓存）。
+export 'library_seed_service.dart';
 export 'recommend_provider.dart';
 export 'schedule_provider.dart';
 export 'settings_guard.dart';
@@ -525,6 +534,40 @@ final StreamProvider<List<QueueJobView>> queueJobsProvider = StreamProvider<List
   (Ref ref) => ref.watch(queuePortProvider).watchJobs(),
 );
 
+/// 队列 / 引擎那两个流的**安全快照**（第四十五轮）。
+///
+/// ⚠️ 这两个流在**未装配**时是 `Stream.error(...)`（`UnavailableQueuePort.watchJobs` /
+/// `UnavailableEnginePort.watch` 都是"立即出错的流"），而 Riverpod 3 会给出错的服务排一条
+/// **自动重试**计时器 —— 组件测试里表现为「widget 树都拆了还有 Timer 在 pending」，
+/// 把**不相干**的既有用例打红（第四十五轮实测：动漫库详情页一挂上种子块，15 个用例当场红）。
+///
+/// 种子块里那两枚「在队列 / 已完成」只是**装饰性标记**：未接通时返回空表、**根本不订阅**，
+/// 等于"引擎没装就少一个标记"，而不是让一个装饰去惊动重试机制。
+final Provider<List<QueueJobView>> queueJobsSnapshotProvider =
+    Provider<List<QueueJobView>>((Ref ref) {
+  if (_isPlaceholderPort(ref.read(queuePortProvider))) {
+    return const <QueueJobView>[];
+  }
+  return ref.watch(queueJobsProvider).value ?? const <QueueJobView>[];
+});
+
+/// 同 [queueJobsSnapshotProvider]，给「已完成」那枚标记用。
+final Provider<List<EngineTorrentView>> engineTorrentsSnapshotProvider =
+    Provider<List<EngineTorrentView>>((Ref ref) {
+  if (_isPlaceholderPort(ref.read(enginePortProvider))) {
+    return const <EngineTorrentView>[];
+  }
+  return ref.watch(engineTorrentsProvider).value ?? const <EngineTorrentView>[];
+});
+
+/// 这个端口是不是**占位实现**（`main.dart` 没注入真端口）。
+///
+/// ⚠️ 判据是**精确类型相等**，不是 `is`：测试里的假端口常常**继承**占位实现（只覆盖
+/// 需要的那一个方法），用 `is` 会把它们也判成"未接通"，于是那些用例里的标记永远不显示。
+bool _isPlaceholderPort(Object port) =>
+    port.runtimeType == UnavailableQueuePort ||
+    port.runtimeType == UnavailableEnginePort;
+
 /// 队列统计（外壳徽标 + 队列页摘要）。
 ///
 /// [paused] 必须**单独一档**：用户 2026-10-11 报「队列里总是有东西」时，那条遗留任务
@@ -797,6 +840,16 @@ class SearchState {
   /// 聚合模式下**不勾**的源 id（真相；三颗 chip 与「源 N/M」面板都改它）。
   final Set<String> excludedSourceIds;
 
+  /// 字幕组筛选勾选的组（归一化 key；空 = 不限）。
+  ///
+  /// **第四十五轮**（用户：「在搜索中加入字幕组筛选」，并选定了口径）：
+  /// * 只在**客户端**筛已经取到的池子，**不进请求**（源站对字幕组的支持度天差地别：
+  ///   dmhy 有分类、bangumi.moe 有 team 接口、mikan 只能靠标题解析、acgnx 混在 author 里）；
+  /// * 多选 = **并集**（勾桜都 + LoliHouse = 两家的都显示）。交集是说不通的：一条结果
+  ///   属于一个字幕组，取交集必然空集；
+  /// * 它是**池子级**的：页码、页数、`items` 全部按筛选后的条数算（见 [visible]）。
+  final Set<String> groupFilter;
+
   /// 部分源失败的警告文案（聚合才有；null = 没有失败或不是聚合）。
   ///
   /// 与 [failure] 分工：整轮一条都没取到 → [failure]（整页错误面板）；
@@ -827,6 +880,11 @@ class SearchState {
   final bool loadingPage;
   final bool loaded;
   final bool fromCache;
+
+  /// 上面这份缓存是**过期回落**来的（= 网络那一步真的失败过）。
+  /// 新鲜命中（TTL 内）为 false —— 那种情况下**根本没发网络请求**，
+  /// 界面不许报「网络抓取失败」（第四十二轮 UX #10）。
+  final bool staleFallback;
   final DateTime? fetchedAt;
   final DsFailure? failure;
 
@@ -836,6 +894,7 @@ class SearchState {
     this.mode = SearchMode.aggregate,
     this.scope,
     this.excludedSourceIds = const <String>{},
+    this.groupFilter = const <String>{},
     this.aggregateWarning,
     this.fetched = const <SourceItemView>[],
     this.page = 1,
@@ -845,12 +904,28 @@ class SearchState {
     this.loadingPage = false,
     this.loaded = false,
     this.fromCache = false,
+    this.staleFallback = false,
     this.fetchedAt,
     this.failure,
   });
 
+  /// 筛选后的池子（[groupFilter] 为空时**就是** [fetched]，零开销）。
+  ///
+  /// 第四十五轮：字幕组筛选是**池子级**的 —— 页码、页数、当前窗口全部按它算。
+  /// 为什么不做成"只隐藏行"：那样会出现「第 1 页 0 条，页码条却说还有 3 页」这种
+  /// 自相矛盾的画面（用户第四十五轮选定：池子级 + 不够一页自动续拉）。
+  List<SourceItemView> get visible => groupFilter.isEmpty
+      ? fetched
+      : <SourceItemView>[
+          for (final SourceItemView item in fetched)
+            if (itemMatchesSubtitleGroups(item, groupFilter)) item,
+        ];
+
+  /// 字幕组筛选开着（chip 高亮、结果区提示行、空态文案都看它）。
+  bool get filtering => groupFilter.isNotEmpty;
+
   /// 当前显示页的 20 条窗口。
-  List<SourceItemView> get items => searchPageSlice(fetched, page);
+  List<SourceItemView> get items => searchPageSlice(visible, page);
 
   /// 已知/可推断的总页数。
   ///
@@ -860,7 +935,7 @@ class SearchState {
   ///   绝不能假装知道确切数字，否则页码条会骗人）；
   /// * 一条都没有 → 至少 1 页（"第 1 / 1 页"比"第 1 / 0 页"更像人话）。
   int get pageCount {
-    final int loadedPages = (fetched.length + kSearchPageSize - 1) ~/ kSearchPageSize;
+    final int loadedPages = (visible.length + kSearchPageSize - 1) ~/ kSearchPageSize;
     if (hasMoreSource) return loadedPages + 1;
     return loadedPages < 1 ? 1 : loadedPages;
   }
@@ -872,6 +947,13 @@ class SearchState {
   bool get canGoNext => page < pageCount;
 
   bool get isEmpty => loaded && fetched.isEmpty && failure == null;
+
+  /// 池子里**有**东西，但勾的字幕组一条都没命中（第四十五轮）。
+  ///
+  /// 与 [isEmpty] 分开：那是"这次搜索源那边就没有结果"，这里是"这批结果里没有你要的组"
+  /// —— 两句提示给的动作完全不同（前者换关键字，后者清筛选或继续加载更多）。
+  bool get emptyAfterFilter =>
+      loaded && fetched.isNotEmpty && visible.isEmpty && failure == null;
 
   SearchState copyWith({
     String? sourceId,
@@ -885,6 +967,7 @@ class SearchState {
     /// 等于界面上说了假话。
     bool clearScope = false,
     Set<String>? excludedSourceIds,
+    Set<String>? groupFilter,
     String? aggregateWarning,
     bool clearAggregateWarning = false,
     List<SourceItemView>? fetched,
@@ -895,6 +978,7 @@ class SearchState {
     bool? loadingPage,
     bool? loaded,
     bool? fromCache,
+    bool? staleFallback,
     DateTime? fetchedAt,
     DsFailure? failure,
     bool clearFailure = false,
@@ -904,6 +988,7 @@ class SearchState {
     mode: mode ?? this.mode,
     scope: clearScope ? null : (scope ?? this.scope),
     excludedSourceIds: excludedSourceIds ?? this.excludedSourceIds,
+    groupFilter: groupFilter ?? this.groupFilter,
     aggregateWarning:
         clearAggregateWarning ? null : (aggregateWarning ?? this.aggregateWarning),
     fetched: fetched ?? this.fetched,
@@ -914,6 +999,7 @@ class SearchState {
     loadingPage: loadingPage ?? this.loadingPage,
     loaded: loaded ?? this.loaded,
     fromCache: fromCache ?? this.fromCache,
+    staleFallback: staleFallback ?? this.staleFallback,
     fetchedAt: fetchedAt ?? this.fetchedAt,
     failure: clearFailure ? null : (failure ?? this.failure),
   );
@@ -964,6 +1050,8 @@ class SearchQueryController extends Notifier<SearchState> {
       mode: settings.searchMode,
       excludedSourceIds: excluded,
       scope: activeScopePreset(sources, excluded),
+      // 第四十五轮：字幕组筛选**落盘记住**（用户选定「和源勾选一个待遇」）。
+      groupFilter: settings.subtitleGroupFilter.toSet(),
     );
   }
 
@@ -981,6 +1069,9 @@ class SearchQueryController extends Notifier<SearchState> {
       mode: state.mode,
       scope: state.scope,
       excludedSourceIds: state.excludedSourceIds,
+      // setSource/setMode 是**新建** state（不是 copyWith），新字段忘了传就会被静默重置
+      // ——`groupFilter` 是第四十五轮加的，必须显式带上（否则换一次源筛选就没了）。
+      groupFilter: state.groupFilter,
     );
     if (hadResults) unawaited(refresh());
   }
@@ -997,6 +1088,7 @@ class SearchQueryController extends Notifier<SearchState> {
       mode: mode,
       scope: state.scope,
       excludedSourceIds: state.excludedSourceIds,
+      groupFilter: state.groupFilter, // 同上：新建 state 必须显式带上
     );
     if (hadResults) unawaited(refresh());
   }
@@ -1083,11 +1175,151 @@ class SearchQueryController extends Notifier<SearchState> {
     state = state.copyWith(keyword: keyword);
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // 字幕组筛选（第四十五轮）
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /// 勾/取消一个字幕组（面板里那一排开关）。多选 = **并集**。
+  void toggleGroup(String key) {
+    final Set<String> next = <String>{...state.groupFilter};
+    if (!next.remove(key)) next.add(key);
+    setGroupFilter(next);
+  }
+
+  /// 改字幕组筛选（唯一入口）：改 state → 回第 1 页 → **不够一页就自动续拉** → 落盘。
+  ///
+  /// 为什么切筛选要回第 1 页：页码与页数都按**筛选后**的池子算（[SearchState.visible]），
+  /// 停在第 5 页而筛选后只剩 2 页，页码条会当场撒谎。
+  ///
+  /// 为什么自动续拉：用户第四十五轮选的是「池子级 + 不够一页就自动去源站续拉」。
+  /// 拉取上限**复用现有的** `maxSourceFetchesPerNav` / `maxAggregateFetchesPerNav`
+  /// —— 点一下不是"无限要"，用完了还有「继续加载更多结果」那颗按钮（[loadMoreForFilter]）。
+  void setGroupFilter(Set<String> groupFilter) {
+    if (_sameIds(groupFilter, state.groupFilter)) return;
+    state = state.copyWith(groupFilter: <String>{...groupFilter}, page: 1);
+    unawaited(_persistGroupFilter(groupFilter));
+    if (groupFilter.isNotEmpty) unawaited(_rememberGroups(groupFilter));
+    unawaited(refillForFilter());
+  }
+
+  /// 清空筛选（面板里的「全清」、空态里的「清空筛选」）。
+  void clearGroupFilter() => setGroupFilter(const <String>{});
+
+  /// 让**当前页**在筛选后重新填满：向源续拉，直到够一页或用完这一轮的上限。
+  ///
+  /// 与 [goToPage] 的区别：不改目标页，也不受 `target == state.page` 那道闸门挡
+  /// （筛选变化后"再来一轮"的目标正好就是当前页，走 [goToPage] 会被它直接吞掉）。
+  ///
+  /// [force] = true 时跳过"已经够一页了"这一步（[loadMoreForFilter] 用）。
+  Future<void> refillForFilter({bool force = false}) async {
+    if (!state.loaded) return;
+    if (state.loading || state.loadingPage) return;
+    if (!force && state.visible.length >= kSearchPageSize) return;
+    if (!state.hasMoreSource) return;
+    final int generation = _requestId;
+    state = state.copyWith(loadingPage: true, clearFailure: true);
+    final DsFailure? failure = await _fillForPage(state.page, generation: generation);
+    if (!ref.mounted) return;
+    if (_stale(generation)) return; // 新一轮接管了，收尾交给它
+    state = state.copyWith(
+      loadingPage: false,
+      failure: failure,
+      clearFailure: failure == null,
+    );
+  }
+
+  /// 空态里那颗「继续加载更多结果」：**明知**上一轮已经用完上限，也再拉一轮。
+  ///
+  /// 为什么允许越过"用完了"：那是用户**明确要求**再要一点，和他点下一页是同一件事；
+  /// 挡住它只会让人以为"网络坏了"。每一轮仍然受同样的上限保护（点一次最多 8/3 轮）。
+  Future<void> loadMoreForFilter() => refillForFilter(force: true);
+
+  /// 落盘（排序后写，理由同 [_persistExclusions]）。
+  Future<void> _persistGroupFilter(Set<String> groupFilter) async {
+    final List<String> sorted = groupFilter.toList()..sort();
+    try {
+      await ref.read(settingsProvider.notifier).patch(
+        (AppSettings s) => s.copyWith(subtitleGroupFilter: sorted),
+      );
+    } catch (_) {
+      // 静默：勾选已经在 state 里生效了，最坏就是"这次没记住"。
+    }
+  }
+
+  /// 把刚勾的组记进「最近用过」（新的在前，最多 [kRecentSubtitleGroupLimit] 个）。
+  ///
+  /// 只记 key：展示名在渲染时从预置表 / 本批结果里取，存名字反而会过期
+  /// （同一个组的原始写法在不同源上都不一样）。
+  Future<void> _rememberGroups(Set<String> picked) async {
+    final List<String> current = ref.read(settingsProvider).recentSubtitleGroups;
+    final List<String> next = <String>[
+      ...picked,
+      for (final String key in current)
+        if (!picked.contains(key)) key,
+    ];
+    final List<String> trimmed = next.length > kRecentSubtitleGroupLimit
+        ? next.sublist(0, kRecentSubtitleGroupLimit)
+        : next;
+    if (_sameList(trimmed, current)) return;
+    try {
+      await ref.read(settingsProvider.notifier).patch(
+        (AppSettings s) => s.copyWith(recentSubtitleGroups: trimmed),
+      );
+    } catch (_) {
+      // 静默：这只是排序用的记忆，失败不影响筛选本身。
+    }
+  }
+
+  static bool _sameList(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 并发守卫（第四十二轮 UX #6）
+  // ───────────────────────────────────────────────────────────────────────────
+  //
+  // 搜索的形状是"发请求 → 等回来 → 把结果写进 state"，中间用户完全可以改词/换源。
+  // 旧实现两个毛病：
+  // ① `refresh()` 开头 `if (state.loading) return;` —— 加载中提交的新查询被**整个吞掉**
+  //    （用户按了回车，界面纹丝不动、也不报错）；
+  // ② 没有任何序号校验 —— 在飞的旧请求回来时写的是**当前** state，于是旧源（或旧词）
+  //    的那 20 条会挂到新源名下，用户看到的是"换了源但结果没变"。
+  //
+  // 现在：`_requestId` 是"哪一轮算数"的唯一真相（照 `library_provider` 的 `_requestId`
+  // 范式）；`_inflightKey` 只用来挡**同一个意图**被重复触发（源下拉曾经一次选择打两次
+  // 网络）。**判据是意图，不是"正在加载"** —— 意图变了就必须放行。
+
+  /// 当前算数的那一轮取数。每次 [refresh] 自增；旧一轮的回应一律丢弃。
+  int _requestId = 0;
+
+  /// 正在路上的那一轮的"意图指纹"。
+  String? _inflightKey;
+
+  /// 意图指纹 = 模式 + 源 + 关键字 + 勾选（这四样决定"要问谁、问什么"）。
+  String _intentKey() {
+    final List<String> excluded = state.excludedSourceIds.toList()..sort();
+    return '${state.mode.name}|${state.sourceId}|${state.keyword.trim()}|'
+        '${excluded.join(',')}';
+  }
+
+  /// 这一轮的回应还算数吗（`generation == null` = 不校验，给内部调用用）。
+  bool _stale(int? generation) =>
+      generation != null && generation != _requestId;
+
   /// 关键字提交（回车/按钮）：清空池子，从源的原始第 1 页重来。
   Future<void> refresh() async {
-    // 挡并发重复刷新：源下拉的 onChanged 是「setSource 自带一次刷新 + 显式再刷新」，
-    // 不挡就会为同一次选择打两次网络（旧实现就是这样）。
-    if (state.loading) return;
+    // 挡**同一个意图**的重复刷新：源下拉的 onChanged 是「setSource 自带一次刷新 +
+    // 显式再刷新」，不挡就会为同一次选择打两次网络（旧实现就是这样）。
+    // ⚠️ 不能退回成"加载中就 return"：加载中改了词/换了源是一个**新意图**，
+    // 那样会被吞掉（第四十二轮 UX #6）。
+    final String key = _intentKey();
+    if (state.loading && key == _inflightKey) return;
+    _inflightKey = key;
+    final int generation = ++_requestId;
     state = state.copyWith(
       loading: true,
       loadingPage: false,
@@ -1099,8 +1331,11 @@ class SearchQueryController extends Notifier<SearchState> {
       clearFailure: true,
       clearAggregateWarning: true,
     );
-    final DsFailure? failure = await _fetchSourcePage(1);
+    final DsFailure? failure = await _fetchSourcePage(1, generation: generation);
     if (!ref.mounted) return;
+    // 过期回应：这一轮的池子早被新一轮换掉了，写回去就是"旧结果挂到新源名下"。
+    // 收尾（loading 归位）交给还在路上的那一轮，别抢。
+    if (_stale(generation)) return;
     state = state.copyWith(
       loading: false,
       loadingPage: false,
@@ -1117,16 +1352,44 @@ class SearchQueryController extends Notifier<SearchState> {
   Future<void> goToPage(int target) async {
     if (state.loading || state.loadingPage) return;
     if (target == state.page || target < 1 || target > state.pageCount) return;
+    await _goToPage(target);
+  }
+
+  /// 上一次翻页**想去**的那一页（失败横幅上的「重试」照它再走一遍）。
+  int? _lastPageTarget;
+
+  /// 重试上一次失败的翻页（第四十二轮 UX #21）。
+  ///
+  /// 旧实现翻页失败只在表格上方留一条**纯文本**横幅、没有任何动作 —— 用户唯一
+  /// 的出路是猜"再点一次那个页码"，而 `goToPage` 的 `target == state.page` 闸门
+  /// 在"池子凑不出这一页"这类情形下正好会把它吞掉（点了没反应，原地打转）。
+  /// 这里**绕开那个闸门**：用户点的是"再来一次"，目标是不是当前页无所谓。
+  ///
+  /// 没有翻页目标（整轮刷新失败）时退回 [refresh]。
+  Future<void> retryFailedPage() async {
+    final int? target = _lastPageTarget;
+    if (target == null) return refresh();
+    if (state.loading || state.loadingPage) return;
+    await _goToPage(target);
+  }
+
+  Future<void> _goToPage(int target) async {
+    _lastPageTarget = target;
+    // 记下"我属于哪一轮"：翻页途中用户换了词/源（`refresh()` 会 ++），
+    // 那这一轮的收尾就**不许**再写 state —— 否则它会拿旧池子的结论覆盖新一轮
+    // （第四十二轮 UX #6）。
+    final int generation = _requestId;
     state = state.copyWith(loadingPage: true, clearFailure: true);
-    final DsFailure? failure = await _fillForPage(target);
+    final DsFailure? failure = await _fillForPage(target, generation: generation);
     if (!ref.mounted) return;
+    if (_stale(generation)) return; // 新一轮接管了，收尾交给它
     if (failure != null) {
       // 取数失败就**留在原页**：已经拿到的那一页结果不该被一次翻页失败清掉，
-      // 只在底部/表格上方说明原因（页池没变，重试仍是点同一个页码）。
+      // 只在底部/表格上方说明原因（横幅上那颗「重试」就是再走一遍这里）。
       state = state.copyWith(loadingPage: false, failure: failure);
       return;
     }
-    if (searchPageSlice(state.fetched, target).isEmpty) {
+    if (searchPageSlice(state.visible, target).isEmpty) {
       // 池子还是凑不出这一页。两种原因要分开说，否则用户会照着一个错的提示去排查：
       // * 源已经明确到底了（`hasMoreSource` 现在为假）→ 就是没有更多结果；
       // * 源嘴上还说"有"但给不出（或撞上了续拉上限）→ 是源那边抽风/每页太少，可重试。
@@ -1146,20 +1409,28 @@ class SearchQueryController extends Notifier<SearchState> {
   }
 
   /// 让池子至少能切出第 [target] 页；只有不够 + 源还有更多时才真的发请求。
-  Future<DsFailure?> _fillForPage(int target) async {
+  ///
+  /// ⚠️ 第四十五轮起这里量的是**筛选后**的 [SearchState.visible] 而不是 `fetched`：
+  /// 开了字幕组筛选时，"这一页够不够 20 条"必须按**看得到的**条数算，否则点一次筛选
+  /// 会得到"半页结果 + 源那边明明还有"的僵局。筛选为空时 `visible == fetched`，
+  /// 行为与改造前完全一致。
+  Future<DsFailure?> _fillForPage(int target, {int? generation}) async {
     final int needed = target * kSearchPageSize;
     // 聚合一轮 = 向每个源各要一页，上限要小得多（见 maxAggregateFetchesPerNav）。
     final int cap = state.mode == SearchMode.aggregate
         ? maxAggregateFetchesPerNav
         : maxSourceFetchesPerNav;
     int fetchedPages = 0;
-    while (state.fetched.length < needed && state.hasMoreSource) {
+    while (state.visible.length < needed && state.hasMoreSource) {
       if (fetchedPages >= cap) break;
-      final int before = state.fetched.length;
-      final DsFailure? failure = await _fetchSourcePage(state.sourcePage + 1);
+      final int before = state.visible.length;
+      final DsFailure? failure =
+          await _fetchSourcePage(state.sourcePage + 1, generation: generation);
+      if (_stale(generation)) return null; // 这一轮已经被新一轮换掉了
       if (failure != null) return failure;
-      // 这一页全是重复条目（或空页）：再往下拉也是同一批，停手，别空转。
-      if (state.fetched.length == before) break;
+      // 这一页既没有新条目、也没有任何一条命中筛选：再往下拉也是同一批，停手，别空转。
+      // （筛选开着时这一条尤其重要：源页可能整页都是别的字幕组，白拉 8 轮太贵。）
+      if (state.visible.length == before) break;
       fetchedPages++;
     }
     return null;
@@ -1171,16 +1442,19 @@ class SearchQueryController extends Notifier<SearchState> {
   /// （已归一化成 [DsFailure]）。**不在这里写 state.failure**：整轮刷新与翻页对
   /// 同一个失败的呈现方式不同，由调用方决定。
   ///
+  /// [generation] = 调用方那一轮的序号：写 state 之前会核对，过期就直接丢掉
+  /// （第四十二轮 UX #6，理由见 [_requestId]）。
+  ///
   /// 第 14 轮起按 [SearchState.mode] 分两条路：单独源 = 原来那条；聚合 = 把这一档的
   /// 源全部问一遍（见 [_fetchAggregatePage]）。
-  Future<DsFailure?> _fetchSourcePage(int sourcePage) {
+  Future<DsFailure?> _fetchSourcePage(int sourcePage, {int? generation}) {
     if (state.mode == SearchMode.aggregate) {
-      return _fetchAggregatePage(sourcePage);
+      return _fetchAggregatePage(sourcePage, generation: generation);
     }
-    return _fetchSingleSourcePage(sourcePage);
+    return _fetchSingleSourcePage(sourcePage, generation: generation);
   }
 
-  Future<DsFailure?> _fetchSingleSourcePage(int sourcePage) async {
+  Future<DsFailure?> _fetchSingleSourcePage(int sourcePage, {int? generation}) async {
     final SourcePort port = ref.read(sourcePortProvider);
     final String sourceId = state.sourceId;
     final String keyword = state.keyword.trim();
@@ -1189,11 +1463,13 @@ class SearchQueryController extends Notifier<SearchState> {
           ? await port.latest(sourceId, page: sourcePage)
           : await port.search(sourceId, keyword, page: sourcePage);
       if (!ref.mounted) return null;
+      if (_stale(generation)) return null;
       state = state.copyWith(
         fetched: searchAppendItems(state.fetched, result.items),
         sourcePage: sourcePage,
         hasMoreSource: result.hasNext,
         fromCache: result.fromCache,
+        staleFallback: result.staleFallback,
         fetchedAt: result.fetchedAt,
         clearAggregateWarning: true,
       );
@@ -1222,7 +1498,7 @@ class SearchQueryController extends Notifier<SearchState> {
   /// * **部分源失败** → 结果照常显示，只在 [SearchState.aggregateWarning] 里点名
   ///   是哪几个源、为什么（静默跳过会让用户以为"聚合了全部源"）；
   /// * **全部失败** → 返回 [DsFailure]，让调用方按整页错误处理。
-  Future<DsFailure?> _fetchAggregatePage(int sourcePage) async {
+  Future<DsFailure?> _fetchAggregatePage(int sourcePage, {int? generation}) async {
     final List<SourceOption> targets = aggregateSources();
     if (targets.isEmpty) {
       // 正常情况下到不了这里：面板不允许把源取消到一个不剩（第一轮问答），
@@ -1235,6 +1511,8 @@ class SearchQueryController extends Notifier<SearchState> {
     }
     final List<AggregateSourceResult> results = await _fanOut(targets, sourcePage);
     if (!ref.mounted) return null;
+    // 过期回应：新一轮（换了源/词）已经接管，别把这一批并进它的池子。
+    if (_stale(generation)) return null;
 
     final List<SourceItemView> incoming = <SourceItemView>[
       for (final AggregateSourceResult r in results) ...r.items,
@@ -1250,6 +1528,7 @@ class SearchQueryController extends Notifier<SearchState> {
       sourcePage: sourcePage,
       hasMoreSource: results.any((AggregateSourceResult r) => r.hasNext && r.ok),
       fromCache: results.any((AggregateSourceResult r) => r.fromCache),
+      staleFallback: results.any((AggregateSourceResult r) => r.staleFallback),
       fetchedAt: _newestFetchedAt(results) ?? state.fetchedAt,
       aggregateWarning: warning.isEmpty ? null : warning,
       clearAggregateWarning: warning.isEmpty,
@@ -1311,6 +1590,7 @@ class SearchQueryController extends Notifier<SearchState> {
         items: List<SourceItemView>.unmodifiable(page.items),
         hasNext: page.hasNext,
         fromCache: page.fromCache,
+        staleFallback: page.staleFallback,
         fetchedAt: page.fetchedAt,
       );
     } on TimeoutException {
@@ -1432,3 +1712,721 @@ final NotifierProvider<CompletedCoverController, CompletedCoverState> completedC
 /// 还救得回来，但也不能在组件测试里真删用户的文件），必须有注入缝。
 final Provider<RecycleToTrash> recycleBinProvider =
     Provider<RecycleToTrash>((Ref ref) => moveToRecycleBin);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 动漫库「种子」（第四十五轮）
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 用户原话：「能实现动漫库中直接显示种子吗，就像主页那样」——主页卡片点进去那页
+// （`ui/bangumi_detail.dart`）就是「按字幕组列剧集 + 每集磁力」，所以这里复刻的是**那份数据**。
+//
+// 整条链路上唯一的硬骨头：**Bangumi 的条目 id 与 mikan 的番剧 id 是两套 id**，
+// 之间没有映射表，只能按番名搜出来（`domain/library_seed.dart` 的库注释详述了实测口径：
+// mikan 搜索整串匹配不分词、搜索页行里没有番剧链接、番剧页才带标题回验）。
+// 搜出来的对应关系**落盘记住**，所以这件事一部番一辈子只做一次。
+
+/// 种子块一屏先显示几条（「显示更多」每次再加这么多）。
+const int kSeedVisibleStep = 20;
+
+/// 种子块正在做哪一段（用户第四十五轮选定「两段式文案」）。
+enum LibrarySeedPhase {
+  /// 还没开始（页面刚挂载，`ensure` 之前）。
+  idle,
+
+  /// 第一段：正在 mikan 找这一部（搜番名 + 认番剧页）。
+  searching,
+
+  /// 第二段：番剧页认出来了，正在取字幕组与剧集。
+  fetching,
+
+  /// 有候选但**拿不准**（多个候选同分，或没有一个像同一部）→ 列出来让用户点。
+  needsPick,
+
+  /// 有结果了（mikan 番剧页，或聚合兜底）。
+  ready,
+
+  /// 空 / 坏：具体看 [LibrarySeedState.problem]。
+  failed,
+}
+
+/// 「空」与「坏」要分开说（用户第四十五轮选定：三种空分开写、各给对应动作）。
+enum LibrarySeedProblem {
+  none,
+
+  /// mikan 搜不到这一部（或候选都不像同一部）。实测这条路的成功率**只有 62%**。
+  mikanNotFound,
+
+  /// 找到了番剧页，但里面一集可下的磁力都没有。
+  noMagnet,
+
+  /// 聚合兜底也没搜到 —— 冷门番常见（实测有 4 部番在 5 个源上几乎全 0 行，
+  /// 那不是"搜坏了"，是真没人做）。
+  allSourcesEmpty,
+
+  /// 请求失败（网络 / 源站错误）。
+  network,
+
+  /// 用户粘进来的东西里没有番剧 id。
+  badInput,
+}
+
+/// 动漫库详细页「种子」块的状态。
+@immutable
+class LibrarySeedState {
+  const LibrarySeedState({
+    this.subjectId,
+    this.phase = LibrarySeedPhase.idle,
+    this.query,
+    this.binding,
+    this.detail,
+    this.episodes = const <SourceItemView>[],
+    this.candidates = const <MikanSeedCandidate>[],
+    this.fromAggregate = false,
+    this.visible = kSeedVisibleStep,
+    this.problem = LibrarySeedProblem.none,
+    this.failure,
+    this.warning,
+    this.bindingStale = false,
+    this.userQuery = false,
+  });
+
+  /// 这份状态属于哪条条目（换条目时页面据此丢弃旧数据）。
+  final int? subjectId;
+
+  final LibrarySeedPhase phase;
+
+  /// 这一轮**实际用的**查询词（用户第四十五轮：「块上显示实际用的词」）。
+  final String? query;
+
+  /// 「这条条目 ↔ mikan 番剧页」的绑定（认出来之后就有）。
+  final MikanSeedBinding? binding;
+
+  /// mikan 番剧页（含字幕组列表）；聚合兜底时为 null。
+  final BangumiDetailView? detail;
+
+  /// 种子（按发布时间新→旧；缺时间的沉底）。
+  final List<SourceItemView> episodes;
+
+  /// 拿不准时列出来的候选番剧页。
+  final List<MikanSeedCandidate> candidates;
+
+  /// 这批结果是**聚合兜底**搜来的（不是 mikan 番剧页）。
+  final bool fromAggregate;
+
+  /// 现在露出几条（「显示更多」加它）。
+  final int visible;
+  final LibrarySeedProblem problem;
+  final DsFailure? failure;
+
+  /// 聚合兜底时"哪几个源没回来"（部分失败照常出结果，但要说明）。
+  final String? warning;
+
+  /// 落盘的那份映射取不回来了（404 / 网络），提示用户改绑。
+  final bool bindingStale;
+
+  /// [query] 是**用户手打**的词（而不是阶梯里自动退让到的那一级）。
+  ///
+  /// 为什么要分：阶梯跑完时 [query] 停在**最后一级**（最不像的那个词），而"用其他源再搜
+  /// 一次"该拿的是**第一级**（中文名，实测跨源命中率最高）；只有用户自己打的词才优先。
+  final bool userQuery;
+
+  bool get loading =>
+      phase == LibrarySeedPhase.searching || phase == LibrarySeedPhase.fetching;
+
+  /// 现在该显示的 20 条窗口。
+  List<SourceItemView> get shown => visible >= episodes.length
+      ? episodes
+      : episodes.sublist(0, visible);
+
+  /// 还有几条没露出来（0 = 「显示更多」该消失）。
+  int get remaining => episodes.length - shown.length;
+
+  /// 实际用的词（没搜过时为 null）。
+  String? get word {
+    final String text = (query ?? binding?.query ?? '').trim();
+    return text.isEmpty ? null : text;
+  }
+
+  /// mikan 番剧页的字幕组名（聚合兜底时为空）。
+  List<String> get groupNames => detail?.groupNames ?? const <String>[];
+
+  LibrarySeedState copyWith({
+    int? subjectId,
+    LibrarySeedPhase? phase,
+    String? query,
+    MikanSeedBinding? binding,
+    BangumiDetailView? detail,
+    bool clearDetail = false,
+    List<SourceItemView>? episodes,
+    List<MikanSeedCandidate>? candidates,
+    bool? fromAggregate,
+    int? visible,
+    LibrarySeedProblem? problem,
+    DsFailure? failure,
+    bool clearFailure = false,
+    String? warning,
+    bool clearWarning = false,
+    bool? bindingStale,
+    bool? userQuery,
+  }) => LibrarySeedState(
+    subjectId: subjectId ?? this.subjectId,
+    phase: phase ?? this.phase,
+    query: query ?? this.query,
+    binding: binding ?? this.binding,
+    detail: clearDetail ? null : (detail ?? this.detail),
+    episodes: episodes ?? this.episodes,
+    candidates: candidates ?? this.candidates,
+    fromAggregate: fromAggregate ?? this.fromAggregate,
+    visible: visible ?? this.visible,
+    problem: problem ?? this.problem,
+    failure: clearFailure ? null : (failure ?? this.failure),
+    warning: clearWarning ? null : (warning ?? this.warning),
+    bindingStale: bindingStale ?? this.bindingStale,
+    userQuery: userQuery ?? this.userQuery,
+  );
+}
+
+/// 种子块的控制器（单例，不按 subject 开 family）。
+///
+/// 为什么不开 family：解析需要**整个 [BangumiSubject]**（要中文名/原名/别名拼查询词），
+/// 而 family 的键只能是可比较的值；详情页同一时刻只开一条，用 [ensure] 换条目更直接。
+/// 换条目时靠 [LibrarySeedState.subjectId] 判定"这份数据是不是我的"（页面渲染前先比）。
+class LibrarySeedController extends Notifier<LibrarySeedState> {
+  BangumiSubject? _subject;
+  int _run = 0;
+
+  @override
+  LibrarySeedState build() => const LibrarySeedState();
+
+  /// 页面挂载/换条目时调：同一条条目已经解析过就不重复打网络。
+  void ensure(BangumiSubject subject) {
+    _subject = subject;
+    if (state.subjectId == subject.id && state.phase != LibrarySeedPhase.idle) return;
+    unawaited(resolve(subject));
+  }
+
+  /// 解析：先看落盘的绑定（再走 30 分钟缓存），没有才按番名逐级搜。
+  Future<void> resolve(BangumiSubject subject, {bool force = false}) async {
+    _subject = subject;
+    final LibrarySeedService service = ref.read(librarySeedServiceProvider);
+    final int run = ++_run;
+    final MikanSeedBinding? remembered = force ? null : service.bindingFor(subject.id);
+    state = LibrarySeedState(
+      subjectId: subject.id,
+      phase: remembered == null
+          ? LibrarySeedPhase.searching
+          : LibrarySeedPhase.fetching,
+      query: remembered?.query,
+      binding: remembered,
+    );
+
+    if (remembered != null) {
+      final BangumiDetailView? hit = service.cachedDetail(remembered.bangumiId);
+      if (hit != null) {
+        _applyDetail(subject, remembered, hit, run);
+        return;
+      }
+      try {
+        final BangumiDetailView detail = await ref
+            .read(schedulePortProvider)
+            .bangumi(remembered.bangumiId);
+        if (_stale(run)) return;
+        if (seedTitleScore(detail.displayTitle, _seedNamesOf(subject)) >= 60) {
+          service.putDetail(remembered.bangumiId, detail);
+          _applyDetail(subject, remembered, detail, run);
+          return;
+        }
+        // 站点把这一页换掉了（同一 id 变成别的番）：绑定作废，重新按番名找。
+        await service.forgetBinding(subject.id);
+        if (_stale(run)) return;
+      } catch (error, stackTrace) {
+        if (_stale(run)) return;
+        // 用户第四十五轮选定：映射失效（404 / 被删）**自动重搜一次**；
+        // 重搜也找不到时，`_resolveByNames` 会按"网络失败"报出来（而不是静默空着）。
+        await service.forgetBinding(subject.id);
+        if (_stale(run)) return;
+        final DsFailure failure = describeFailure(error, stackTrace: stackTrace);
+        await _resolveByNames(subject, run, networkFailure: failure);
+        return;
+      }
+    }
+    await _resolveByNames(subject, run);
+  }
+
+  /// 「重新搜一次」（绕开 30 分钟缓存与落盘绑定）。
+  Future<void> retry() async {
+    final BangumiSubject? subject = _subject;
+    if (subject == null) return;
+    await resolve(subject, force: true);
+  }
+
+  /// 「改搜索词重搜」：只试用户手打的这一个词（失败就说清原因，不静默换词）。
+  Future<void> useQuery(BangumiSubject subject, String query) async {
+    _subject = subject;
+    final String word = query.trim();
+    if (word.isEmpty) return;
+    final int run = ++_run;
+    state = state.copyWith(
+      subjectId: subject.id,
+      phase: LibrarySeedPhase.searching,
+      query: word,
+      candidates: const <MikanSeedCandidate>[],
+      problem: LibrarySeedProblem.none,
+      clearFailure: true,
+      fromAggregate: false,
+      bindingStale: false,
+      userQuery: true,
+    );
+    await _resolveByNames(subject, run, onlyQueries: <String>[word]);
+  }
+
+  /// 点了候选番剧页之一（拿不准时列出来的那些）。
+  Future<void> pickCandidate(
+    BangumiSubject subject,
+    MikanSeedCandidate candidate,
+  ) async {
+    _subject = subject;
+    final int run = ++_run;
+    await _bind(
+      subject,
+      MikanSeedBinding(
+        bangumiId: candidate.bangumiId,
+        title: candidate.title,
+        query: candidate.query,
+      ),
+      run,
+    );
+  }
+
+  /// 直接粘 mikan 链接 / id 绑定。
+  Future<void> bindRaw(BangumiSubject subject, String raw) async {
+    final String? id = parseMikanBangumiId(raw);
+    _subject = subject;
+    if (id == null) {
+      state = state.copyWith(
+        subjectId: subject.id,
+        phase: LibrarySeedPhase.failed,
+        problem: LibrarySeedProblem.badInput,
+        failure: const DsFailure(
+          '这一串里没有 mikan 番剧 id',
+          hint: '粘 `https://mikanani.me/Home/Bangumi/2833` 这样的地址，或者直接写 `2833`',
+        ),
+      );
+      return;
+    }
+    final int run = ++_run;
+    await _bind(
+      subject,
+      MikanSeedBinding(bangumiId: id, title: '', query: state.word ?? ''),
+      run,
+    );
+  }
+
+  /// 「用其他源再搜一次」（**手动**降级，不自动打聚合 —— 用户第四十五轮选定）。
+  Future<void> searchEverywhere(BangumiSubject subject) async {
+    _subject = subject;
+    final int run = ++_run;
+    final List<String> ladder = librarySeedQueries(subject);
+    // 用户手打过词就用他的；否则用阶梯的**第一级**（中文名）—— 阶梯跑完时
+    // `state.word` 停在最后一级（最不像的那个），拿它去问 8 个源是白问。
+    final String query =
+        ((state.userQuery ? state.word : null) ??
+                (ladder.isEmpty ? subject.displayTitle : ladder.first))
+            .trim();
+    state = state.copyWith(
+      subjectId: subject.id,
+      phase: LibrarySeedPhase.fetching,
+      query: query,
+      problem: LibrarySeedProblem.none,
+      clearFailure: true,
+      clearWarning: true,
+      fromAggregate: true,
+      userQuery: state.userQuery,
+      candidates: const <MikanSeedCandidate>[],
+    );
+
+    final List<SourceOption> all = ref.read(sourceOptionsProvider);
+    final Set<String> excluded = ref
+        .read(settingsProvider)
+        .aggregateExcludedSourceIds
+        .toSet();
+    final List<SourceOption> targets = selectedSources(
+      all,
+      excluded,
+      needSearch: true,
+    );
+    if (targets.isEmpty) {
+      state = state.copyWith(
+        phase: LibrarySeedPhase.failed,
+        problem: LibrarySeedProblem.allSourcesEmpty,
+        warning: '一个源都没有勾（或者勾上的源都不支持搜索）——到搜索页右上角把源勾上',
+      );
+      return;
+    }
+
+    final List<AggregateSourceResult> results = await _seedFanOut(
+      ref.read(sourcePortProvider),
+      targets,
+      query,
+    );
+    if (_stale(run)) return;
+    List<SourceItemView> merged = const <SourceItemView>[];
+    for (final AggregateSourceResult result in results) {
+      merged = aggregateMerge(merged, result.items);
+    }
+    merged = aggregateSort(merged);
+    final String banner = aggregateFailureBanner(results);
+    if (merged.isEmpty) {
+      state = state.copyWith(
+        phase: LibrarySeedPhase.failed,
+        problem: LibrarySeedProblem.allSourcesEmpty,
+        episodes: const <SourceItemView>[],
+        warning: banner.isEmpty ? null : banner,
+      );
+      return;
+    }
+    state = LibrarySeedState(
+      subjectId: subject.id,
+      phase: LibrarySeedPhase.ready,
+      query: query,
+      fromAggregate: true,
+      episodes: merged,
+      visible: kSeedVisibleStep,
+      warning: banner.isEmpty ? null : banner,
+    );
+  }
+
+  /// 「显示更多」：多露 20 条。
+  void showMore() {
+    if (state.remaining <= 0) return;
+    state = state.copyWith(visible: state.visible + kSeedVisibleStep);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 内部
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /// 逐级搜番名：① mikan 搜索 → ② 挑最像的几条 → ③ 升级到单集页拿番剧 id +
+  /// 番剧标题 → ④ 回验；命中即停（典型路径只花 1 次搜索 + 1 次详情）。
+  Future<void> _resolveByNames(
+    BangumiSubject subject,
+    int run, {
+    List<String>? onlyQueries,
+    DsFailure? networkFailure,
+  }) async {
+    final SourcePort port = ref.read(sourcePortProvider);
+    final List<String> names = _seedNamesOf(subject);
+    final List<String> queries = onlyQueries ?? librarySeedQueries(subject);
+    final bool single = onlyQueries != null;
+    if (queries.isEmpty) {
+      _fail(
+        run,
+        networkFailure == null
+            ? LibrarySeedProblem.mikanNotFound
+            : LibrarySeedProblem.network,
+        failure: networkFailure,
+      );
+      return;
+    }
+
+    final List<MikanSeedCandidate> found = <MikanSeedCandidate>[];
+    int details = 0;
+    DsFailure? lastFailure = networkFailure;
+
+    for (final String query in queries) {
+      if (_stale(run)) return;
+      state = state.copyWith(
+        subjectId: subject.id,
+        phase: LibrarySeedPhase.searching,
+        query: query,
+        candidates: const <MikanSeedCandidate>[],
+        problem: LibrarySeedProblem.none,
+        clearFailure: true,
+        fromAggregate: false,
+      );
+
+      final SourcePageView page;
+      try {
+        page = await port.search('mikan', query);
+      } catch (error, stackTrace) {
+        if (_stale(run)) return;
+        lastFailure = describeFailure(error, stackTrace: stackTrace);
+        if (single) {
+          // 手打的词只试一次：失败就直接说原因，不悄悄换别的词去搜。
+          _fail(run, LibrarySeedProblem.network, failure: lastFailure);
+          return;
+        }
+        continue;
+      }
+      if (_stale(run)) return;
+
+      for (final SourceItemView item in _seedRankMikan(page.items, names)) {
+        if (details >= kMaxLibrarySeedDetails) break;
+        details++;
+        final SourceItemView rich;
+        try {
+          rich = await ref.read(hostDataPortProvider).ensurePlayable(item);
+        } catch (_) {
+          continue; // 这一条升级不了（离线 / 结构变了）→ 试下一条
+        }
+        if (_stale(run)) return;
+        final String id = '${rich.extra['bangumiId'] ?? ''}'.trim();
+        if (id.isEmpty) continue;
+        final String title = '${rich.extra['bangumiTitle'] ?? ''}'.trim();
+        final String label = title.isNotEmpty
+            ? title
+            : (rich.title ?? 'mikan #$id');
+        final int score = seedTitleScore(title.isEmpty ? label : title, names);
+        if (!found.any((MikanSeedCandidate c) => c.bangumiId == id)) {
+          found.add(
+            MikanSeedCandidate(
+              bangumiId: id,
+              title: label,
+              query: query,
+              score: score,
+            ),
+          );
+        }
+        if (score >= 100) break; // 完全同名：这一轮不用再试别的候选
+      }
+
+      // 有候选就别再往下试别的查询词（省请求）；完全同名更是直接收工。
+      if (found.isNotEmpty) break;
+    }
+
+    if (found.isEmpty) {
+      _fail(
+        run,
+        lastFailure == null
+            ? LibrarySeedProblem.mikanNotFound
+            : LibrarySeedProblem.network,
+        failure: lastFailure,
+      );
+      return;
+    }
+
+    found.sort(
+      (MikanSeedCandidate a, MikanSeedCandidate b) =>
+          b.score.compareTo(a.score),
+    );
+    final int best = found.first.score;
+    final int bestCount = found
+        .where((MikanSeedCandidate c) => c.score == best)
+        .length;
+    if (best >= 60 && bestCount == 1) {
+      // 只有一个明显最像的 → 自动绑定（用户第四十五轮：先自动挑，拿不准才问）。
+      await _bind(
+        subject,
+        MikanSeedBinding(
+          bangumiId: found.first.bangumiId,
+          title: found.first.title,
+          query: found.first.query,
+        ),
+        run,
+      );
+      return;
+    }
+    state = state.copyWith(
+      phase: LibrarySeedPhase.needsPick,
+      candidates: found,
+      problem: LibrarySeedProblem.none,
+      clearFailure: true,
+    );
+  }
+
+  /// 认下这个番剧页 → 取字幕组与剧集 → 落盘绑定。
+  Future<void> _bind(
+    BangumiSubject subject,
+    MikanSeedBinding binding,
+    int run,
+  ) async {
+    final LibrarySeedService service = ref.read(librarySeedServiceProvider);
+    state = state.copyWith(
+      subjectId: subject.id,
+      phase: LibrarySeedPhase.fetching,
+      binding: binding,
+      query: binding.query,
+      candidates: const <MikanSeedCandidate>[],
+      problem: LibrarySeedProblem.none,
+      clearFailure: true,
+      fromAggregate: false,
+      bindingStale: false,
+    );
+    try {
+      final BangumiDetailView detail = await ref
+          .read(schedulePortProvider)
+          .bangumi(binding.bangumiId);
+      if (_stale(run)) return;
+      final List<SourceItemView> episodes = aggregateSort(detail.episodes);
+      final List<SourceItemView> usable = episodes
+          .where((SourceItemView e) => e.hasTorrentSource || e.canDownload)
+          .toList(growable: false);
+      if (usable.isEmpty) {
+        // 「找到了页面但没有可下的磁力」是**独立的一种空**（用户第四十五轮选定）。
+        service.dropDetail(binding.bangumiId);
+        state = state.copyWith(
+          phase: LibrarySeedPhase.failed,
+          problem: LibrarySeedProblem.noMagnet,
+          detail: detail,
+          episodes: episodes,
+          visible: kSeedVisibleStep,
+        );
+        return;
+      }
+      final MikanSeedBinding saved = MikanSeedBinding(
+        bangumiId: binding.bangumiId,
+        title: detail.displayTitle,
+        query: binding.query,
+      );
+      service.putDetail(binding.bangumiId, detail);
+      unawaited(service.saveBinding(subject.id, saved));
+      _applyDetail(subject, saved, detail, run);
+    } catch (error, stackTrace) {
+      if (_stale(run)) return;
+      service.dropDetail(binding.bangumiId);
+      state = state.copyWith(
+        phase: LibrarySeedPhase.failed,
+        problem: LibrarySeedProblem.network,
+        failure: describeFailure(error, stackTrace: stackTrace),
+        bindingStale: true,
+      );
+    }
+  }
+
+  void _applyDetail(
+    BangumiSubject subject,
+    MikanSeedBinding binding,
+    BangumiDetailView detail,
+    int run,
+  ) {
+    if (_stale(run)) return;
+    state = LibrarySeedState(
+      subjectId: subject.id,
+      phase: LibrarySeedPhase.ready,
+      query: binding.query,
+      binding: binding,
+      detail: detail,
+      episodes: aggregateSort(detail.episodes),
+      visible: kSeedVisibleStep,
+    );
+  }
+
+  void _fail(int run, LibrarySeedProblem problem, {DsFailure? failure}) {
+    if (_stale(run)) return;
+    state = state.copyWith(
+      phase: LibrarySeedPhase.failed,
+      problem: problem,
+      failure: failure,
+      clearFailure: failure == null,
+    );
+  }
+
+  bool _stale(int run) => run != _run || !ref.mounted;
+}
+
+/// 用户能用来拼查询词的全部名字（回验也用它）。
+List<String> _seedNamesOf(BangumiSubject subject) {
+  final List<String> out = <String>[];
+  void add(String? raw) {
+    final String text = (raw ?? '').trim();
+    if (text.isNotEmpty && !out.contains(text)) out.add(text);
+  }
+
+  add(subject.nameCn);
+  add(subject.name);
+  for (final String alias in librarySeedAliases(subject)) {
+    add(alias);
+  }
+  return out;
+}
+
+/// mikan 搜索结果按"像不像这一部"排序（分高的在前；同分按时间新→旧）。
+///
+/// 只排前几条去升级单集页（每条 = 一次网络），所以分数必须由 [seedTitleScore] 给。
+List<SourceItemView> _seedRankMikan(
+  List<SourceItemView> items,
+  List<String> names,
+) {
+  final List<SourceItemView> out = List<SourceItemView>.of(items);
+  int scoreOf(SourceItemView item) => seedTitleScore(item.title ?? '', names);
+  out.sort((SourceItemView a, SourceItemView b) {
+    final int byScore = scoreOf(b).compareTo(scoreOf(a));
+    if (byScore != 0) return byScore;
+    final DateTime? at = a.publishedAt;
+    final DateTime? bt = b.publishedAt;
+    if (at != null && bt != null && at != bt) return bt.compareTo(at);
+    if (at == null && bt != null) return 1;
+    if (at != null && bt == null) return -1;
+    return 0;
+  });
+  // 分数为 0 的一条都不试（搜了 1000 行但没一条沾边时，别拿它们去打详情页）。
+  return out.where((SourceItemView i) => scoreOf(i) > 0).toList(growable: false);
+}
+
+/// 种子块的聚合兜底：把 [query] 在 [targets] 上搜一遍（并发与超时口径同搜索页）。
+Future<List<AggregateSourceResult>> _seedFanOut(
+  SourcePort port,
+  List<SourceOption> targets,
+  String query,
+) async {
+  final List<AggregateSourceResult> out = List<AggregateSourceResult>.filled(
+    targets.length,
+    const AggregateSourceResult(sourceId: '', displayName: ''),
+  );
+  int next = 0;
+  Future<void> worker() async {
+    while (true) {
+      final int at = next++;
+      if (at >= targets.length) return;
+      out[at] = await _seedFetchOne(port, targets[at], query);
+    }
+  }
+
+  final int workers = targets.length < kAggregateMaxConcurrent
+      ? targets.length
+      : kAggregateMaxConcurrent;
+  await Future.wait(<Future<void>>[
+    for (int i = 0; i < workers; i++) worker(),
+  ]);
+  return out;
+}
+
+/// 问一个源。**永不抛**（与搜索页的 `_fetchOneSource` 同一口径）。
+Future<AggregateSourceResult> _seedFetchOne(
+  SourcePort port,
+  SourceOption source,
+  String query,
+) async {
+  try {
+    final SourcePageView page = await port
+        .search(source.id, query)
+        .timeout(kAggregateSourceTimeout);
+    return AggregateSourceResult(
+      sourceId: source.id,
+      displayName: source.displayName,
+      items: List<SourceItemView>.unmodifiable(page.items),
+      hasNext: page.hasNext,
+      fromCache: page.fromCache,
+      staleFallback: page.staleFallback,
+      fetchedAt: page.fetchedAt,
+    );
+  } on TimeoutException {
+    return AggregateSourceResult(
+      sourceId: source.id,
+      displayName: source.displayName,
+      failure: '${kAggregateSourceTimeout.inSeconds} 秒没回来',
+    );
+  } catch (error, stackTrace) {
+    return AggregateSourceResult(
+      sourceId: source.id,
+      displayName: source.displayName,
+      failure: describeFailure(error, stackTrace: stackTrace).message,
+    );
+  }
+}
+
+final NotifierProvider<LibrarySeedController, LibrarySeedState>
+    librarySeedProvider =
+    NotifierProvider<LibrarySeedController, LibrarySeedState>(
+      LibrarySeedController.new,
+    );

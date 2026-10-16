@@ -32,6 +32,7 @@ import '../domain/ports.dart';
 
 /// 托盘左键单击（唤回窗口）用的菜单项 key。
 const String trayKeyRestore = 'restore';
+const String trayKeyShowPlayer = 'showPlayer';
 const String trayKeyPauseAll = 'pauseAll';
 const String trayKeyResumeAll = 'resumeAll';
 const String trayKeyExit = 'exit';
@@ -223,6 +224,10 @@ class TrayManagerPort implements TrayPort {
       await backend.setToolTip(tooltip);
       await backend.setMenu(const <TrayMenuItemSpec>[
         TrayMenuItemSpec(key: trayKeyRestore, label: '显示主窗口'),
+        // 第四十二轮 UX #48：收起来的播放窗口以前只能"先唤主窗口 → 再点侧栏那颗按钮"，
+        // 而用托盘的人恰恰是**不想**把主窗口调出来的那种。菜单里直接给一条。
+        // 没有在播的内容时点了会说一句"还没有在播的内容"，不静默。
+        TrayMenuItemSpec(key: trayKeyShowPlayer, label: '显示播放器窗口'),
         TrayMenuItemSpec(
             key: trayKeyPauseAll, label: '暂停全部', separatorBefore: true),
         TrayMenuItemSpec(key: trayKeyResumeAll, label: '继续全部'),
@@ -245,6 +250,7 @@ class TrayManagerPort implements TrayPort {
   void _onKey(String key) {
     final TrayCommand? command = switch (key) {
       trayKeyRestore => TrayCommand.restore,
+      trayKeyShowPlayer => TrayCommand.showPlayer,
       trayKeyPauseAll => TrayCommand.pauseAll,
       trayKeyResumeAll => TrayCommand.resumeAll,
       trayKeyExit => TrayCommand.exitApp,
@@ -348,39 +354,67 @@ Future<String?> materializeTrayIcon(String supportDir) async {
   }
 }
 
+/// 托盘「暂停/继续全部」之后，队列侧**哪些任务需要跟着改**（纯函数，可单测）。
+///
+/// 第四十二轮 UX #30：托盘只动了引擎，队列状态没跟上 —— 用户进「队列」页看到每行
+/// 还写着「下载中」，与引擎里的真实状态相反。这个函数回答"该改哪几条"：
+/// * 只认 `engineIds` 里**真的动成功**的那些（引擎没暂停成功的不许说成已暂停）；
+/// * 只改"确实需要改"的（暂停时只找 downloading，继续时只找 paused），
+///   免得把 queued/completed 这些一并搅乱。
+List<String> queueSyncTargets({
+  required List<QueueJobView> jobs,
+  required List<int> engineIds,
+  required bool pause,
+}) => <String>[
+  for (final QueueJobView job in jobs)
+    if (job.engineId != null &&
+        engineIds.contains(job.engineId) &&
+        (pause
+            ? job.state == JobState.downloading
+            : job.state == JobState.paused))
+      job.id,
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 托盘菜单动作（可单测：只依赖 EnginePort 抽象）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 「暂停全部」：把引擎里所有 torrent 逐个 pause；返回成功条数。
+/// 「暂停全部」的结果：成功几个 / 一共几个 / 成功的那几个引擎 id。
+///
+/// 第四十二轮 UX #8：旧版只回成功条数，于是**部分失败**时提示仍然是
+/// 「已**全部**暂停（7 个）」—— 用户以为都停了，其实有 2 个还在下。带上总数才说得清。
+/// 第四十二轮 UX #30：`okIds` 给"把队列侧状态也同步过去"用（只同步真的动成功的那几个）。
+typedef TrayToggleResult = ({int ok, int total, List<int> okIds});
+
+/// 托盘「暂停全部」：把引擎里所有 torrent 逐个 pause。
 ///
 /// 单个失败不中断（某个 torrent 可能刚被删掉）——用户点「暂停全部」时
 /// 剩下的一起生效才是他想要的。
-Future<int> pauseAllTorrents(EnginePort engine) async {
+Future<TrayToggleResult> pauseAllTorrents(EnginePort engine) async {
   final List<EngineTorrentView> torrents = await engine.list();
-  int ok = 0;
+  final List<int> okIds = <int>[];
   for (final EngineTorrentView t in torrents) {
     try {
       await engine.pause(t.id);
-      ok++;
+      okIds.add(t.id);
     } catch (_) {
-      // 忽略单个失败。
+      // 忽略单个失败（但会体现在返回值的 ok/total 差里，提示文案据此说实话）。
     }
   }
-  return ok;
+  return (ok: okIds.length, total: torrents.length, okIds: okIds);
 }
 
 /// 「继续全部」。
-Future<int> resumeAllTorrents(EnginePort engine) async {
+Future<TrayToggleResult> resumeAllTorrents(EnginePort engine) async {
   final List<EngineTorrentView> torrents = await engine.list();
-  int ok = 0;
+  final List<int> okIds = <int>[];
   for (final EngineTorrentView t in torrents) {
     try {
       await engine.resume(t.id);
-      ok++;
+      okIds.add(t.id);
     } catch (_) {
-      // 忽略单个失败。
+      // 同上：失败条数由 ok/total 差体现。
     }
   }
-  return ok;
+  return (ok: okIds.length, total: torrents.length, okIds: okIds);
 }

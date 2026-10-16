@@ -19,7 +19,9 @@ import 'package:dsanima/state/cover_cache.dart';
 import 'package:dsanima/state/providers.dart';
 import 'package:dsanima/theme/app_theme.dart';
 import 'package:dsanima/ui/settings_page.dart';
+import 'package:dsanima/theme/tokens.dart';
 import 'package:dsanima/ui/widgets/ds_cards.dart';
+import 'package:dsanima/ui/widgets/neo_appearance_picker.dart';
 import 'package:dsanima_core/sources/kv.dart' show InMemoryKeyValueStore;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -476,9 +478,53 @@ void main() {
     // （以前只涨不减）。清扫规则本身由 `cache_sweep_test.dart` 钉住。
     expect(find.text('源缓存 / 番剧信息'), findsOneWidget);
     expect(find.text('清空'), findsOneWidget);
-    await tester.tap(find.text('清空'));
+    // ⚠️ 这里**不**断言确认框：上面那次「立即清理」在 fake async 里等不到真实文件 IO，
+    // `_busyCache` 会一直是 true ⇒ 这颗按钮是**灰的**，点了什么都不会发生
+    //（旧用例只断言"不抛异常"，所以一直没暴露这一点）。两颗「清空」的确认框由
+    // 下面那条独立用例来钉（周期 0、且不先点清理，`_busyCache` 是干净的 false）。
+    await tester.tap(find.text('清空'), warnIfMissed: false);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('⚠️ 周期设成「不清除」时点「清空缓存」：必须先问一句（第四十二轮 UX #26）', (
+    WidgetTester tester,
+  ) async {
+    // 那一颗按钮在周期 = 不清除 时是**全量删除**（把下过的封面全清掉），
+    // 而它原来是"一点就走"。
+    _sizeTo(tester, const Size(1400, 3000));
+    final InMemoryKeyValueStore store = InMemoryKeyValueStore(<String, Object?>{
+      SettingsController.storageKey:
+          const AppSettings(firstRunCompleted: true, downloadDir: r'F:\Anime')
+              .copyWith(coverCacheMaxAgeDays: 0)
+              .toJson(),
+    });
+    await tester.pumpWidget(_harness(store, _RecordingLifecycle()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('清空缓存'), findsOneWidget, reason: '周期 0 时按钮文案就是「清空缓存」');
+    await tester.ensureVisible(find.text('清空缓存'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('清空缓存'));
+    await tester.pumpAndSettle();
+    expect(find.text('清空全部封面缓存？'), findsOneWidget);
+
+    // 选「取消」：什么都不该发生（对话框收掉、按钮回到可用）。
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('清空全部封面缓存？'), findsNothing);
+    expect(_saveButton(tester), isNull, reason: '取消缓存清理不该把设置弄脏');
+
+    // 另一颗「清空」（源缓存 / 番剧信息）同样要先问一句。
+    // 这一颗在长页面靠下：先滚到它面前再点（不然点击落在视口外，等于没点）。
+    await tester.ensureVisible(find.text('清空'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('清空'));
+    await tester.pumpAndSettle();
+    expect(find.text('清空源缓存 / 番剧信息？'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, '取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('清空源缓存 / 番剧信息？'), findsNothing);
   });
 
   // ── 第二十五轮：设置页「文字颇多且杂乱一体，多做点区分」 ──────────────────────
@@ -547,5 +593,94 @@ void main() {
     const String switchNote = '播放结束或切到下一集时对该 torrent pause()，不再上传';
     expect(find.text(switchNote), findsOneWidget);
     expect(tester.widget<Text>(find.text(switchNote)).maxLines, isNull);
+  });
+
+  testWidgets('⚠️ 数字框非法输入：不许悄悄换成别的数字（第四十二轮 UX #12）', (
+    WidgetTester tester,
+  ) async {
+    // 旧实现每个数字框都是 `int.tryParse(v.trim()) ?? 0`：清空或打错字时，框里还显示
+    // 你打的字，草稿里已经换成了 0（= 上传/下载不限速）或 `?? 86400` 那种默认值。
+    // 用户不可能发现，保存之后行为却变了。现在：非法输入不写进草稿 + 就地标红。
+    _sizeTo(tester, const Size(1400, 3000));
+    final InMemoryKeyValueStore store = _store();
+    final _RecordingLifecycle lifecycle = _RecordingLifecycle();
+    await tester.pumpWidget(_harness(store, lifecycle));
+    await tester.pumpAndSettle();
+
+    // 先把上传限速改成 999 并落盘，作为"上一个合法值"。
+    await tester.enterText(find.widgetWithText(TextFormField, '上传限速 (KB/s)'), '999');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(dsSettingsSaveKey));
+    await tester.pumpAndSettle();
+    expect(_saved(store).uploadLimitKbps, 999);
+
+    // ① 清空：**不许**变成"不限速"（0），也不许让草稿变脏
+    await tester.enterText(find.widgetWithText(TextFormField, '上传限速 (KB/s)'), '');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('空着不算 0'), findsOneWidget, reason: '要说明为什么不认');
+    expect(_saved(store).uploadLimitKbps, 999, reason: '盘上还是上一个合法值');
+    expect(_saveButton(tester), isNull, reason: '草稿没被非法输入改脏（保存键仍灰着）');
+
+    // ② 打错字：同样不认
+    await tester.enterText(find.widgetWithText(TextFormField, '上传限速 (KB/s)'), '12a');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('只认数字'), findsOneWidget);
+    expect(_saveButton(tester), isNull);
+
+    // ③ 负数
+    await tester.enterText(find.widgetWithText(TextFormField, '上传限速 (KB/s)'), '-5');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('不能是负数'), findsOneWidget);
+    expect(_saveButton(tester), isNull);
+
+    // ④ 合法值：错误消失、草稿变脏、能保存
+    await tester.enterText(find.widgetWithText(TextFormField, '上传限速 (KB/s)'), '256');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('只认数字'), findsNothing);
+    expect(find.textContaining('不能是负数'), findsNothing);
+    expect(find.textContaining('空着不算 0'), findsNothing);
+    expect(_saveButton(tester), isNotNull, reason: '合法输入要能保存');
+    await tester.tap(find.byKey(dsSettingsSaveKey));
+    await tester.pumpAndSettle();
+    expect(_saved(store).uploadLimitKbps, 256);
+  });
+
+  testWidgets('⚠️ 点外观落盘失败：不许说「已保存」，选中态也要退回旧的那一套（UX #41）', (
+    WidgetTester tester,
+  ) async {
+    // 旧实现把 `_baseline` 和 `_draft` 一起改，于是**写盘还没回来**底部条就已经是
+    // 「设置已保存」；失败时 `replace` 把内存态回滚了（配色变回旧的那套），而页面草稿
+    // 还停在新那格 —— 选择器与真实主题相反。
+    _sizeTo(tester, const Size(1400, 3000));
+    final String oldCode =
+        const AppSettings(firstRunCompleted: true, downloadDir: r'F:\Anime').themeId;
+    final _FailingPutStore store = _FailingPutStore(<String, Object?>{
+      SettingsController.storageKey:
+          const AppSettings(firstRunCompleted: true, downloadDir: r'F:\Anime').toJson(),
+    });
+    await tester.pumpWidget(_harness(store, _RecordingLifecycle()));
+    await tester.pumpAndSettle();
+
+    // 挑一个**不是**当前那一套的外观去点。
+    final DsAppearance target = DsAppearance.values.firstWhere(
+      (DsAppearance a) => a.code != oldCode,
+    );
+    final Finder cell = find.byKey(Key('settings-appearance-${target.code}'));
+    await tester.ensureVisible(cell);
+    await tester.pumpAndSettle();
+    await tester.tap(cell);
+    await tester.pumpAndSettle();
+
+    // ① 说清失败了（不是"已保存"）
+    expect(find.textContaining('文件系统错误'), findsOneWidget,
+        reason: '落盘失败要如实报出来');
+    expect(find.textContaining('已切换并保存'), findsNothing, reason: '不许撒谎');
+    // ② 选择器退回旧的那一套（内存态已经被 replace 回滚，页面必须跟着回）
+    final NeoAppearancePicker picker =
+        tester.widget<NeoAppearancePicker>(find.byType(NeoAppearancePicker));
+    expect(picker.value.code, oldCode,
+        reason: '盘上是旧的那套 → 选择器也必须标回旧的，不能"页面说要换、实际没换"');
+    // ③ 页面回到"干净"（基线没被推上去，但草稿也回去了）
+    expect(_saveButton(tester), isNull, reason: '回滚之后没有未保存的改动');
   });
 }

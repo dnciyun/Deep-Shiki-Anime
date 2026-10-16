@@ -168,7 +168,8 @@ class IoEngineProcessHandle implements EngineProcessHandle {
   @override
   void closeStdin() {
     try {
-      _process.stdin.close();
+      // 关掉 stdin 的写端：不等这个 Future（进程可能已经退出）。
+      unawaited(_process.stdin.close());
     } catch (_) {
       // 进程已退出时 stdin 可能已关闭，忽略。
     }

@@ -714,6 +714,10 @@ String _defaultSegmentLabel(Object? o) => switch (o) {
 /// 分段控件（决策 A26）：外 `sunken` 槽 + 1px `line` 描边，**选中项 = accent 12% 底 +
 /// accent 文字**（扁平化后不再是"凸起选中"）。设置页的「封面大小 / 轮播封面 / 轮播大小」
 /// 与「已完成」页的摆法开关都用它。
+///
+/// [fontSize] 默认 [DsTypeScale.caption] —— 与 [NeoDropdown] / [NeoPill] / [NeoActionChip]
+/// 同一个口径：**小凹槽控件里的字就是这一档**。设置页整页比全局小一档，那里显式传
+/// `kSettingsBodySize`（第四十六轮：用户「优化一些框里字太大的问题」）。
 class NeoSegmented<T> extends StatelessWidget {
   const NeoSegmented({
     super.key,
@@ -722,11 +726,15 @@ class NeoSegmented<T> extends StatelessWidget {
     required this.onChanged,
     this.keyOverride,
     this.labelOf,
+    this.fontSize = DsTypeScale.caption,
   });
 
   final List<T> options;
   final T value;
   final ValueChanged<T> onChanged;
+
+  /// 选项文字的字号（只允许 [DsTypeScale] 里的档位）。
+  final double fontSize;
 
   /// 覆盖某个选项的 widget key（外观切换用它挂 `GlobalKey`，
   /// 好在点击时拿到按钮中心作为扩散动画的圆心，决策 A25）。
@@ -748,6 +756,7 @@ class NeoSegmented<T> extends StatelessWidget {
           // 默认文案交给 [_defaultSegmentLabel]（带中文名的枚举直接用它自己的 label）。
           label: labelOf?.call(o) ?? _defaultSegmentLabel(o),
           selected: selected,
+          fontSize: fontSize,
           onTap: () => onChanged(o),
         ),
       );
@@ -765,11 +774,13 @@ class _SegmentedItem extends StatefulWidget {
     super.key,
     required this.label,
     required this.selected,
+    required this.fontSize,
     required this.onTap,
   });
 
   final String label;
   final bool selected;
+  final double fontSize;
   final VoidCallback onTap;
 
   @override
@@ -805,7 +816,7 @@ class _SegmentedItemState extends State<_SegmentedItem> {
             widget.label,
             style: TextStyle(
               color: widget.selected ? t.accent : t.text2,
-              fontSize: DsTypeScale.body,
+              fontSize: widget.fontSize,
               fontWeight: widget.selected ? FontWeight.w600 : FontWeight.w400,
             ),
           ),
@@ -923,7 +934,13 @@ class NeoSlider extends StatelessWidget {
 /// 修之前只有 `selected` 会染色，而 `DsChip` 传的是 `color` —— 于是队列概览
 /// 「失败/取消」的 danger、「已完成」的 success **全部落空**，五颗 chip 长得一模一样
 /// （审计 `build/sdd-flat-step2/audit.md` 头两条 [BUG]）。
-class NeoPill extends StatelessWidget {
+///
+/// ⚠️ **第四十四轮**：`onTap` 不为空时，这一颗是**真按钮**，必须键盘可达 ——
+/// 裸 `GestureDetector` 会被 Tab 整块跳过、没有焦点框、回车/空格都没反应
+/// （第四十二轮 UX #40 在外观选择器上定下的同一条口径；那儿也是 `InkWell` +
+/// `Semantics` + 2px accent 焦点边）。动漫库右栏一次摆 30 多颗类型胶囊，
+/// 鼠标专用的写法在那儿说不通。外观主题全局 `NoSplash`，所以 `InkWell` 不会带来水波纹。
+class NeoPill extends StatefulWidget {
   const NeoPill({
     super.key,
     required this.label,
@@ -947,10 +964,18 @@ class NeoPill extends StatelessWidget {
   final String? tooltip;
 
   @override
+  State<NeoPill> createState() => _NeoPillState();
+}
+
+class _NeoPillState extends State<NeoPill> {
+  /// 键盘焦点在不在这一颗上（第四十四轮：可点的胶囊也要键盘可达，见类文档）。
+  bool _focused = false;
+
+  @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
-    final Color c = color ?? tone ?? t.text2;
-    final bool tinted = selected || tone != null;
+    final Color c = widget.color ?? widget.tone ?? t.text2;
+    final bool tinted = widget.selected || widget.tone != null;
     Widget pill = AnimatedContainer(
       duration: DsMotion.of(context).hover,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -958,14 +983,20 @@ class NeoPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: tinted ? c.withValues(alpha: 0.12) : t.sunken,
         borderRadius: BorderRadius.circular(t.radiusPill),
-        border: Border.all(color: tinted ? Colors.transparent : t.line, width: 1),
+        // 键盘焦点 = 2px accent（规范 §7 白名单里唯一允许的强调色描边）；其余照旧。
+        border: _focused
+            ? Border.all(color: t.accent, width: 2)
+            : Border.all(color: tinted ? Colors.transparent : t.line, width: 1),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          if (icon != null) ...<Widget>[Icon(icon, size: 12, color: c), const SizedBox(width: 5)],
+          if (widget.icon != null) ...<Widget>[
+            Icon(widget.icon, size: 12, color: c),
+            const SizedBox(width: 5),
+          ],
           Text(
-            label,
+            widget.label,
             style: TextStyle(
               color: tinted ? c : t.text2,
               fontSize: DsTypeScale.caption,
@@ -975,13 +1006,24 @@ class NeoPill extends StatelessWidget {
         ],
       ),
     );
-    if (onTap != null) {
+    if (widget.onTap != null) {
       pill = MouseRegion(
         cursor: SystemMouseCursors.click,
-        child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: onTap, child: pill),
+        // `InkWell`（不是 GestureDetector）：Tab 能遍历到、回车/空格能激活、能收焦点。
+        // 主题里 `splashFactory: NoSplash`，所以不会多出一层水波纹。
+        child: Semantics(
+          button: true,
+          selected: widget.selected,
+          child: InkWell(
+            onTap: widget.onTap,
+            onFocusChange: (bool focused) => setState(() => _focused = focused),
+            borderRadius: BorderRadius.circular(t.radiusPill),
+            child: pill,
+          ),
+        ),
       );
     }
-    if (tooltip != null) pill = Tooltip(message: tooltip!, child: pill);
+    if (widget.tooltip != null) pill = Tooltip(message: widget.tooltip!, child: pill);
     return pill;
   }
 }

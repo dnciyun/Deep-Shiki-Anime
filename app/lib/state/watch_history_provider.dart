@@ -135,14 +135,41 @@ class WatchHistoryController extends Notifier<List<WatchRecord>> {
     await _write(next);
   }
 
-  Future<void> clear() async {
-    state = const <WatchRecord>[];
-    await _store.clear();
+  /// 把刚删掉的一条放回去（「撤销」用）。
+  ///
+  /// 走 [upsertWatchRecord]：它会按 `watchedAt` 重新插入到**原来的位置**，
+  /// 所以撤销之后列表顺序与删之前一模一样（不是简单追加到末尾）。
+  Future<void> restore(WatchRecord record) async {
+    await _write(upsertWatchRecord(state, record));
   }
 
+  Future<void> clear() async {
+    final List<WatchRecord> previous = state;
+    state = const <WatchRecord>[];
+    try {
+      await _store.clear();
+    } catch (_) {
+      state = previous;
+      rethrow;
+    }
+  }
+
+  /// 先改内存再落盘；**落盘失败就回滚**并把异常抛给调用方。
+  ///
+  /// 第四十二轮 UX #5（二级）：旧实现只有 `state = next; await _store.save(next);`
+  /// 两行 —— 写盘失败时内存里已经是新值，界面显示"删掉了 / 记上了"，重启后却还在
+  /// （或者反过来：删掉的记录复活）。而且**调用方拿不到失败信号**，于是全程零提示。
+  /// 现在与 `settingsProvider.replace()`（`providers.dart:356`）同一套口径：
+  /// 回滚内存态 + rethrow，由界面统一走 `runGuarded` 报错。
   Future<void> _write(List<WatchRecord> next) async {
+    final List<WatchRecord> previous = state;
     state = next;
-    await _store.save(next);
+    try {
+      await _store.save(next);
+    } catch (_) {
+      state = previous;
+      rethrow;
+    }
   }
 }
 
@@ -195,11 +222,19 @@ class WatchedMarksController extends Notifier<Map<String, DateTime>> {
       next[key] = stamp;
       changed = true;
     }
-    if (suppressionChanged) {
-      _suppressed = Map<String, DateTime>.unmodifiable(suppressed);
-      await _store.saveSuppressed(suppressed);
+    final Map<String, DateTime> previousSuppressed = _suppressed;
+    try {
+      if (suppressionChanged) {
+        _suppressed = Map<String, DateTime>.unmodifiable(suppressed);
+        await _store.saveSuppressed(suppressed);
+      }
+      if (changed) await _write(next);
+    } catch (_) {
+      // 两份都要回滚：抑制表与状态是一起写的，只回滚一半会出现
+      // "勾没打上、但以后自动打勾也被抑制了"这种看不见的错位。
+      _suppressed = previousSuppressed;
+      rethrow;
     }
-    if (changed) await _write(next);
   }
 
   /// [byUser] true（默认，正在追里点的那一下）= 把这一条记进抑制表。
@@ -217,11 +252,17 @@ class WatchedMarksController extends Notifier<Map<String, DateTime>> {
         suppressionChanged = true;
       }
     }
-    if (suppressionChanged) {
-      _suppressed = Map<String, DateTime>.unmodifiable(suppressed);
-      await _store.saveSuppressed(suppressed);
+    final Map<String, DateTime> previousSuppressed = _suppressed;
+    try {
+      if (suppressionChanged) {
+        _suppressed = Map<String, DateTime>.unmodifiable(suppressed);
+        await _store.saveSuppressed(suppressed);
+      }
+      if (changed) await _write(next);
+    } catch (_) {
+      _suppressed = previousSuppressed;
+      rethrow;
     }
-    if (changed) await _write(next);
   }
 
   /// 打勾/取消打勾（正在追里点的那一下，两个方向都算"用户的意图"）；
@@ -236,14 +277,29 @@ class WatchedMarksController extends Notifier<Map<String, DateTime>> {
   }
 
   Future<void> clear() async {
+    final Map<String, DateTime> previous = state;
+    final Map<String, DateTime> previousSuppressed = _suppressed;
     state = const <String, DateTime>{};
     _suppressed = const <String, DateTime>{};
-    await _store.clear();
+    try {
+      await _store.clear();
+    } catch (_) {
+      state = previous;
+      _suppressed = previousSuppressed;
+      rethrow;
+    }
   }
 
+  /// 与 [WatchHistoryController._write] 同一套口径：失败回滚 + rethrow（UX #5）。
   Future<void> _write(Map<String, DateTime> next) async {
+    final Map<String, DateTime> previous = state;
     state = Map<String, DateTime>.unmodifiable(next);
-    await _store.save(next);
+    try {
+      await _store.save(next);
+    } catch (_) {
+      state = previous;
+      rethrow;
+    }
   }
 }
 

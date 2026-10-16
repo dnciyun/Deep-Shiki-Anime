@@ -398,7 +398,7 @@ class _DsCarouselState extends State<DsCarousel>
     _to = target;
     _anim.duration = d;
     // 从当前位置重新起跑：切换中途再点一下（或拖到一半松手）不会跳。
-    _anim.forward(from: 0);
+    unawaited(_anim.forward(from: 0));
   }
 
   void _onTick() {

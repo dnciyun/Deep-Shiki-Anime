@@ -388,6 +388,12 @@ class PlaybackController extends Notifier<PlaybackUiState> {
   /// 播放**已经下好**的 torrent 文件（「已完成」页的播放按钮）。
   ///
   /// 不由队列解析：torrent 已在引擎里，直接拿 `streamUrl` 交给播放器。
+  ///
+  /// [startPositionMs] = 「观看记录」页点「继续播放」时带上一次看到哪儿（第四十二轮
+  /// UX #2）。**必须由宿主显式给**，不能指望播放器自己记：子窗口那份续播记忆按
+  /// **串流 URL** 存（`ShikiiN` 的 `settings.loadResume(item.path)`），而引擎给的 URL
+  /// 每次带**新 token** —— 同一个文件两次点播的 URL 不同，那份记忆必然 miss。
+  /// 宿主这份记录是按"哪一集"记的，这才是可靠的那一份。
   Future<void> playTorrentFile({
     required EngineTorrentView torrent,
     required EngineFileView file,
@@ -396,6 +402,7 @@ class PlaybackController extends Notifier<PlaybackUiState> {
     String? coverUrl,
     String? coverReferer,
     String? mikanBangumiId,
+    int? startPositionMs,
   }) async {
     state = state.copyWith(busy: true, clearFailure: true);
     // 已完成页点播不属于任何搜索批次：旧的播放列表跟着失效（否则点了别的番还会
@@ -419,6 +426,11 @@ class PlaybackController extends Notifier<PlaybackUiState> {
               title: torrent.name,
               engineId: torrent.id,
               fileIndex: file.index,
+              // 续播：起点交给播放器（`startAt` 一路到 shikiin 的 `player.open`，
+              // 它 open 完会 seek 过去）。null = 从头。
+              startAt: (startPositionMs == null || startPositionMs <= 0)
+                  ? null
+                  : Duration(milliseconds: startPositionMs),
             ),
             episodeGroup: torrentGroup,
           );
@@ -697,6 +709,20 @@ class PlaybackController extends Notifier<PlaybackUiState> {
   Future<void> reopenPlayerWindow() async {
     final NowPlaying? current = state.nowPlaying;
     if (current == null) return;
+    // 第四十二轮 UX #9：整个身体再包一层 —— `_ensureEngineRunning` / 拿 torrent
+    // 这两步也会抛（引擎刚挂、边车重启中），而它们原来在下面那个 try **外面**：
+    // 异常会从这里冒到调用方（侧栏那句 `unawaited(...)`），于是"点了没反应"。
+    // 这一层让本方法**全域**：任何失败都变成 `state.failure`，调用方只管读它。
+    try {
+      await _reopenPlayerWindowInner(current);
+    } catch (error, stackTrace) {
+      state = state.copyWith(
+        failure: describeFailure(error, stackTrace: stackTrace),
+      );
+    }
+  }
+
+  Future<void> _reopenPlayerWindowInner(NowPlaying current) async {
     // 关窗时按省流量策略把 torrent 停过（`settleAfterPlayback`）：再打开必须让它接着跑，
     // 否则没下完的那一集会在暂停状态下边播边卡。
     await _ensureEngineRunning(current.engineId);

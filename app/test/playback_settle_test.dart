@@ -188,12 +188,17 @@ class _EnginePort implements EnginePort {
 class _PlayerPort implements PlayerPort {
   final List<String> calls = <String>[];
 
+  /// 每次 `open` 带的起点（毫秒）；null = 从头（第四十二轮 UX #2 的断言点）。
+  final List<int?> openedStartAtMs = <int?>[];
+
   @override
   bool get isAvailable => true;
 
   @override
-  Future<void> open(PlayerRequest request, {EpisodeGrouping? episodeGroup}) async =>
-      calls.add('open:${request.engineId}/${request.fileIndex}');
+  Future<void> open(PlayerRequest request, {EpisodeGrouping? episodeGroup}) async {
+    calls.add('open:${request.engineId}/${request.fileIndex}');
+    openedStartAtMs.add(request.startAt?.inMilliseconds);
+  }
 
   @override
   Future<void> playOrPause() async => calls.add('playOrPause');
@@ -282,8 +287,7 @@ void main() {
     );
   });
 
-  test('播放列表已失效：点播放列表里的条目 → 原因推回播放窗口', () async {
-    final _RecordingWindowService window = _RecordingWindowService();
+  test('播放列表已失效：点播放列表里的条目 → 原因推回播放窗口', () async {    final _RecordingWindowService window = _RecordingWindowService();
     final c = _container(window: window);
 
     final bool ok = await c.container.read(playbackProvider.notifier).playPlaylistEntry('nope');
@@ -359,4 +363,43 @@ void main() {
 
     expect(queue.calls, contains('settle:7'));
   });
+
+  // ── 第四十二轮 UX #2：续播不能是"假承诺" ───────────────────────────────────
+  //
+  // 观看记录那一行写着「看到 12:34 / 24:00（52%）」+ 进度条，点「继续播放」却永远
+  // 从 0:00 开始 —— 界面承诺了却不兑现。链路其实早就通（`PlayerRequest.startAt`
+  // → `PlayerWindowArgs.startAtMs` → shikiin 的 `player.open(startAt:)`），
+  // 缺的只是宿主没把它填上：`playTorrentFile` 原来**没有**这个参数。
+
+  test('续播：把上次看到的位置交给播放器（不是永远从 0:00）', () async {
+    final c = _container();
+    await c.container.read(playbackProvider.notifier).playTorrentFile(
+          torrent: _torrent(),
+          file: _file(),
+          startPositionMs: 754000,
+        );
+    expect(c.player.openedStartAtMs, <int?>[754000]);
+  });
+
+  test('从头播：没给起点时 startAt 必须是 null（不许塞个 0 骗播放器去 seek）', () async {
+    final c = _container();
+    await c.container.read(playbackProvider.notifier).playTorrentFile(
+          torrent: _torrent(),
+          file: _file(),
+        );
+    expect(c.player.openedStartAtMs, <int?>[null]);
+  });
 }
+
+EngineTorrentView _torrent() => const EngineTorrentView(
+  id: 7,
+  name: '[ANi] 葬送的芙莉莲 - 08 [1080p]',
+  infoHash: 'abc',
+  files: <EngineFileView>[],
+);
+
+EngineFileView _file() => const EngineFileView(
+  index: 0,
+  path: '[ANi] 葬送的芙莉莲 - 08 [1080p].mkv',
+  isVideo: true,
+);

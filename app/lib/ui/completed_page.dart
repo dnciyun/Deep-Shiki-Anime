@@ -374,9 +374,9 @@ class _CompletedPageState extends ConsumerState<CompletedPage> {
       _coverAsked.add(group.key);
       asked++;
       // 不能在 build 里直接改 provider 状态 → 挪到微任务里。
-      Future<void>.microtask(
+      unawaited(Future<void>.microtask(
         () => ref.read(completedCoverProvider.notifier).ensure(group.key, group.name),
-      );
+      ));
     }
   }
 
@@ -890,7 +890,9 @@ class _CoverPickerDialogState extends ConsumerState<_CoverPickerDialog> {
   }
 
   void unawaitedAsk() {
-    ref.read(completedCoverProvider.notifier).ensure(widget.groupKey, widget.groupName);
+    unawaited(ref
+        .read(completedCoverProvider.notifier)
+        .ensure(widget.groupKey, widget.groupName));
   }
 
   @override
@@ -1199,7 +1201,10 @@ class _CompletedActions {
     if (!context.mounted) return;
 
     if (outcome.failure != null) {
-      showFailure(context, DsFailure('文件没能进回收站', hint: outcome.failure));
+      // 标题要**中性**：`outcome.failure` 既可能是"回收站那一步失败"，也可能是
+      // "引擎移除失败所以文件一个都没动"（第四十二轮 UX #13 把后者从"异常冒出去"
+      // 改成了明确结果）。写死"文件没能进回收站"会在后一种情形下指错方向。
+      showFailure(context, DsFailure('这次删除没做成', hint: outcome.failure));
       return;
     }
     final String detail = <String>[

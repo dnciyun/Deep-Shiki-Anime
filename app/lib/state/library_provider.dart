@@ -46,6 +46,22 @@ class LibraryQueryController extends Notifier<BangumiLibraryQuery> {
             : state.copyWith(minScore: score),
       );
 
+  /// 类型（Bangumi 的标签）：`null` = 不限。
+  ///
+  /// ⚠️ 只动这一格 —— 年份/形态/评分那些**照旧生效**。旧实现里详情页点标签走的是
+  /// `patch(BangumiLibraryQuery(tag: tag))`（**整份换掉**），于是"我在动漫库筛着 2024 年，
+  /// 从详情页点了个标签回来，年份没了"；右栏的类型胶囊更不能这么干（点一下清掉一整排条件
+  /// 会让人不敢点）。
+  void setTag(String? tag) => patch(
+        (tag ?? '').trim().isEmpty
+            ? state.copyWith(clearTag: true)
+            : state.copyWith(tag: tag!.trim()),
+      );
+
+  /// 类型胶囊被点了第二次 = 取消这一档。
+  void toggleTag(String tag) =>
+      setTag((state.tag ?? '').trim() == tag.trim() ? null : tag);
+
   /// 提交关键词（回车/点搜索按钮）。
   void submitKeyword(String keyword) =>
       patch(state.copyWith(keyword: keyword.trim()));

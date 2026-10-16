@@ -15,6 +15,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../../domain/aggregate.dart';
 import '../../domain/batch_download.dart';
 import '../../domain/format.dart';
 import '../../domain/models.dart';
@@ -40,6 +41,11 @@ class SearchResultsTable extends StatelessWidget {
     this.selectedIds = const <String>{},
     this.onToggleSelect,
     this.onToggleSelectAll,
+    this.sources = const <SourceOption>[],
+    this.marksOf,
+    this.groupActionLabel,
+    this.onGroupAction,
+    this.embedded = false,
   });
 
   final List<SourceItemView> items;
@@ -48,6 +54,10 @@ class SearchResultsTable extends StatelessWidget {
   final void Function(SourceItemView item)? onPlay;
   final void Function(SourceItemView item)? onDownload;
   final void Function(SourceItemView item)? onSubscribe;
+
+  /// 已知的源表：用来把结果行里那个 `sourceId` 翻成**人看的名字**
+  /// （第四十二轮 UX #16：以前直接打印 `mikan` / `rss:8f3a…` 这种内部 id）。
+  final List<SourceOption> sources;
 
   /// 批量下载勾选（用户 2026-10-12 第二十三轮：「搜索页批量选择下载」）。
   ///
@@ -58,6 +68,21 @@ class SearchResultsTable extends StatelessWidget {
 
   /// 表头那颗勾：true = 勾上本页**可下载的**全部，false = 取消本页勾选。
   final void Function(bool select)? onToggleSelectAll;
+
+  /// 每一行**额外**的小标记（第四十五轮：动漫库的种子块要在这里显示
+  /// 「已看过 / 已在队列 / 已完成」）。不传 = 一个都不画，搜索页行为一字不变。
+  final List<Widget> Function(SourceItemView item)? marksOf;
+
+  /// 右键菜单里那一条**额外**动作的文字（app 自己算，因为"这一组有几集"只有它有上下文）。
+  final String Function(SourceItemView item)? groupActionLabel;
+
+  /// 那一条动作要干什么（第四十五轮：动漫库种子块的「这一组都入队（N 集）」）。
+  final void Function(SourceItemView item)? onGroupAction;
+
+  /// **嵌进别人的滚动页**（第四十五轮：动漫库详细页是 `ListView(children:)`，
+  /// 高度无界）时为 true —— 行不再塞进 `Expanded(ListView)`，而是直接排成一列。
+  /// 默认 false = 搜索页那种"自己占满剩余高度、自己滚"的形态，行为一字不变。
+  final bool embedded;
 
   // 列宽（表头用 `dsTableHeaderStyle`；数字列 tabular）。
   //
@@ -126,13 +151,22 @@ class SearchResultsTable extends StatelessWidget {
             ],
           ),
         ),
-        Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.zero,
-            itemCount: items.length,
-            itemBuilder: (BuildContext context, int index) => DsStaggerFade(index: index, child: _row(context, index, items[index])),
+        if (embedded)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              for (int i = 0; i < items.length; i++)
+                DsStaggerFade(index: i, child: _row(context, i, items[i])),
+            ],
+          )
+        else
+          Expanded(
+            child: ListView.builder(
+              padding: EdgeInsets.zero,
+              itemCount: items.length,
+              itemBuilder: (BuildContext context, int index) => DsStaggerFade(index: index, child: _row(context, index, items[index])),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -162,7 +196,8 @@ class SearchResultsTable extends StatelessWidget {
       builder: (bool hover) => GestureDetector(
         // 用户 2026-10-10 第 3 轮问答：「加入订阅过滤」从操作列收进**右键菜单**
         //（它与"播放/下载"不同，是低频动作；三颗图标并排太密）。
-        onSecondaryTapDown: onSubscribe == null
+        onSecondaryTapDown:
+            onSubscribe == null && (onGroupAction == null || groupActionLabel == null)
             ? null
             : (TapDownDetails d) => _showRowMenu(context, d.globalPosition, item),
         // 行悬停 = 沉一档的凹槽面（规范 §2：状态用**面色**表达，不用几何）。
@@ -207,15 +242,29 @@ class SearchResultsTable extends StatelessWidget {
                       style: TextStyle(color: t.text, fontSize: DsTypeScale.secondary, height: 1.3),
                     ),
                     const SizedBox(height: 3),
-                    Text(
-                      <String>[
-                        item.sourceId,
-                        formatRelative(item.publishedAt),
-                        ...facts,
-                      ].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+                    Row(
+                      children: <Widget>[
+                        Flexible(
+                          child: Text(
+                            <String>[
+                              // 第四十二轮 UX #16：显示源名，不是 `mikan` / `rss:8f3a…`。
+                              sourceLabelFor(item.sourceId, sources),
+                              formatRelative(item.publishedAt),
+                              ...facts,
+                            ].join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+                          ),
+                        ),
+                        // 第四十五轮：额外的状态标记（已看过 / 在队列 / 已完成）。
+                        // 放在这一行的尾部而不是另起一行：行高不变，表格不会变"毛"。
+                        if (marksOf?.call(item) case final List<Widget> marks
+                            when marks.isNotEmpty) ...<Widget>[
+                          const SizedBox(width: 6),
+                          ...marks,
+                        ],
+                      ],
                     ),
                   ],
                 ),
@@ -275,29 +324,45 @@ class SearchResultsTable extends StatelessWidget {
     );
   }
 
-  /// 行右键菜单：「加入订阅过滤」（低频动作，从操作列挪到这里）。
+  /// 行右键菜单：「加入订阅过滤」+ 调用方额外给的那一条（低频动作，从操作列挪到这里）。
   Future<void> _showRowMenu(BuildContext context, Offset at, SourceItemView item) async {
     final void Function(SourceItemView)? subscribe = onSubscribe;
-    if (subscribe == null) return;
+    final void Function(SourceItemView)? groupAction = onGroupAction;
+    final String? groupLabel = groupActionLabel?.call(item);
+    final bool hasGroup = groupAction != null && groupLabel != null;
+    if (subscribe == null && !hasGroup) return;
     final DsTokens t = context.ds;
     final String? choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(at.dx, at.dy, at.dx, at.dy),
       color: t.raised,
       items: <PopupMenuEntry<String>>[
-        PopupMenuItem<String>(
-          value: 'subscribe',
-          child: Row(
-            children: <Widget>[
-              Icon(Icons.playlist_add, size: 15, color: t.text2),
-              const SizedBox(width: 8),
-              const Text('加入订阅过滤'),
-            ],
+        if (subscribe != null)
+          PopupMenuItem<String>(
+            value: 'subscribe',
+            child: Row(
+              children: <Widget>[
+                Icon(Icons.playlist_add, size: 15, color: t.text2),
+                const SizedBox(width: 8),
+                const Text('加入订阅过滤'),
+              ],
+            ),
           ),
-        ),
+        if (hasGroup)
+          PopupMenuItem<String>(
+            value: 'group',
+            child: Row(
+              children: <Widget>[
+                Icon(Icons.playlist_play, size: 15, color: t.text2),
+                const SizedBox(width: 8),
+                Text(groupLabel),
+              ],
+            ),
+          ),
       ],
     );
-    if (choice == 'subscribe') subscribe(item);
+    if (choice == 'subscribe') subscribe?.call(item);
+    if (choice == 'group') groupAction?.call(item);
   }
 }
 

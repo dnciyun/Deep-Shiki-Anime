@@ -42,6 +42,7 @@ import 'state/cache_sweep.dart';
 import 'state/cover_cache.dart';
 import 'state/desktop_integration.dart';
 import 'state/engine_bootstrap.dart';
+import 'state/global_failure.dart';
 import 'state/hive_store.dart';
 import 'state/host_data.dart';
 import 'state/library_provider.dart';
@@ -95,14 +96,21 @@ Future<void> main(List<String> args) async {
   }
 
   // 未捕获的框架异常也打出来：白窗排查全靠它。
+  //
+  // 第四十二轮（`docs/ROUND42-UX.md` §2.1）：**不再只写 stderr**。只写 stderr 意味着
+  // "漏包的 await 抛错"对用户是彻底静默的（不弹东西、界面停在原处），本轮 14 处
+  // "失败不浮出"都借着这个前提。现在同一条异常还会经 `reportGlobalFailure` 广播出去，
+  // 由 `DsGlobalFailureListener` 弹成一条带「怎么办」的失败提示。
   FlutterError.onError = (FlutterErrorDetails d) {
     stderr.writeln('[flutter-error] ${d.exception}');
     stderr.writeln(d.stack);
+    reportGlobalFailure(d.exception, d.stack ?? StackTrace.current);
     FlutterError.presentError(d);
   };
   PlatformDispatcher.instance.onError = (Object e, StackTrace s) {
     stderr.writeln('[uncaught] $e');
     stderr.writeln(s);
+    reportGlobalFailure(e, s);
     return false;
   };
   trace('binding ok');

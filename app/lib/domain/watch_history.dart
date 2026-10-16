@@ -106,6 +106,20 @@ class WatchRecord {
   /// 看到 [kWatchFinishedRatio] 之上算看完（时长未知时判否 —— 不猜）。
   bool get finished => durationMs > 0 && positionMs >= durationMs * kWatchFinishedRatio;
 
+  /// 「继续播放」这一下该从哪儿开始（毫秒）；`null` = 从头。
+  ///
+  /// 第四十二轮 UX #2（二级，100% 必现）：观看记录那一行写着
+  /// 「看到 12:34 / 24:00（52%）」+ 进度条，点「继续播放」却**永远从 0:00 开始**，
+  /// 一句说明都没有 —— 界面承诺了却不兑现。
+  ///
+  /// 规则（与界面文案严格对齐，不留第二种解释）：
+  /// * **已看完** → `null`。行里那个按钮对看完的集显示的也是「重看」，
+  ///   从 95% 接着放没有意义；
+  /// * 没有进度记录（`positionMs <= 0`）→ `null`（本来就该从头）；
+  /// * 其余 → 记录里的位置。**不给"太靠前就从 0 开始"之类的阈值** ——
+  ///   行里写着「看到 00:12」，那就必须从 00:12 开始，否则又是同一个假承诺。
+  int? get resumePositionMs => (finished || positionMs <= 0) ? null : positionMs;
+
   Map<String, Object?> toJson() => <String, Object?>{
     'id': id,
     'title': title,

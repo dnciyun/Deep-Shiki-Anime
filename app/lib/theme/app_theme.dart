@@ -38,6 +38,19 @@ ThemeData buildDsanimaTheme({DsTokens tokens = DsTokens.whiteInk}) {
         height: s.height ?? 1.45,
       );
 
+  /// 按钮文字也要带上这一套字体（第四十四轮）。
+  ///
+  /// ⚠️ `FilledButton/OutlinedButton/TextButton.styleFrom(textStyle: …)` 给的是一个**整份**
+  /// style —— 它不像 `Text` 那样跟主题的 `textTheme` merge，于是主题顶上的
+  /// `fontFamily: dsFontFamily` 在这些按钮上**丢了**，按钮文字掉回系统默认字体。
+  /// 出图时看得一清二楚：右栏「最近搜索」的「清空」在探针里是两个方框
+  /// （`build/probe-library/rail_1400.png`，探针只注册了 YaHei 这一个字体族）。
+  /// 真机上只是"按钮的字体与别处不一样"，但既然瞧见了就一起钉住。
+  TextStyle label(TextStyle s) => s.copyWith(
+        fontFamily: dsFontFamily,
+        fontFamilyFallback: dsFontFallback,
+      );
+
   // 凹槽输入框：sunken 面 + 1px line 描边（页面侧用 DsInset；这里给 Material 的兜底形态）。
   OutlineInputBorder border(Color c, [double w = 1]) => OutlineInputBorder(
         borderRadius: BorderRadius.circular(tokens.radiusControl),
@@ -143,8 +156,8 @@ ThemeData buildDsanimaTheme({DsTokens tokens = DsTokens.whiteInk}) {
         side: BorderSide.none,
         shape: controlShape,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        textStyle: TextStyle(
-            fontSize: DsTypeScale.body, fontWeight: FontWeight.w600),
+        textStyle: label(TextStyle(
+            fontSize: DsTypeScale.body, fontWeight: FontWeight.w600)),
       ),
     ),
     // 次按钮：只凹凸，无边框。
@@ -159,7 +172,7 @@ ThemeData buildDsanimaTheme({DsTokens tokens = DsTokens.whiteInk}) {
         side: BorderSide(color: tokens.line, width: 1),
         shape: controlShape,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        textStyle: TextStyle(fontSize: DsTypeScale.body),
+        textStyle: label(TextStyle(fontSize: DsTypeScale.body)),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
@@ -169,7 +182,7 @@ ThemeData buildDsanimaTheme({DsTokens tokens = DsTokens.whiteInk}) {
         minimumSize: Size(0, tokens.controlHeight),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         shape: controlShape,
-        textStyle: TextStyle(fontSize: DsTypeScale.body),
+        textStyle: label(TextStyle(fontSize: DsTypeScale.body)),
       ),
     ),
     iconTheme: IconThemeData(color: tokens.text2, size: 16),
@@ -221,13 +234,13 @@ ThemeData buildDsanimaTheme({DsTokens tokens = DsTokens.whiteInk}) {
         borderRadius: BorderRadius.circular(tokens.radiusControl),
         boxShadow: tokens.shadows(NeoShadowLevel.high),
       ),
-      textStyle: TextStyle(color: tokens.text, fontSize: DsTypeScale.secondary),
+      textStyle: label(TextStyle(color: tokens.text, fontSize: DsTypeScale.secondary)),
     ),
     // ── 悬浮层（规范 §7）：唯一允许阴影的层，高度统一走 `overlayElevation` ──────
     snackBarTheme: SnackBarThemeData(
       backgroundColor: tokens.raised,
       contentTextStyle:
-          TextStyle(color: tokens.text, fontSize: DsTypeScale.body),
+          label(TextStyle(color: tokens.text, fontSize: DsTypeScale.body)),
       behavior: SnackBarBehavior.floating,
       elevation: tokens.overlayElevation,
       shape: controlShape,
@@ -251,15 +264,15 @@ ThemeData buildDsanimaTheme({DsTokens tokens = DsTokens.whiteInk}) {
       shadowColor: tokens.shadowDark,
       elevation: tokens.overlayElevation,
       shape: controlShape,
-      textStyle: TextStyle(color: tokens.text, fontSize: DsTypeScale.body),
+      textStyle: label(TextStyle(color: tokens.text, fontSize: DsTypeScale.body)),
     ),
     chipTheme: ChipThemeData(
       backgroundColor: tokens.sunken,
       selectedColor: tokens.accentSoft,
       side: BorderSide(color: Colors.transparent),
-      labelStyle: TextStyle(color: tokens.text, fontSize: DsTypeScale.secondary),
+      labelStyle: label(TextStyle(color: tokens.text, fontSize: DsTypeScale.secondary)),
       secondaryLabelStyle:
-          TextStyle(color: tokens.text2, fontSize: DsTypeScale.secondary),
+          label(TextStyle(color: tokens.text2, fontSize: DsTypeScale.secondary)),
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(tokens.radiusPill)),
     ),
@@ -301,3 +314,41 @@ ThemeData buildDsanimaTheme({DsTokens tokens = DsTokens.whiteInk}) {
     ),
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 控件里的字（第四十六轮）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Material 文本控件（`DropdownButtonFormField` / `DropdownButton`，以及按钮的
+/// `ButtonStyle.textStyle`）的 `style:` —— **这些地方请走它，不要直接写 `TextStyle(...)`**。
+///
+/// 用户 2026-10-16 第四十六轮：「优化一些框里字太大的问题，比如默认源 代理模式，
+/// 动漫库的筛选年份等」—— 这一条负责"字体"那一半；字号由调用方按档位给
+/// （设置页给 `kSettingsBodySize`）。
+///
+/// 为什么必须包一层（与 `buildDsanimaTheme` 里那个 `label()` 是同一个坑，证据同一批图）：
+/// 上面这几个控件把这个 style **整份**当文字样式用，**不像 `Text` 那样与主题 `textTheme`
+/// 合并** —— 于是主题顶上的 `fontFamily: dsFontFamily` 在这些框里**丢了**，
+/// 框里的字掉回系统默认字体（真机上是"同一行里字体不一样"，探针里直接变成一排方框：
+/// `build/probe-size/A_dropdown.png` 第 ②③④ 行的下拉值）。
+///
+/// ⚠️ `TextField` / `TextFormField` **不在**这个坑里（它们在内部把 `style:` merge 到
+/// `textTheme.bodyLarge` 上，探针实测 family 仍是 YaHei UI，见 `settings_shot_probe.dart`
+/// 的 stdout）—— 但用这个函数写也不会有副作用。
+///
+/// 数字统一 tabular（与主题 `textTheme` 各档一致：时间 / 大小 / 端口这些不要跳字宽）。
+TextStyle dsControlTextStyle(
+  DsTokens t, {
+  double fontSize = DsTypeScale.body,
+  Color? color,
+  FontWeight? fontWeight,
+}) =>
+    TextStyle(
+      color: color ?? t.text,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      fontFamily: dsFontFamily,
+      fontFamilyFallback: dsFontFallback,
+      fontFeatures: DsTokens.tabular,
+    );
+

@@ -193,6 +193,7 @@ class SourcePage {
     this.hasNext = false,
     this.page = 1,
     this.fromCache = false,
+    this.staleFallback = false,
   });
 
   /// 空页（例如 RSS 源被请求第 2 页）。**不是**错误，也不会伪造数据。
@@ -206,12 +207,20 @@ class SourcePage {
   final int page;
   final DateTime fetchedAt;
 
-  /// 是否来自缓存（含网络失败回落的 stale 缓存）。
+  /// 是否来自缓存（**含**网络失败回落的 stale 缓存，也含新鲜命中）。
   final bool fromCache;
+
+  /// 缓存是**过期回落**来的（= 网络那一步真的失败过）。
+  ///
+  /// 第四十二轮 UX #10：`fromCache` 一种标志盖了两种完全不同的情形 ——
+  /// ① 新鲜命中（TTL 内，**根本没发网络请求**）；② 网络失败后回落过期缓存。
+  /// 界面只有这一个标志，于是把 ① 也报成「网络抓取失败」，而重搜同一个词
+  /// 必然命中 ① —— 用户会以为网络一直在坏。要区分就必须多这一个字段。
+  final bool staleFallback;
 
   @override
   String toString() => 'SourcePage(page=$page, items=${items.length}, '
-      'hasNext=$hasNext, fromCache=$fromCache)';
+      'hasNext=$hasNext, fromCache=$fromCache, staleFallback=$staleFallback)';
 }
 
 /// 源层统一异常。

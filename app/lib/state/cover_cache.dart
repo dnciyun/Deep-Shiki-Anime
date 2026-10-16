@@ -370,6 +370,9 @@ class HttpCoverCache implements CoverCachePort {
       // 超时 / DNS 失败 / 磁盘满：一律降级（封面不是功能主路径）。
       return null;
     } finally {
+      // 摘掉 in-flight 标记。返回值是 Map 里存着的那个 Future（别处正在 await 它），
+      // 不是"又起了一个没人等的任务"。
+      // ignore: unawaited_futures
       _inflight.remove('$stem|${referer ?? ''}');
     }
   }

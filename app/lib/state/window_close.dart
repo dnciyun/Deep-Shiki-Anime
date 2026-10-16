@@ -24,11 +24,18 @@ import '../domain/exit_runner.dart';
 import '../domain/models.dart';
 import '../domain/ports.dart';
 import '../theme/tokens.dart';
+import '../ui/widgets/feedback.dart';
 import 'desktop_integration.dart'
-    show LocalNotifierPort, pauseAllTorrents, resumeAllTorrents;
+    show
+        LocalNotifierPort,
+        TrayToggleResult,
+        pauseAllTorrents,
+        queueSyncTargets,
+        resumeAllTorrents;
 import 'engine_bootstrap.dart' show EngineRuntimeHolder;
 import 'hive_store.dart' show HiveKeyValueStore;
 import 'host_data.dart' show HostDataHolder;
+import 'playback.dart';
 import 'providers.dart';
 
 enum CloseChoice { background, exitApp, cancel }
@@ -221,6 +228,8 @@ class CloseCoordinator with WindowListener {
         case TrayCommand.restore:
           unawaited(windowManager.show());
           unawaited(windowManager.focus());
+        case TrayCommand.showPlayer:
+          unawaited(_showPlayerWindow());
         case TrayCommand.pauseAll:
           unawaited(_toggleAll(pause: true));
         case TrayCommand.resumeAll:
@@ -231,26 +240,139 @@ class CloseCoordinator with WindowListener {
     });
   }
 
-  /// 托盘的「暂停全部 / 继续全部」：逐个动引擎里的 torrent（单个失败不中断）。
+  /// 托盘的「显示播放器窗口」（第四十二轮 UX #48）。
+  ///
+  /// 走的就是主窗口侧栏那颗按钮的同一条路（`reopenPlayerWindow`：确保引擎在跑 →
+  /// 重新取串流地址 → 让子窗口 show 出来）。**没有在播的内容时明说**，不静默 ——
+  /// 托盘菜单是常驻的，用户点它的时候不一定正在看片。
+  Future<void> _showPlayerWindow() async {
+    final PlaybackUiState playback = container.read(playbackProvider);
+    if (playback.nowPlaying == null) {
+      await _report(
+        '还没有在播的内容：先在「搜索」或「已完成」里点一集，之后这里可以直接唤回播放器',
+        title: 'DSAnima · 没有在播的内容',
+        warning: true,
+      );
+      return;
+    }
+    await container.read(playbackProvider.notifier).reopenPlayerWindow();
+    final DsFailure? failure = container.read(playbackProvider).failure;
+    if (failure != null) {
+      await _report(
+        '唤回播放窗口失败：${failure.message}',
+        title: 'DSAnima · 唤回播放窗口失败',
+        warning: true,
+      );
+    }
+  }
   ///
   /// 引擎没起时给出明确提示，不假装成功。
+  ///
+  /// 第四十二轮 UX #8 两处修正：
+  /// ① **部分失败不许说"已全部"** —— 回的是 `ok/total`，差几个就如实说几个；
+  /// ② 反馈不再只走一扇可能被收起来的窗口：主窗口不可见时改发**系统通知**
+  ///    （用户正在用托盘，正是主窗口被收起来的场景 —— 旧实现把提示画在一扇
+  ///    看不见的窗口里，等于没说）。
   Future<void> _toggleAll({required bool pause}) async {
     final EnginePort engine = container.read(enginePortProvider);
+    final String verb = pause ? '暂停' : '继续';
     try {
-      final int ok = pause
-          ? await pauseAllTorrents(engine)
-          : await resumeAllTorrents(engine);
-      _toast(pause ? '已暂停全部任务（$ok 个）' : '已继续全部任务（$ok 个）');
+      final TrayToggleResult r =
+          pause ? await pauseAllTorrents(engine) : await resumeAllTorrents(engine);
+      // 引擎动完，**队列侧的状态也要跟上**（第四十二轮 UX #30）：旧实现只动引擎，
+      // 于是用户进「队列」页看到每行还写着「下载中」，与引擎里的真实状态相反 ——
+      // 两处说法不一致，用户不知道该信哪边。
+      final int synced = await _syncQueueState(pause: pause, engineIds: r.okIds);
+      if (r.ok == r.total) {
+        await _report(
+          '已$verb全部任务（引擎 ${r.ok} 个${synced > 0 ? '，队列同步 $synced 条' : ''}）',
+        );
+      } else {
+        await _report(
+          '已$verb ${r.ok}/${r.total} 个任务：${r.total - r.ok} 个没成功（它们可能已经不在引擎里）',
+          title: 'DSAnima · 没全部$verb成功',
+          warning: true,
+        );
+      }
     } catch (error) {
-      _toast('${pause ? '暂停' : '继续'}全部失败：'
-          '${describeFailure(error).message}');
+      await _report(
+        '$verb全部失败：${describeFailure(error).message}',
+        title: 'DSAnima · $verb全部失败',
+        warning: true,
+      );
     }
   }
 
-  void _toast(String text) {
+  /// 把队列里**对应那几个引擎 torrent 的任务**状态同步过去。
+  ///
+  /// 只同步 `engineIds` 里真的动成功的那些（不然会出现"引擎没暂停成功、队列却说已暂停"）。
+  /// 队列快照读不到（流还没发第一条）时什么都不做 —— 那时界面本来也还没显示任何行。
+  /// 返回同步了几条。
+  Future<int> _syncQueueState({
+    required bool pause,
+    required List<int> engineIds,
+  }) async {
+    if (engineIds.isEmpty) return 0;
+    final List<QueueJobView>? jobs = container.read(queueJobsProvider).value;
+    if (jobs == null) return 0;
+    final QueuePort queue = container.read(queuePortProvider);
+    // 该改哪几条由纯函数决定（可单测）；这里只负责逐条真的调用。
+    final List<String> targets =
+        queueSyncTargets(jobs: jobs, engineIds: engineIds, pause: pause);
+    int synced = 0;
+    for (final String jobId in targets) {
+      try {
+        if (pause) {
+          await queue.pauseJob(jobId);
+        } else {
+          await queue.resumeJob(jobId);
+        }
+        synced++;
+      } catch (_) {
+        // 单条同步失败不影响其它条：这一条的状态与引擎不一致，但界面照旧可用
+        // （用户点那一行的「继续」会自己纠正）。
+      }
+    }
+    return synced;
+  }
+
+  /// 把一条托盘动作的结果送到用户眼前。
+  ///
+  /// 主窗口可见 → 页内提示（就近、不打扰）；被托盘收起来 → 系统通知
+  /// （否则提示落在一扇看不见的窗口里）。通知发不出去（未 setup / 系统关了）
+  /// 时仍然退回页内提示 —— 总比什么都不做强。
+  Future<void> _report(String text, {String? title, bool warning = false}) async {
+    if (await _mainWindowVisible()) {
+      _toast(text, warning: warning);
+      return;
+    }
+    final bool sent = await container
+        .read(notificationPortProvider)
+        .notify(title: title ?? 'DSAnima', body: text);
+    if (!sent) _toast(text, warning: warning);
+  }
+
+  /// 主窗口现在看得见吗。问不出来时按"看得见"处理（用页内提示，不打扰）。
+  Future<bool> _mainWindowVisible() async {
+    try {
+      return await windowManager.isVisible();
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// 主窗口可见时的页内提示。
+  ///
+  /// 第四十二轮 UX #14：走全仓统一那套（凸起面 + 左侧语义色细条 + 图标），
+  /// 不再自己拼裸 SnackBar —— 否则同样是"一句提示"，外观在不同入口长得不一样，
+  /// 用户没法靠样式判断"这是成功还是警告"。
+  void _toast(String text, {bool warning = false}) {
     final BuildContext? context = dsNavigatorKey.currentContext;
     if (context == null || !context.mounted) return;
-    ScaffoldMessenger.maybeOf(context)
-        ?.showSnackBar(SnackBar(content: Text(text)));
+    if (warning) {
+      showWarning(context, text);
+    } else {
+      showSuccess(context, text, seconds: 4);
+    }
   }
 }

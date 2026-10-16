@@ -7,6 +7,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/format.dart';
@@ -16,6 +17,7 @@ import '../../domain/queue_sort.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../settings_page.dart' show kSettingsCaptionSize, kSettingsTitleSize;
+import 'feedback.dart';
 import 'neo.dart';
 import 'neo_dropdown.dart';
 
@@ -200,6 +202,7 @@ class QueueJobRow extends StatelessWidget {
     this.torrent,
     this.onPause,
     this.onResume,
+    this.resumeLabel = '继续',
     this.onRemove,
     this.onRemoveWithFiles,
     this.onPriorityPick,
@@ -210,6 +213,13 @@ class QueueJobRow extends StatelessWidget {
   final EngineTorrentView? torrent;
   final VoidCallback? onPause;
   final VoidCallback? onResume;
+
+  /// 「继续」那颗按钮写什么。
+  ///
+  /// 失败的任务走的是同一条 `resumeJob` 路（core 允许多这一个状态，见
+  /// `resumeJob` 里的判据），但文案必须是**重试** —— 用户看到「继续」不会想到
+  /// 那是"再试一次刚才失败的那一步"（第四十二轮 UX #7）。
+  final String resumeLabel;
   final VoidCallback? onRemove;
   final VoidCallback? onRemoveWithFiles;
   final void Function(int level)? onPriorityPick;
@@ -365,7 +375,12 @@ class QueueJobRow extends StatelessWidget {
               if (onPause != null)
                 NeoButton(label: '暂停', icon: Icons.pause, onPressed: onPause, compact: true),
               if (onResume != null)
-                NeoButton(label: '继续', icon: Icons.play_arrow, onPressed: onResume, compact: true),
+                NeoButton(
+                  label: resumeLabel,
+                  icon: Icons.play_arrow,
+                  onPressed: onResume,
+                  compact: true,
+                ),
               if (onRemove != null)
                 NeoButton(
                   label: '移除',
@@ -470,10 +485,32 @@ class SubscriptionRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          SelectableText(
-            subscription.feedUrl,
-            maxLines: 1,
-            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption, height: 1.4),
+          // 第四十二轮 UX #46：订阅地址原来写死 `maxLines: 1` 且不能横向滚 ——
+          // 而这是**唯一一处**用户真的要"核对全文"的地方（复制去浏览器/发给别人）。
+          // 现在给两行 + 一颗「复制」按钮（复制拿到的是**完整**地址，跟屏幕截断无关）。
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                child: SelectableText(
+                  subscription.feedUrl,
+                  maxLines: 2,
+                  style: TextStyle(
+                      color: t.text3, fontSize: DsTypeScale.caption, height: 1.4),
+                ),
+              ),
+              const SizedBox(width: 6),
+              NeoIconButton(
+                icon: Icons.copy_all_outlined,
+                tooltip: '复制订阅地址（拿到的是完整地址）',
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: subscription.feedUrl));
+                  if (context.mounted) {
+                    showSuccess(context, '订阅地址已复制');
+                  }
+                },
+              ),
+            ],
           ),
           if (subscription.lastError != null) ...<Widget>[
             const SizedBox(height: 6),

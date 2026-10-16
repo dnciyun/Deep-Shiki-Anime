@@ -13,6 +13,8 @@
 /// 4. 「下载全部」**跳过已打勾的**，也可以单集下载 / 播放。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -28,6 +30,7 @@ import '../state/providers.dart';
 import '../theme/tokens.dart';
 import 'widgets/cover.dart';
 import 'widgets/ds_cards.dart';
+import 'widgets/ds_spinner.dart';
 import 'widgets/feedback.dart';
 import 'widgets/follow_button.dart';
 import 'widgets/group_subscribe.dart';
@@ -53,15 +56,47 @@ class FollowingDetailPage extends ConsumerStatefulWidget {
 class _FollowingDetailPageState extends ConsumerState<FollowingDetailPage> {
   bool _batchBusy = false;
 
+  /// 顶部「刷新」在跑（原来它**没有任何可观察状态**：点完既没转圈也没提示）。
+  bool _refreshing = false;
+
   String get _bangumiId => (widget.entry.mikanBangumiId ?? '').trim();
 
   /// 下拉刷新：番剧详情（有哪些组）+ 每个订阅的条目（RSS）。
+  ///
+  /// 第四十二轮 UX #23：旧实现 `invalidate` 完就 `await 50ms` 然后**什么都不做** ——
+  /// 没有 loading、没有结果提示。未订阅字幕组时下面的列表根本不存在，用户点完
+  /// 完全看不出发生什么，只能猜。现在：按钮进忙态，并**等这一轮重取真的落地**，
+  /// 成功/失败都明说一句。
   Future<void> _refresh(List<SubscriptionView> mine) async {
-    if (_bangumiId.isNotEmpty) ref.invalidate(bangumiDetailProvider(_bangumiId));
-    for (final SubscriptionView sub in mine) {
-      ref.invalidate(subscriptionItemsProvider(sub.id));
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      if (_bangumiId.isNotEmpty) {
+        ref.invalidate(bangumiDetailProvider(_bangumiId));
+      }
+      for (final SubscriptionView sub in mine) {
+        ref.invalidate(subscriptionItemsProvider(sub.id));
+      }
+      // 等真的拉完再报结果：失败会从这里抛出来（不再"点完没反应"）。
+      if (_bangumiId.isNotEmpty) {
+        await ref.read(bangumiDetailProvider(_bangumiId).future);
+      }
+      for (final SubscriptionView sub in mine) {
+        await ref.read(subscriptionItemsProvider(sub.id).future);
+      }
+      if (!mounted) return;
+      showSuccess(
+        context,
+        mine.isEmpty
+            ? '已重新拉取这一部的字幕组'
+            : '已重新拉取 ${mine.length} 个字幕组的剧集',
+      );
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      showFailure(context, describeFailure(error, stackTrace: stackTrace));
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
     }
-    await Future<void>.delayed(const Duration(milliseconds: 50));
   }
 
   @override
@@ -100,9 +135,11 @@ class _FollowingDetailPageState extends ConsumerState<FollowingDetailPage> {
           FollowButton(entry: widget.entry),
           const SizedBox(width: 8),
           IconButton(
-            icon: const Icon(Icons.refresh, size: 16),
-            tooltip: '重新拉取字幕组与订阅的剧集',
-            onPressed: () => _refresh(mine),
+            icon: _refreshing
+                ? const DsSpinner.inline()
+                : const Icon(Icons.refresh, size: 16),
+            tooltip: _refreshing ? '正在重新拉取…' : '重新拉取字幕组与订阅的剧集',
+            onPressed: _refreshing ? null : () => unawaited(_refresh(mine)),
           ),
           const SizedBox(width: 6),
         ],
@@ -226,6 +263,9 @@ class _SubscriptionSection extends ConsumerStatefulWidget {
 class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
   bool _busy = false;
 
+  /// 「下载全部」的进度文案（`加入中 3/8`）；不在批量下载时为 null。
+  String? _progress;
+
   String get _groupName =>
       subscriptionGroupName(widget.subscription) ?? widget.subscription.name;
 
@@ -243,9 +283,15 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
           item,
     ];
     final int skipped = items.length - todo.length;
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     if (todo.isEmpty) {
-      messenger.showSnackBar(SnackBar(content: Text('这一组 ${items.length} 集都看过了，没有要下的')));
+      // 第四十二轮 UX #14：统一走反馈通道（原来是自己拼的裸 SnackBar，
+      // 与全仓"凸起面 + 左侧语义色细条 + 图标"那套不是一套）。这不是失败，
+      // 只是"没有要做的" —— 用成功形态说清就好。
+      showSuccess(
+        context,
+        '这一组 ${items.length} 集都看过了，没有要下的',
+        seconds: 4,
+      );
       return;
     }
     widget.onBatchBusy(true);
@@ -254,15 +300,39 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
       final BatchDownloadResult result = await enqueueDownloads(
         ref.read(queuePortProvider).enqueueDownload,
         todo,
+        // 一次 20 条是串行的（避免并发打同一个站被当抓取器），所以必须有进度，
+        // 否则按钮一直是「加入中…」，用户不知道卡住了还是在跑（UX #24）。
+        onProgress: (int done, int total) {
+          if (!mounted) return;
+          setState(() => _progress = '加入中 $done/$total');
+        },
       );
       if (!mounted) return;
       ref.invalidate(queueJobsProvider);
-      messenger.showSnackBar(
-        SnackBar(content: Text('${batchDownloadSummary(result)}（跳过已看过 $skipped 集）')),
-      );
+      final String summary = '${batchDownloadSummary(result)}（跳过已看过 $skipped 集）';
+      // 有失败就按**失败**画（带「怎么办」），不能混成一条普通提示 —— 否则
+      // "13 条失败：第一条…" 看起来跟"已加入 13 条"是同一种东西（UX #24）。
+      if (result.failures.isEmpty) {
+        showSuccess(context, summary, seconds: 6);
+      } else {
+        showFailure(
+          context,
+          DsFailure(
+            summary,
+            hint: '再点一次「下载全部」只会补没进队列的那些（已在队列里的按 id 去重）',
+          ),
+        );
+      }
+    } catch (error, stackTrace) {
+      // 旧实现只有 `finally` 没有 `catch`：异常从 async 回调里逃出去，静默消失。
+      if (!mounted) return;
+      showFailure(context, describeFailure(error, stackTrace: stackTrace));
     } finally {
       if (mounted) {
-        setState(() => _busy = false);
+        setState(() {
+          _busy = false;
+          _progress = null;
+        });
         widget.onBatchBusy(false);
       }
     }
@@ -282,16 +352,30 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
       group: group,
       items: episodes,
     );
-    final WatchedMarksController marks = ref.read(watchedMarksProvider.notifier);
-    // 用户动作：`byUser: true` —— 手动打勾会解掉"用户取消过"的抑制，手动取消会记进抑制表。
-    if (watched) {
-      await marks.mark(keys, byUser: true);
-    } else {
-      await marks.unmark(keys, byUser: true);
-    }
-    if (skippedBatch > 0 && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('合集/全集条目不计入批量打勾（跳过 $skippedBatch 条）——它们不在「下载全部」的跳过判据里')),
+    // 勾是**要落盘**的：写盘失败必须报出来，否则用户看到勾上了、重启后没了
+    //（第四十二轮 UX #5）。
+    final bool ok = await runGuardedBool(
+      context,
+      action: () async {
+        final WatchedMarksController marks =
+            ref.read(watchedMarksProvider.notifier);
+        // 用户动作：`byUser: true` —— 手动打勾会解掉"用户取消过"的抑制，
+        // 手动取消会记进抑制表。
+        if (watched) {
+          await marks.mark(keys, byUser: true);
+        } else {
+          await marks.unmark(keys, byUser: true);
+        }
+      },
+    );
+    if (!ok || !mounted) return;
+    if (skippedBatch > 0) {
+      // 第四十二轮 UX #14：统一走反馈通道。这是"有一部分没按你说的做" = 警告，
+      // 不是成功也不是失败。
+      showWarning(
+        context,
+        '合集/全集条目不计入批量打勾（跳过 $skippedBatch 条）',
+        hint: '它们不在「下载全部」的跳过判据里 —— 要排除整季打包，去「设置」的省流量列表加一条规则',
       );
     }
   }
@@ -318,7 +402,6 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
   }
 
   Future<void> _refresh() async {
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     setState(() => _busy = true);
     try {
       await runGuarded(
@@ -327,14 +410,14 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
           final SubsRefreshResult result =
               await ref.read(subsPortProvider).refresh(widget.subscription.id);
           ref.invalidate(subscriptionItemsProvider(widget.subscription.id));
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text(
-                result.seeded
-                    ? '首次抓取：只做已读标记（${result.fetched} 条），未入队历史剧集'
-                    : '刷新完成：抓到 ${result.fetched} 条，命中 ${result.matched} 条，入队 ${result.queued} 条',
-              ),
-            ),
+          if (!mounted) return;
+          // 第四十二轮 UX #14：统一走反馈通道（原来是裸 SnackBar）。
+          showSuccess(
+            context,
+            result.seeded
+                ? '首次抓取：只做已读标记（${result.fetched} 条），未入队历史剧集'
+                : '刷新完成：抓到 ${result.fetched} 条，命中 ${result.matched} 条，入队 ${result.queued} 条',
+            seconds: 5,
           );
         },
       );
@@ -423,7 +506,8 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
               NeoIconButton(
                 icon: Icons.delete_outline,
                 tooltip: '取消订阅这一组（不影响已下载的文件）',
-                onPressed: () => _remove(),
+                // 同 #36：批量动作在跑时不许并发改订阅。
+                onPressed: _busy ? null : () => unawaited(_remove()),
               ),
             ],
           ),
@@ -461,7 +545,9 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
                       ),
                       const Spacer(),
                       NeoButton(
-                        label: _busy ? '加入中…' : '下载全部（跳过已看过）',
+                        label: _busy
+                            ? (_progress ?? '加入中…')
+                            : '下载全部（跳过已看过）',
                         icon: Icons.download,
                         kind: NeoButtonKind.primary,
                         compact: true,
@@ -473,7 +559,10 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
                         label: allWatched ? '取消全看过' : '全部标记已看过',
                         icon: allWatched ? Icons.remove_done : Icons.done_all,
                         compact: true,
-                        onPressed: () => _markAll(list, !allWatched),
+                        // 忙的时候一并禁掉（同页「刷新」「下载全部」早就禁了）——否则
+                        // 「下载全部」正在读勾、这边同时在改勾，两边看到的是不同世界
+                        //（第四十二轮 UX #36）。
+                        onPressed: _busy ? null : () => _markAll(list, !allWatched),
                       ),
                     ],
                   ),
@@ -487,14 +576,19 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
                         group: group,
                         item: item,
                       )),
-                      onToggleWatched: () => ref
-                          .read(watchedMarksProvider.notifier)
-                          .toggle(subscriptionItemWatchKey(
-                            bangumiId: bangumiId,
-                            title: widget.entry.title,
-                            group: group,
-                            item: item,
-                          )),
+                      // 单集那个勾也要能报错：勾是落盘的，写盘失败以前完全静默
+                      //（第四十二轮 UX #5）。成功不必提示 —— 勾变了本身就是反馈。
+                      onToggleWatched: () => runGuarded(
+                        context,
+                        action: () => ref
+                            .read(watchedMarksProvider.notifier)
+                            .toggle(subscriptionItemWatchKey(
+                              bangumiId: bangumiId,
+                              title: widget.entry.title,
+                              group: group,
+                              item: item,
+                            )),
+                      ),
                       onDownload: () => runGuarded(
                         context,
                         action: () => ref.read(queuePortProvider).enqueueDownload(item),

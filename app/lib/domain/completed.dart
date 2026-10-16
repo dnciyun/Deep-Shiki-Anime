@@ -25,6 +25,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'episode_group.dart' show parseEpisodeNumber;
+import 'error_text.dart';
 import 'models.dart';
 import 'recycle_bin.dart';
 import 'title_clean.dart';
@@ -244,7 +245,26 @@ Future<CompletedDeleteOutcome> deleteCompletedFiles({
       if (!File(s).existsSync() && !Directory(s).existsSync()) s,
   ];
 
-  final String? engineWarning = await removeFromEngine(torrent.id);
+  final String? engineWarning;
+  try {
+    engineWarning = await removeFromEngine(torrent.id);
+  } catch (error, stackTrace) {
+    // ⚠️ 移除任务失败就**到此为止，一个文件都不动**：引擎还挂着这个 torrent，
+    // 文件先走了它下一轮扫描就会发现文件消失、把任务标成错误（上面"顺序"那段说的
+    // 就是这件事）。所以以失败收场，并明说"文件没动"。
+    //
+    // 第四十二轮 UX #13：这一次 await 原来在 try 之外 —— 它抛异常时整函数直接
+    // 从这里冒出去，调用方那句 `if (outcome.failure != null)` 根本轮不到执行，
+    // 用户看到的是"确认之后一片寂静：对话框关了、什么都没发生、零说明"。
+    final DsFailure f = describeFailure(error, stackTrace: stackTrace);
+    return CompletedDeleteOutcome(
+      recycled: 0,
+      missing: missing,
+      blocked: blocked,
+      failure: '没能从引擎里移除这个任务，所以文件一个都没动。${f.message}'
+          '${f.hint == null ? '' : '\n怎么办：${f.hint}'}',
+    );
+  }
 
   if (targets.isEmpty) {
     return CompletedDeleteOutcome(
@@ -270,13 +290,15 @@ Future<CompletedDeleteOutcome> deleteCompletedFiles({
       engineWarning: engineWarning,
       failure: e.hint == null ? e.message : '${e.message}\n怎么办：${e.hint}',
     );
-  } catch (error) {
+  } catch (error, stackTrace) {
+    // 不再 `'$error'`（整串技术文本，还可能带本机路径）—— 走统一文案（UX #15）。
+    final DsFailure f = describeFailure(error, stackTrace: stackTrace);
     return CompletedDeleteOutcome(
       recycled: 0,
       missing: missing,
       blocked: blocked,
       engineWarning: engineWarning,
-      failure: '$error',
+      failure: f.hint == null ? f.message : '${f.message}\n怎么办：${f.hint}',
     );
   }
 }

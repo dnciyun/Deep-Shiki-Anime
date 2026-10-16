@@ -5,10 +5,13 @@
 /// 操作走 `NeoButton` / `NeoIconButton`（按下凹进去）。
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/error_text.dart';
+import '../domain/format.dart';
 import '../domain/models.dart';
 import '../domain/ports.dart';
 import '../domain/queue_sort.dart';
@@ -99,8 +102,16 @@ class QueuePage extends ConsumerWidget {
     final AsyncValue<List<QueueJobView>> jobsValue = ref.watch(queueJobsProvider);
     final QueueSummary summary = ref.watch(queueSummaryProvider);
     // 一次性订阅引擎进度，行内只做纯查表（避免在 itemBuilder 里 watch）。
+    final AsyncValue<List<EngineTorrentView>> torrentsValue =
+        ref.watch(engineTorrentsProvider);
     final List<EngineTorrentView> torrents =
-        ref.watch(engineTorrentsProvider).value ?? const <EngineTorrentView>[];
+        torrentsValue.value ?? const <EngineTorrentView>[];
+    // 队列本身是 Dart 侧状态，**引擎挂了它照样读得出来** —— 所以"引擎没连上"这件事
+    // 只能靠这一路 AsyncError 判断。旧实现直接 `?? const []` 吞掉它：边车启动失败或
+    // 中途挂掉时，每行进度静静停在最后一次成功的位置，界面上一句解释都没有
+    //（第四十二轮 UX #3，二级）。
+    final Object? torrentsError = torrentsValue.error;
+    final bool torrentsFailed = torrentsError != null && !torrentsValue.isLoading;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -149,13 +160,13 @@ class QueuePage extends ConsumerWidget {
                 ],
                 onSelected: (String value) {
                   if (value == 'clearDone') {
-                    runGuarded(
+                    unawaited(runGuarded(
                       context,
                       action: () => ref.read(queuePortProvider).clearCompleted(),
                       success: '已清空已完成任务',
-                    );
+                    ));
                   } else {
-                    _confirmClearAll(context, ref);
+                    unawaited(_confirmClearAll(context, ref));
                   }
                 },
               ),
@@ -163,6 +174,23 @@ class QueuePage extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 10),
+        if (torrentsFailed) ...<Widget>[
+          Padding(
+            padding: EdgeInsets.fromLTRB(t.spacing, 0, t.spacing, 8),
+            child: DsBanner(
+              kind: DsBannerKind.error,
+              text: '读不到引擎的实时进度：'
+                  '${describeFailure(torrentsError).message}\n'
+                  '下面每行的进度与速度会停在最后一次成功的时刻。',
+              action: NeoButton(
+                label: '重试',
+                icon: Icons.refresh,
+                kind: NeoButtonKind.primary,
+                onPressed: () => ref.invalidate(engineTorrentsProvider),
+              ),
+            ),
+          ),
+        ],
         Expanded(
           child: DsAsync<List<QueueJobView>>(
             value: jobsValue,
@@ -235,6 +263,12 @@ class QueuePage extends ConsumerWidget {
     bool canDrag = true,
   }) {
     final QueuePort port = ref.read(queuePortProvider);
+    // 失败的任务也要有出路（第四十二轮 UX #7）：core 的 `resumeJob` **本来**就收
+    // `JobState.failed`（它会把状态放回 queued，无 engineId 的那种就重新加种），
+    // 但界面只在 `paused` 时才渲染那颗按钮 —— 于是失败行成了一个死路：
+    // 既没有「继续」、也没有自动重试，用户只能移除再回搜索页重找。
+    final bool isFailed = job.state == JobState.failed;
+    final bool canResume = job.state == JobState.paused || isFailed;
     return QueueJobRow(
       key: ValueKey<String>(job.id),
       job: job,
@@ -248,9 +282,14 @@ class QueuePage extends ConsumerWidget {
       onPause: job.state == JobState.downloading || job.state == JobState.queued
           ? () => runGuarded(context, action: () => port.pauseJob(job.id), success: '已暂停')
           : null,
-      onResume: job.state == JobState.paused
-          ? () => runGuarded(context, action: () => port.resumeJob(job.id), success: '已继续')
+      onResume: canResume
+          ? () => runGuarded(
+                context,
+                action: () => port.resumeJob(job.id),
+                success: isFailed ? '已重新加入下载：${job.displayTitle}' : '已继续',
+              )
           : null,
+      resumeLabel: isFailed ? '重试' : '继续',
       onRemove: () => _runRemoval(
         context,
         () => port.removeJob(job.id),
@@ -279,8 +318,16 @@ class QueuePage extends ConsumerWidget {
       builder: (BuildContext context) => AlertDialog(
         title: const Text('删除任务并删除已下载文件？'),
         content: Text(
-          '${job.displayTitle}\n\n'
-          '会调用引擎 DELETE /torrents/{id}?deleteFiles=true，磁盘上的文件会被一起删掉。',
+          // 第四十二轮 UX #45：不再写 `DELETE /torrents/{id}?deleteFiles=true` 这种
+          // 实现细节，改说人话 —— 删的是哪一部、多大、**能不能还原**。
+          // 「能不能还原」这一条尤其要说：同项目「已完成」页的删除是**走回收站**的
+          // （那里写着"可以还原"），而这条路是引擎直删、不进回收站，用户很容易按
+          // 上一页的经验以为还能找回来。
+          '${job.displayTitle}\n'
+          '${job.item.sizeBytes == null ? '' : '大小约 ${formatBytes(job.item.sizeBytes)}。'}'
+          '会把它从队列和引擎里一起删掉，**磁盘上已经下好的文件一并永久删除**'
+          '（这条路不进回收站，删了找不回来）。\n'
+          '只想删任务、把文件留着：选「移除」。',
           style: TextStyle(color: t.text2, fontSize: DsTypeScale.body, height: 1.5),
         ),
         actions: <Widget>[
@@ -302,6 +349,10 @@ class QueuePage extends ConsumerWidget {
   /// 与 [runGuarded] 的区别：这些动作会**回报一句引擎侧的提示**（记录已清掉、但引擎那一步
   /// 没成功）。队列记录已经删了，所以不能再报"已删除"，也不能把提示吞掉 —— 用户得知道
   /// 文件可能还在、或者引擎里本来就已经没有这个任务了（用户 2026-10-11「删不掉」）。
+  ///
+  /// 第四十二轮 UX #28：有提示时**走警告通道**，不再塞进绿色成功条 ——
+  /// 旧实现是 `showSuccess(context, warning ?? success)`，显示的确实是警告原文，
+  /// 但用的是成功语义/绿色，一眼扫过去就漏掉了"引擎没删掉"。
   Future<void> _runRemoval(
     BuildContext context,
     Future<String?> Function() action, {
@@ -310,7 +361,15 @@ class QueuePage extends ConsumerWidget {
     try {
       final String? warning = await action();
       if (!context.mounted) return;
-      showSuccess(context, warning ?? success);
+      if (warning == null) {
+        showSuccess(context, success);
+        return;
+      }
+      showWarning(
+        context,
+        warning,
+        hint: '队列记录已经删了；引擎里可能还留着这个任务（到「已完成」页可以再删一次）',
+      );
     } catch (error, stackTrace) {
       if (!context.mounted) return;
       showFailure(context, describeFailure(error, stackTrace: stackTrace));

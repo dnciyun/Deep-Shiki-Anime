@@ -22,6 +22,7 @@ import 'package:dsanima/ui/search_page.dart';
 import 'package:dsanima/ui/widgets/cover.dart';
 import 'package:dsanima/ui/widgets/ds_carousel.dart';
 import 'package:dsanima/ui/widgets/follow_button.dart';
+import 'package:dsanima/ui/widgets/library_seed_block.dart';
 import 'package:dsanima/ui/widgets/neo.dart';
 import 'package:dsanima/ui/widgets/neo_dropdown.dart';
 import 'package:dsanima/ui/widgets/search_sections.dart';
@@ -878,8 +879,12 @@ void main() {
     expect(container.read(navProvider), ShellTab.home, reason: '不再直接跳到搜索页');
     expect(container.read(searchProvider).keyword, isEmpty, reason: '也不许偷偷把番名丢进搜索');
 
-    // 详情页里那颗按钮才是原来那条链路（番名 → 搜索页 → 搜种子）。
-    await tester.tap(find.byKey(const Key('library-detail-search-seeds')));
+    // 详情页里的**种子块**才是原来那条链路（番名 → 搜索页 → 搜种子）。
+    // ⚠️ 第四十五轮：原来那颗「按这个名字搜种子」按钮换成了页内的种子块，
+    //    「去搜索页」降级成块抬头里的一颗小链接；块在折线以下时 ListView 还没建它，
+    //    所以先滚到它。
+    await tester.scrollUntilVisible(find.byKey(dsDetailSeedsSearchPageKey), 200);
+    await tester.tap(find.byKey(dsDetailSeedsSearchPageKey));
     await tester.pumpAndSettle();
     expect(container.read(searchProvider).keyword, '葬送的芙莉莲');
     expect(container.read(navProvider), ShellTab.search);

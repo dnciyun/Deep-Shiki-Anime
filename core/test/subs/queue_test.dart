@@ -12,9 +12,19 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'support.dart';
 
+/// 与真实边车 504 时抛出的 `EngineException` **同形状**的替身。
+///
+/// 为什么用替身而不是 import `core/lib/engine/`：这个文件刻意只依赖本包的
+/// `subs` + `sources`（见文件头），而 `_startFailureText` 判的正是这段文本形状，
+/// 所以同形状的替身钉得更准（也顺便保证"以后改文案不会依赖引擎包内部"）。
+class _FakeEngineError implements Exception {
+  @override
+  String toString() => 'EngineException[504]: metadata_timeout '
+      '(POST http://127.0.0.1:45871/torrents)\n  响应体: {"detail":"metadata_timeout"}';
+}
+
 /// 假引擎端口。
-class FakeEngine implements TorrentEnginePort {
-  int nextId = 1;
+class FakeEngine implements TorrentEnginePort {  int nextId = 1;
 
   final List<String> addCalls = <String>[];
   final List<({int id, bool deleteFiles})> removeCalls =
@@ -339,6 +349,42 @@ void main() {
       final job = h.jobOf('item-01');
       expect(job.state, JobState.failed);
       expect(job.error, contains('metadata_timeout'));
+      await h.tearDown();
+    });
+
+    // ── 第四十二轮 UX #7：失败的那一行是"死路"上唯一的信息，必须是给人看的 ──
+    test('加种失败的文案：去掉技术类型名与本机地址，说清"为什么 + 怎么办"', () async {
+      final h = Harness();
+      // 真实边车 504 时抛的 `EngineException` 的 toString 就是这个形状
+      // （`EngineException[504]: metadata_timeout (POST http://…/torrents)`，
+      // 后面还跟着「响应体/原因」多行）。这里用一个同形状的替身来钉这条规则。
+      h.engine.addError = _FakeEngineError();
+      await expectLater(
+        h.manager.playNow(ep('01'), subscriptionId: 's'),
+        throwsA(isA<QueueException>()),
+      );
+      final job = h.jobOf('item-01');
+      expect(job.state, JobState.failed);
+      expect(job.error, isNot(contains('EngineException')), reason: '类型名不该上屏');
+      expect(job.error, isNot(contains('127.0.0.1')), reason: '本机地址不该上屏');
+      expect(job.error, isNot(contains('\n')), reason: '多行技术倾倒不该上屏');
+      expect(job.error, contains('做种'), reason: '要说清原因（没人做种）');
+      expect(job.error, contains('换一条种子'), reason: '要给出下一步');
+      await h.tearDown();
+    });
+
+    test('认不出的异常也只留一行、有长度上限（不倒库内部结构）', () async {
+      final h = Harness();
+      h.engine.addError = StateError('boom ${'x' * 400}\n第二行细节');
+      await expectLater(
+        h.manager.playNow(ep('01'), subscriptionId: 's'),
+        throwsA(isA<QueueException>()),
+      );
+      final job = h.jobOf('item-01');
+      expect(job.error, startsWith('加种失败：'));
+      expect(job.error, contains('boom'));
+      expect(job.error, isNot(contains('第二行细节')));
+      expect(job.error!.length, lessThan(200), reason: '一行、有上限，才不至于把行撑爆');
       await h.tearDown();
     });
   });
@@ -849,6 +895,32 @@ void main() {
       expect(restored.isExcluded('[组] another show - 01'), isTrue);
       expect(restored.isExcluded('[组] 正常番 - 01'), isFalse);
       expect(restored.isExcluded(null), isFalse);
+    });
+
+    // ── 第四十二轮 UX #25：界面写「排除正则」，就必须真的按正则匹配 ──
+    test('排除规则是**正则**：`合集|总集篇` 这种"或"要真的生效', () {
+      const BandwidthPolicy policy = BandwidthPolicy(
+        excludePatterns: <String>['合集|总集篇', 'HEVC.*10bit'],
+      );
+      // 旧实现是子串匹配：`合集|总集篇` 这一整串永远不是任何标题的子串 ⇒ 设了没反应。
+      expect(policy.isExcluded('[组] 某番 合集 01'), isTrue,
+          reason: '`|` 是"或"，左边命中就该排除');
+      expect(policy.isExcluded('[组] 某番 总集篇'), isTrue, reason: '右边也要命中');
+      expect(policy.isExcluded('[组] 某番 - 01 [HEVC 8bit]'), isFalse);
+      expect(policy.isExcluded('[组] 某番 - 01 [HEVC 10bit]'), isTrue,
+          reason: '`.*` 要当"任意字符"，不是字面量');
+      expect(policy.isExcluded('[组] 某番 - 01'), isFalse);
+    });
+
+    test('大小写不敏感照旧；编不出来的老模式退回子串匹配（不装作生效）', () {
+      const BandwidthPolicy policy = BandwidthPolicy(
+        excludePatterns: <String>['Another', 'C++'],
+      );
+      expect(policy.isExcluded('[组] another show - 01'), isTrue,
+          reason: '正则大小写不敏感');
+      // `C++` 不是合法正则（`+` 后面不能再跟 `+`）→ 退回子串匹配，仍然能用。
+      expect(policy.isExcluded('[组] 学 C++ 的人 - 01'), isTrue);
+      expect(policy.isExcluded('[组] 学 C 的人 - 01'), isFalse);
     });
 
     test('旧键 prefetchNext 不再被读取（否则"默认关闭"会被老配置打开）', () {

@@ -180,6 +180,19 @@ class AppSettings {
   /// 选择仍然算数），所以不要清理它。语义详见 `domain/aggregate.dart`。
   final List<String> aggregateExcludedSourceIds;
 
+  /// 搜索页「字幕组」筛选勾选的组（**归一化 key**，见 `domain/subtitle_groups.dart`）。
+  ///
+  /// 第四十五轮（用户：「在搜索中加入字幕组筛选」，并选定「落盘记住」）。空 = 不限。
+  /// 存归一化后的 key 而不是原始写法：同一个组在各站会写成 `桜都字幕组` / `桜都字幕組` /
+  /// `桜都`，只有 key 能跨源对上（面板上的展示名另取）。
+  final List<String> subtitleGroupFilter;
+
+  /// 最近用过的字幕组 key（**新的在前**），只用于面板排序（第四十五轮）。
+  ///
+  /// 为什么单独存：勾选会被清掉，但"我常看这家的"这件事没变 —— 预置名单只有 33 家，
+  /// 覆盖不到长尾里那些"一部番一个组"的情况（实测 336 个组名里 30% 只出现一次）。
+  final List<String> recentSubtitleGroups;
+
   /// 播完自动下一集（可关）。
   final bool autoPlayNext;
 
@@ -296,6 +309,8 @@ class AppSettings {
     this.defaultSourceId = 'mikan',
     this.searchMode = SearchMode.aggregate,
     this.aggregateExcludedSourceIds = const <String>[],
+    this.subtitleGroupFilter = const <String>[],
+    this.recentSubtitleGroups = const <String>[],
     this.autoPlayNext = true,
     this.firstRunCompleted = false,
     this.extraTrackers = '',
@@ -347,6 +362,8 @@ class AppSettings {
     String? defaultSourceId,
     SearchMode? searchMode,
     List<String>? aggregateExcludedSourceIds,
+    List<String>? subtitleGroupFilter,
+    List<String>? recentSubtitleGroups,
     bool? autoPlayNext,
     bool? firstRunCompleted,
     String? extraTrackers,
@@ -384,6 +401,8 @@ class AppSettings {
     defaultSourceId: defaultSourceId ?? this.defaultSourceId,
     searchMode: searchMode ?? this.searchMode,
     aggregateExcludedSourceIds: aggregateExcludedSourceIds ?? this.aggregateExcludedSourceIds,
+    subtitleGroupFilter: subtitleGroupFilter ?? this.subtitleGroupFilter,
+    recentSubtitleGroups: recentSubtitleGroups ?? this.recentSubtitleGroups,
     autoPlayNext: autoPlayNext ?? this.autoPlayNext,
     firstRunCompleted: firstRunCompleted ?? this.firstRunCompleted,
     extraTrackers: extraTrackers ?? this.extraTrackers,
@@ -423,6 +442,8 @@ class AppSettings {
     'defaultSourceId': defaultSourceId,
     'searchMode': searchMode.wireName,
     'aggregateExcludedSourceIds': aggregateExcludedSourceIds,
+    'subtitleGroupFilter': subtitleGroupFilter,
+    'recentSubtitleGroups': recentSubtitleGroups,
     'autoPlayNext': autoPlayNext,
     'firstRunCompleted': firstRunCompleted,
     'extraTrackers': extraTrackers,
@@ -473,6 +494,8 @@ class AppSettings {
       defaultSourceId: strOr(json['defaultSourceId'], d.defaultSourceId),
       searchMode: SearchMode.fromName(json['searchMode'] as String?),
       aggregateExcludedSourceIds: stringListFromJson(json['aggregateExcludedSourceIds']),
+      subtitleGroupFilter: stringListFromJson(json['subtitleGroupFilter']),
+      recentSubtitleGroups: stringListFromJson(json['recentSubtitleGroups']),
       autoPlayNext: json['autoPlayNext'] as bool? ?? d.autoPlayNext,
       firstRunCompleted: json['firstRunCompleted'] as bool? ?? d.firstRunCompleted,
       extraTrackers: strOr(json['extraTrackers'], d.extraTrackers),
@@ -679,8 +702,15 @@ class SourcePageView {
   final int page;
   final DateTime fetchedAt;
 
-  /// true = 网络失败回落到过期缓存（UI 必须显式标注，不能装作是新鲜数据）。
+  /// true = 数据来自缓存。**两种情形共用这一个标志**：
+  /// ① TTL 内的新鲜命中（根本没发网络请求）② 网络失败后回落过期缓存。
   final bool fromCache;
+
+  /// 缓存是**过期回落**来的（= 网络那一步真的失败过）。
+  ///
+  /// 第四十二轮 UX #10：旧实现的注释把 [fromCache] 直接当成了 ②，
+  /// 于是重搜同一个词（必然命中 ①）也会弹「网络抓取失败」。
+  final bool staleFallback;
 
   const SourcePageView({
     required this.items,
@@ -688,6 +718,7 @@ class SourcePageView {
     required this.fetchedAt,
     this.hasNext = false,
     this.fromCache = false,
+    this.staleFallback = false,
   });
 }
 

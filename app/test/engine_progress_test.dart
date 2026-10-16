@@ -194,12 +194,12 @@ void main() {
   });
 
   group('EngineRuntimeHolder.onAttach', () {
-    test('建好就有这条流；dispose 前一直可监听（不抛）', () {
+    test('建好就有这条流；dispose 前一直可监听（不抛）', () async {
       final holder = EngineRuntimeHolder();
       expect(holder.isAttached, isFalse);
       final sub = holder.onAttach.listen((_) {});
       expect(holder.client, isNull);
-      sub.cancel();
+      await sub.cancel();
     });
 
     test('真身：边车未就绪时订阅队列进度流 → 不报错、不结束（旧实现直接给错误流）', () async {

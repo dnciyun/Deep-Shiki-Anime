@@ -8,6 +8,8 @@
 /// 空态/错误态、历史胶囊，以及"点了某个筛选之后请求真的变了"。
 library;
 
+import 'dart:ui' show Tristate;
+
 import 'package:dsanima/domain/bangumi.dart';
 import 'package:dsanima/domain/bangumi_library.dart';
 import 'package:dsanima/domain/ports.dart';
@@ -16,9 +18,11 @@ import 'package:dsanima/state/library_provider.dart';
 import 'package:dsanima/state/providers.dart';
 import 'package:dsanima/ui/library_detail_page.dart';
 import 'package:dsanima/ui/library_page.dart';
+import 'package:dsanima/ui/widgets/library_seed_block.dart';
 import 'package:dsanima/ui/widgets/neo.dart';
 import 'package:dsanima_core/sources/kv.dart' show InMemoryKeyValueStore;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -149,18 +153,25 @@ void main() {
 
     expect(h.port.calls, hasLength(1), reason: '进页面自己查一次（列数变了不会白查一次旧的）');
     expect(h.port.calls.single.query.isDefault, isTrue, reason: '默认 = 全部动画');
-    // ⚠️ 第三十四轮：一页 = 列数 × [kLibraryRows]。1400 窗宽 ⇒ 可用 1364 ⇒ 7 列 ⇒ 28 条，
-    // **是 7 的整数倍**（以前写死 24：24 = 3 整行 + 3 条，最后一行缺 4）。
-    expect(h.port.calls.single.limit, libraryPageSize(7));
-    expect(h.port.calls.single.limit % 7, 0, reason: '一页必须是整行');
+    // ⚠️ 第三十四轮：一页 = 列数 × [kLibraryRows]。
+    // ⚠️ 第四十四轮：列数按**左栏**宽度算（右栏占掉 8 + 248 + 18 = 274）——
+    // 1400 窗 ⇒ 左栏 1126 ⇒ 可用 1090 ⇒ 6 列 ⇒ 24 条，**是 6 的整数倍**。
+    // （旧版面没有右栏时这里是 7 列；量整窗宽会多算一列，末行就会缺 4 个。）
+    final GridView grid = tester.widget<GridView>(find.byType(GridView));
+    final SliverGridDelegateWithFixedCrossAxisCount delegate =
+        grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+    expect(delegate.crossAxisCount, 6, reason: '右栏不计入网格可用宽度');
+    expect(h.port.calls.single.limit, libraryPageSize(6));
+    expect(h.port.calls.single.limit % delegate.crossAxisCount, 0, reason: '一页必须是整行');
     expect(find.byKey(const Key('library-card-1')), findsOneWidget);
     expect(find.byKey(const Key('library-card-2')), findsOneWidget);
     expect(find.text('葬送的芙莉莲'), findsOneWidget);
     expect(find.textContaining('共 100 部'), findsOneWidget);
   });
 
-  testWidgets('一页永远整行：换到 1920 窗宽（10 列）时每页条数跟着变，末行不再缺几个', (WidgetTester tester) async {
+  testWidgets('一页永远整行：换到 1920 窗宽（8 列）时每页条数跟着变，末行不再缺几个', (WidgetTester tester) async {
     // 用户报的正是这个形状：写死 24 条时，10 列 ⇒ 2 整行 + 4 条，最后一行空 6 个位置。
+    // 第四十四轮之后 1920 窗（减掉右栏 274）= 左栏 1646 ⇒ 可用 1610 ⇒ 8 列 ⇒ 32 条。
     final ({Widget widget, FakeLibraryPort port, InMemoryKeyValueStore store}) h =
         _build(total: 100, fillToLimit: true);
     tester.view.physicalSize = const Size(1920, 900);
@@ -169,11 +180,10 @@ void main() {
     await tester.pumpWidget(h.widget);
     await tester.pumpAndSettle();
 
-    // 可用宽 1920 − 18×2 = 1884 ⇒ 列 = floor((1884+16)/(168+16)) = 10。
     final GridView grid = tester.widget<GridView>(find.byType(GridView));
     final SliverGridDelegateWithFixedCrossAxisCount delegate =
         grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
-    expect(delegate.crossAxisCount, 10);
+    expect(delegate.crossAxisCount, 8);
     expect(
       h.port.calls.last.limit,
       delegate.crossAxisCount * kLibraryRows,
@@ -182,15 +192,15 @@ void main() {
     expect(h.port.calls.last.limit % delegate.crossAxisCount, 0);
     expect(h.port.calls.last.limit, isNot(24), reason: '写死 24 的老行为就是"缺 6 个"的成因');
 
-    expect(find.textContaining('每页 40 条（10 列 × 4 行）'), findsOneWidget);
+    expect(find.textContaining('每页 32 条（8 列 × 4 行）'), findsOneWidget);
   });
 
   testWidgets('量出来的每页条数恰好等于兜底 24 条时，这一次查询也必须照发（否则页面永远转圈）', (WidgetTester tester) async {
-    // 1200 窗宽 ⇒ 可用 1164 ⇒ 6 列 ⇒ 6 × 4 = 24 = 兜底值。第三十四轮踩过这个坑：
+    // 1500 窗 ⇒ 左栏 1226 ⇒ 可用 1190 ⇒ 6 列 ⇒ 6 × 4 = 24 = 兜底值。第三十四轮踩过这个坑：
     // 页面只在"尺寸变了"时才发起第一次查询，于是尺寸正好没变时一次都不发。
     final ({Widget widget, FakeLibraryPort port, InMemoryKeyValueStore store}) h =
         _build(total: 100);
-    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.physicalSize = const Size(1500, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(h.widget);
@@ -234,6 +244,156 @@ void main() {
     for (final ({BangumiLibraryQuery query, int offset, int limit}) call in h.port.calls) {
       expect(call.offset, 0);
     }
+  });
+
+  // ── 第四十四轮（用户：「优化动漫库，把搜索与筛选移到右侧，并加入类型的筛选，
+  //    比如异世界 玄幻 校园这些」）────────────────────────────────────────────────
+
+  testWidgets('右栏：搜索框与全部筛选都在**结果区右边**，结果区从页面顶部开始', (WidgetTester tester) async {
+    final ({Widget widget, FakeLibraryPort port, InMemoryKeyValueStore store}) h = _build();
+    await _pump(tester, h.widget);
+
+    final Finder rail = find.byKey(const Key('library-rail'));
+    expect(rail, findsOneWidget);
+    final Rect railRect = tester.getRect(rail);
+    final Rect gridRect = tester.getRect(find.byType(GridView));
+    expect(railRect.left, greaterThanOrEqualTo(gridRect.right), reason: '筛选整栏在网格右边');
+    expect(railRect.right, closeTo(1400 - 18, 0.5), reason: '右缘与网格的右内边距对齐（不留死白）');
+
+    // 搜索框、类型胶囊、五格下拉**都在右栏里**（不是还留在顶上）。
+    Finder inRail(Finder f) => find.descendant(of: rail, matching: f);
+    expect(inRail(find.byKey(const Key('library-search-field'))), findsOneWidget);
+    expect(inRail(find.widgetWithText(NeoButton, '搜索')), findsOneWidget);
+    expect(inRail(find.byKey(const Key('library-genre-all'))), findsOneWidget);
+    expect(inRail(find.byKey(const Key('library-genre-异世界'))), findsOneWidget);
+    for (final String key in <String>[
+      'library-year',
+      'library-quarter',
+      'library-form',
+      'library-sort',
+      'library-score',
+    ]) {
+      expect(inRail(find.byKey(Key(key))), findsOneWidget, reason: '$key 该在右栏');
+    }
+
+    // 旧版面把这一整条压在结果**上面**（网格顶部因此被推到 100+）。
+    expect(gridRect.top, lessThan(60), reason: '结果区从页面顶部开始，不再被筛选条压着');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('类型：点一颗胶囊就按它筛、再点一下取消，「全部」也能取消；其它条件不许被清掉',
+      (WidgetTester tester) async {
+    final ({Widget widget, FakeLibraryPort port, InMemoryKeyValueStore store}) h = _build();
+    await _pump(tester, h.widget);
+
+    // 先在别的格子上放一个条件：类型胶囊**不许**把它清掉（旧实现是整份换查询）。
+    await _pick(tester, const Key('library-form'), '剧场版');
+    expect(h.port.calls.last.query.form, BangumiLibraryForm.movie);
+
+    await tester.tap(find.byKey(const Key('library-genre-异世界')));
+    await tester.pumpAndSettle();
+    expect(h.port.calls.last.query.tag, '异世界');
+    expect(h.port.calls.last.query.filter['tag'], <String>['剧场版', '异世界'],
+        reason: '形态与类型一起进 filter.tag（服务端取交集）');
+    expect(h.port.calls.last.query.form, BangumiLibraryForm.movie, reason: '形态那一格不许被清掉');
+    expect(h.port.calls.last.offset, 0, reason: '换类型要从第一页重查');
+    expect(find.textContaining('类型「异世界」'), findsOneWidget, reason: '结果抬头要说清按什么筛的');
+
+    // 再点一下同一颗 = 取消这一档。
+    await tester.tap(find.byKey(const Key('library-genre-异世界')));
+    await tester.pumpAndSettle();
+    expect(h.port.calls.last.query.tag, isNull);
+    expect(h.port.calls.last.query.filter['tag'], <String>['剧场版'], reason: '取消类型不等于取消形态');
+
+    // 「全部」= 不按类型筛。
+    await tester.tap(find.byKey(const Key('library-genre-校园')));
+    await tester.pumpAndSettle();
+    expect(h.port.calls.last.query.tag, '校园');
+    await tester.tap(find.byKey(const Key('library-genre-all')));
+    await tester.pumpAndSettle();
+    expect(h.port.calls.last.query.tag, isNull);
+  });
+
+  testWidgets('类型：清单外的标签（从条目详情页点进来的）也显示成选中胶囊，并且能取消',
+      (WidgetTester tester) async {
+    // 详情页的标签是**条目自带**的，不限于 kLibraryGenreTags（可能是「公路片」「2022年10月」）。
+    // 那种标签必须在右栏看得见 —— 否则"结果被筛过、栏里找不到原因"。
+    final FakeLibraryPort port = FakeLibraryPort();
+    final ProviderContainer container = ProviderContainer(
+      overrides: [
+        keyValueStoreProvider.overrideWithValue(InMemoryKeyValueStore()),
+        bangumiLibraryProvider.overrideWithValue(port),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(libraryQueryProvider.notifier).setTag('公路片');
+
+    tester.view.physicalSize = const Size(1400, 950);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: ThemeData(useMaterial3: true),
+          home: const Scaffold(body: LibraryPage()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder chip = find.byKey(const Key('library-genre-公路片'));
+    expect(chip, findsOneWidget, reason: '清单外的标签也要出现');
+    expect(tester.widget<NeoPill>(chip).selected, isTrue, reason: '它正是当前生效的那一档');
+    expect(port.calls.last.query.tag, '公路片');
+
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+    expect(port.calls.last.query.tag, isNull, reason: '再点一下就取消');
+    expect(find.byKey(const Key('library-genre-公路片')), findsNothing, reason: '取消之后不必再占一颗');
+  });
+
+  testWidgets('类型胶囊：Tab + 回车也能筛（第四十二轮 UX #40 的同一条口径）', (WidgetTester tester) async {
+    // 这一栏一次摆 30 多颗可点的胶囊，如果还是裸 `GestureDetector`，键盘用户整块用不了
+    // （Tab 跳过、没有焦点框、回车/空格没反应）—— 上一轮在外观选择器上刚修过同一条。
+    // ⚠️ 必须在**测试体内** dispose：`addTearDown` 跑在框架的收尾检查之后。
+    final SemanticsHandle handle = tester.ensureSemantics();
+    final ({Widget widget, FakeLibraryPort port, InMemoryKeyValueStore store}) h = _build();
+    await _pump(tester, h.widget);
+
+    final Finder chip = find.byKey(const Key('library-genre-异世界'));
+    // 语义要落在**可点的那一层**上（`NeoPill` 把 `Semantics(button:)` 套在 `InkWell` 外面，
+    // 而 Key 挂在 NeoPill 自己身上，取它自己的节点拿到的是外面那层）。
+    final Finder chipButton =
+        find.descendant(of: chip, matching: find.byType(InkWell)).first;
+    expect(tester.getSemantics(chipButton).flagsCollection.isButton, isTrue,
+        reason: '读屏要念成"按钮"，不是一段纯文字');
+    expect(tester.getSemantics(chipButton).flagsCollection.isSelected, Tristate.isFalse,
+        reason: '当前没选它');
+
+    bool chipHasFocus() {
+      final BuildContext? focused = FocusManager.instance.primaryFocus?.context;
+      if (focused == null) return false;
+      return find
+          .ancestor(
+            of: find.byElementPredicate((Element e) => e == focused),
+            matching: chip,
+          )
+          .evaluate()
+          .isNotEmpty;
+    }
+
+    // 前面的可聚焦控件（搜索框、全部、奇幻、科幻…）先走过，直到焦点落到这一颗上。
+    for (int i = 0; i < 12 && !chipHasFocus(); i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+    }
+    expect(chipHasFocus(), isTrue, reason: 'Tab 必须能落到类型胶囊上（旧写法整块被跳过）');
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(h.port.calls.last.query.tag, '异世界', reason: '回车要能真的筛（旧写法完全没反应）');
+    handle.dispose();
   });
 
   testWidgets('关键词搜索：回车就查、进"动漫库"自己那份历史、点历史再查一次', (WidgetTester tester) async {
@@ -297,7 +457,10 @@ void main() {
     // 选了条件之后空态要把条件念出来（用户才知道是哪一条筛没了）。
     await _pick(tester, const Key('library-form'), 'WEB');
     await tester.pumpAndSettle();
-    expect(find.textContaining('形态：WEB'), findsOneWidget);
+    // ⚠️ 第四十四轮：右栏的每格下拉只显示**值**（小标题在它上面一行），
+    // 所以这里不再是「形态：WEB」这一串，而是"触发器写着 WEB"+"空态把条件念出来"。
+    expect(find.text('WEB'), findsOneWidget, reason: '下拉触发器上就是当前值');
+    expect(find.textContaining('条件：WEB'), findsOneWidget, reason: '空态要点名是哪一条筛没了');
   });
 
   testWidgets('失败：显示"为什么 + 怎么办"，重试按钮再查一次（不假装没有数据）', (WidgetTester tester) async {
@@ -321,7 +484,10 @@ void main() {
 
     expect(find.byType(LibraryDetailPage), findsOneWidget);
     expect(find.text('葬送的芙莉莲'), findsWidgets);
-    expect(find.text('按这个名字搜种子'), findsOneWidget);
+    // 第四十五轮：那颗「按这个名字搜种子」按钮换成了页内的种子块（块抬头里才有
+    // 「在搜索页打开」）。块要滚到才建（`ListView(children:)` 是懒建的）。
+    await tester.scrollUntilVisible(find.byKey(dsDetailSeedsKey), 200);
+    expect(find.byKey(dsDetailSeedsKey), findsOneWidget);
     // 详情页的标签点一下就回库里按它筛。
     // ⚠️ 先 `ensureVisible`：1400×950 下标签卡在左栏靠下、**掉到折线以下**了
     //（第三十六轮左栏的"事实"改成一行一条之后又高了几十像素），
@@ -372,7 +538,8 @@ void main() {
     // ⚠️ 这个 harness 直接把 `LibraryPage` 挂在 `home:`（没有 shell），所以 `navProvider`
     //    的初始值就是它的默认值 `home` —— 这里只钉"点完之后到了 search"，不假设起点。
     expect(container.read(navProvider), isNot(ShellTab.search));
-    await tester.tap(find.byKey(const Key('library-detail-search-seeds')));
+    await tester.scrollUntilVisible(find.byKey(dsDetailSeedsSearchPageKey), 200);
+    await tester.tap(find.byKey(dsDetailSeedsSearchPageKey));
     await tester.pumpAndSettle();
 
     expect(find.byType(LibraryDetailPage), findsNothing,

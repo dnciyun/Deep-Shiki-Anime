@@ -32,9 +32,11 @@ import '../domain/error_text.dart';
 import '../domain/format.dart';
 import '../domain/models.dart';
 import '../domain/ports.dart';
+import '../domain/subtitle_groups.dart';
 import '../state/playback.dart';
 import '../state/providers.dart';
 import '../state/search_history_provider.dart';
+import '../theme/motion.dart';
 import '../theme/tokens.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/feedback.dart';
@@ -50,6 +52,15 @@ const Key dsSourcePanelChipKey = ValueKey<String>('ds-source-panel-chip');
 /// 勾选面板对话框的 key。
 const Key dsSourcePanelKey = ValueKey<String>('ds-source-panel');
 
+/// 「字幕组」筛选 chip 的 key（第四十五轮）。
+const Key dsGroupFilterChipKey = ValueKey<String>('ds-group-filter-chip');
+
+/// 字幕组面板对话框的 key。
+const Key dsGroupFilterPanelKey = ValueKey<String>('ds-group-filter-panel');
+
+/// 面板里那个搜索框的 key。
+const Key dsGroupFilterSearchKey = ValueKey<String>('ds-group-filter-search');
+
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
 
@@ -59,6 +70,9 @@ class SearchPage extends ConsumerStatefulWidget {
 
 class _SearchPageState extends ConsumerState<SearchPage> {
   final TextEditingController _keyword = TextEditingController();
+
+  /// 关键字输入框的焦点（第四十五轮）：空态里那颗「换关键字」要把光标送回去。
+  final FocusNode _keywordFocus = FocusNode();
   String? _busyItemId;
 
   /// 批量下载勾选的条目 id（用户 2026-10-12 第二十三轮：「搜索页批量选择下载」）。
@@ -88,12 +102,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   @override
   void dispose() {
     _keyword.dispose();
+    _keywordFocus.dispose();
     super.dispose();
   }
 
+  /// 勾选的字幕组的展示名（`桜都字幕组 / LoliHouse`）。
+  ///
+  /// 顺序排一下再拼：Set 的迭代顺序不稳定，筛同一批组却显示成两种顺序会显得界面在抖。
+  String _groupNames(SearchState state) {
+    final List<String> keys = state.groupFilter.toList()..sort();
+    return keys.map((String key) => subtitleGroupLabel(key, state.fetched)).join(' / ');
+  }
+
   Future<void> _play(SourceItemView item, List<SourceItemView> items) async {
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final DsTokens t = context.ds;
     setState(() => _busyItemId = item.id);
     try {
       await ref
@@ -116,12 +137,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       // 起播成功即已弹出播放窗口（用户 2026-10-10：只有弹窗播放，
       // 主窗口不切页、也没有播放面），这里不再做任何跳转。
     } catch (error, stackTrace) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(describeFailure(error, stackTrace: stackTrace).message),
-          backgroundColor: t.dangerSoft,
-        ),
-      );
+      // 统一走反馈通道（第四十二轮 UX #14：这里原来是自拼的 dangerSoft 底裸 SnackBar）。
+      if (!mounted) return;
+      showFailure(context, describeFailure(error, stackTrace: stackTrace));
     } finally {
       if (mounted) setState(() => _busyItemId = null);
     }
@@ -160,8 +178,6 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         if (_selected.contains(item.id)) item,
     ];
     if (picked.isEmpty || _batchBusy) return;
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final DsTokens t = context.ds;
     final QueuePort port = ref.read(queuePortProvider);
     setState(() {
       _batchBusy = true;
@@ -183,26 +199,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       );
       if (!mounted) return;
       // 加完就清空勾选：留着的话下一次点"下载选中"会重复入队（队列会复用同一条，
-      // 但用户会以为按钮坏了）。失败的条目同样清掉 —— 原因已经在提示里说了。
-      setState(_selected.clear);
+      // 但用户会以为按钮坏了）。
+      //
+      // 第四十二轮 UX #32：**失败的那几条要留着勾**。旧实现无条件 `_selected.clear()`，
+      // 而失败提示里又写着"失败的条目可以只勾那几条再下一次" —— 用户回到表格里发现
+      // 勾全没了，只能凭记忆一条条找回来（20 条里找 3 条）。
+      setState(() {
+        _selected
+          ..clear()
+          ..addAll(result.failedItems.map((SourceItemView i) => i.id));
+      });
       final String summary = batchDownloadSummary(result);
       if (result.failures.isEmpty) {
         showSuccess(context, summary, seconds: 5);
       } else {
         showFailure(
           context,
-          DsFailure(summary, hint: '失败的条目可以只勾那几条再下一次；已入队的在队列页里'),
+          DsFailure(
+            summary,
+            hint: '失败的那 ${result.failedItems.length} 条已经替你留着勾，'
+                '再点一次「下载选中」就是重试它们；已入队的在队列页里',
+          ),
         );
       }
     } catch (error, stackTrace) {
       // `enqueueDownloads` 自己不抛；走到这儿说明是别的意外（例如端口没接通）。
+      // 也走统一失败通道（第四十二轮 UX #14：这里原来自己拼了一条 dangerSoft 底色的
+      // 裸 SnackBar，与全仓那套"凸起面 + 左侧语义色条 + 怎么办"不是一套）。
       if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(describeFailure(error, stackTrace: stackTrace).message),
-          backgroundColor: t.dangerSoft,
-        ),
-      );
+      showFailure(context, describeFailure(error, stackTrace: stackTrace));
     } finally {
       if (mounted) {
         setState(() {
@@ -218,6 +243,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final DsTokens t = context.ds;
     final SearchState state = ref.watch(searchProvider);
     final List<SourceOption> sources = ref.watch(sourceOptionsProvider);
+    // 输入框为空时才有「最近搜索」那一块（打字时它只是噪音）。
+    // 第四十二轮 UX #50：这一块**常驻**在树里、靠 `AnimatedSize` 收起展开，
+    // 不再整块抽/插（旧写法会让输入框与结果区在打第一个字时齐刷刷跳一下）。
+    final List<String> recentSearches = _keyword.text.trim().isEmpty
+        ? ref.watch(searchHistoryProvider).of(SearchHistoryScope.torrents)
+        : const <String>[];
     final EngineStatus engineStatus = ref.watch(engineStatusProvider);
 
     // 设置页把「聚合 / 单独源」改掉后当场跟着切（用户 2026-10-12 第十四轮：
@@ -247,6 +278,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               Expanded(
                 child: TextField(
                   controller: _keyword,
+                  focusNode: _keywordFocus,
                   textInputAction: TextInputAction.search,
                   style: TextStyle(color: t.text, fontSize: DsTypeScale.body),
                   decoration: InputDecoration(
@@ -262,7 +294,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   onSubmitted: (String value) {
                     controller().setKeyword(value);
                     _rememberKeyword(ref, value);
-                    runGuarded(context, action: controller().refresh);
+                    unawaited(runGuarded(context, action: controller().refresh));
                   },
                 ),
               ),
@@ -330,39 +362,61 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   value: state.sourceId,
                   onChanged: (String id) {
                     controller().setSource(id);
-                    runGuarded(context, action: controller().refresh);
+                    unawaited(runGuarded(context, action: controller().refresh));
                   },
                 ),
               ],
+              // 字幕组筛选（第四十五轮）：聚合与单独源两种模式下**都**在 ——
+              // 它筛的是已经取到的池子，与"问哪些源"无关。
+              // 一直显示（哪怕还没勾）：落盘的筛选必须在脸上看得见，否则用户会遇到
+              // "结果怎么这么少"却找不到原因。
+              const SizedBox(width: 10),
+              _GroupFilterChip(
+                pool: state.fetched,
+                selected: state.groupFilter,
+                filtered: state.filtering ? state.visible.length : null,
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (BuildContext context) => const _GroupFilterDialog(),
+                ),
+              ),
             ],
           ),
         ),
         // 第三十三轮：最近搜过的词（点一下 = 填进去并立刻搜）。
         // 只在输入框为空时显示 —— 正在打字时它只是噪音；有内容时上面那条提示也够长了。
-        if (_keyword.text.trim().isEmpty &&
-            ref.watch(searchHistoryProvider).of(SearchHistoryScope.torrents).isNotEmpty) ...<Widget>[
-          const SizedBox(height: 8),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: t.spacing),
-            child: SearchHistoryBar(
-              keyPrefix: 'torrent-history',
-              history: ref.watch(searchHistoryProvider).of(SearchHistoryScope.torrents),
-              onPick: (String word) {
-                _keyword.text = word;
-                setState(() {});
-                controller().setKeyword(word);
-                _rememberKeyword(ref, word);
-                runGuarded(context, action: controller().refresh);
-              },
-              onForget: (String word) => unawaited(ref
-                  .read(searchHistoryProvider.notifier)
-                  .forget(SearchHistoryScope.torrents, word)),
-              onClear: () => unawaited(ref
-                  .read(searchHistoryProvider.notifier)
-                  .clear(SearchHistoryScope.torrents)),
-            ),
-          ),
-        ],
+        //
+        // 第四十二轮 UX #50：它原来是在 `if` 里**整块**抽/插的（含一段 `SizedBox(8)`），
+        // 于是打第一个字的那一瞬间输入框与整片结果区齐刷刷往上跳 30 多像素。
+        // 现在这一块**常驻**、由 `AnimatedSize` 在 token 时长里收起/展开：
+        // 布局变化还是有，但它是连续的、看得出"这里收起来了"，而不是抽一下。
+        AnimatedSize(
+          duration: DsMotion.of(context).hover,
+          curve: DsMotion.hoverCurve,
+          alignment: Alignment.topCenter,
+          child: recentSearches.isEmpty
+              ? const SizedBox(width: double.infinity)
+              : Padding(
+                  padding: EdgeInsets.fromLTRB(t.spacing, 8, t.spacing, 0),
+                  child: SearchHistoryBar(
+                    keyPrefix: 'torrent-history',
+                    history: recentSearches,
+                    onPick: (String word) {
+                      _keyword.text = word;
+                      setState(() {});
+                      controller().setKeyword(word);
+                      _rememberKeyword(ref, word);
+                      unawaited(runGuarded(context, action: controller().refresh));
+                    },
+                    onForget: (String word) => unawaited(ref
+                        .read(searchHistoryProvider.notifier)
+                        .forget(SearchHistoryScope.torrents, word)),
+                    onClear: () => unawaited(ref
+                        .read(searchHistoryProvider.notifier)
+                        .clear(SearchHistoryScope.torrents)),
+                  ),
+                ),
+        ),
         const SizedBox(height: 11),
         // 用户 2026-10-10 第 3 轮问答：搜索页的「继续观看」行与底部「订阅更新」面板
         // 都删掉 —— 前者属于主页，后者「订阅」页已经有一份。
@@ -383,9 +437,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   /// 结果表格上面那条「批量下载」：已选几条 / 下载选中 / 全选本页 / 清空勾选。
   ///
   /// 只在**这一页有可下载条目**时出现（池子里一条磁力都没有时不摆一条用不了的工具条）。
-  Widget _batchBar(SearchState state, List<SourceItemView> pageItems, int selectableCount) {
+  Widget _batchBar(SearchState state, List<SourceItemView> pageItems, int poolSelectable) {
     final DsTokens t = context.ds;
     final int picked = _selected.length;
+    final int pageSelectable = pageItems.where(canBatchDownload).length;
     final bool disabled = picked == 0 || _batchBusy;
     return Padding(
       padding: EdgeInsets.fromLTRB(t.spacing, 0, t.spacing, 7),
@@ -402,7 +457,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             icon: Icons.download,
             kind: NeoButtonKind.primary,
             busy: _batchBusy,
-            onPressed: disabled ? null : () => _downloadSelected(state.fetched),
+            onPressed: disabled ? null : () => _downloadSelected(state.visible),
           ),
           const SizedBox(width: 6),
           NeoButton(
@@ -421,7 +476,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           const SizedBox(width: 10),
           Flexible(
             child: Text(
-              '勾选多条一起加入下载队列（本页 $selectableCount 条可下载）；'
+              // 第四十二轮 UX #39：这里原来写「本页 N 条可下载」，而 N 取的是**整个池子**
+              // （翻页攒下的全都算进来），同一条里的「全选本页」却只勾本页 —— 两个说法
+              // 各说各话。现在分别说清"本页几条 / 池子里共几条"。
+              '勾选多条一起加入下载队列（本页 $pageSelectable 条可下载'
+              '${poolSelectable > pageSelectable ? '，池子里共 $poolSelectable 条' : ''}）；'
               '真正同时下几条由「队列」页的「一起下载」决定',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -479,6 +538,53 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ),
       );
     }
+    // 第四十五轮：池子里**有**结果，但勾的字幕组一条都没命中。
+    //
+    // 与下面那条「什么都没搜到」**分开说**：两句提示给的动作完全不同 —— 这里该
+    // 「继续加载更多结果」或「清空筛选」，那里该换关键字。第四十四轮的教训：
+    // 空态必须说清是哪种空、并给出下一步（否则用户只会以为页面坏了）。
+    if (state.filtering && state.visible.isEmpty) {
+      final SearchQueryController c = ref.read(searchProvider.notifier);
+      final String names = _groupNames(state);
+      if (state.loadingPage) {
+        return DsLoading(label: '正在按「$names」继续往后拉取…');
+      }
+      return DsEmpty(
+        icon: Icons.filter_alt_off_outlined,
+        title: '这批结果里没有「$names」的条目',
+        message: state.hasMoreSource
+            ? '已经拿到 ${state.fetched.length} 条结果，但都不是这几个字幕组。'
+                  '可以继续往后拉源站的结果，或者把筛选放宽。'
+            : '已经拿到 ${state.fetched.length} 条结果，源那边也没有更多了，'
+                  '都不是这几个字幕组。换一个关键字，或者把筛选放宽。',
+        action: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.center,
+          children: <Widget>[
+            if (state.hasMoreSource)
+              NeoButton(
+                label: '继续加载更多结果',
+                icon: Icons.expand_more,
+                kind: NeoButtonKind.primary,
+                onPressed: () => unawaited(
+                  runGuarded(context, action: c.loadMoreForFilter),
+                ),
+              ),
+            NeoButton(
+              label: '清空筛选',
+              icon: Icons.filter_alt_off,
+              onPressed: c.clearGroupFilter,
+            ),
+            NeoButton(
+              label: '换关键字',
+              icon: Icons.search,
+              onPressed: () => _keywordFocus.requestFocus(),
+            ),
+          ],
+        ),
+      );
+    }
     if (state.isEmpty) {
       return DsEmpty(
         icon: Icons.search_off,
@@ -497,16 +603,18 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       );
     }
     // 表格只渲染**当前显示页**的 20 条（用户 2026-10-11：「按照一页20条」）；
-    // 播放列表却要拿**池子**（state.fetched）：按「同名同压制组」归组时，
-    // 跨页的集数必须还在手里，否则翻到第 2 页播第 21 条就只剩它自己了。
+    // 播放列表却要拿**池子**（`state.visible`：开了字幕组筛选时就是筛过的那一份）：
+    // 按「同名同压制组」归组时，跨页的集数必须还在手里，否则翻到第 2 页播第 21 条
+    // 就只剩它自己了。
     final List<SourceItemView> pageItems = state.items;
-    // 勾选只保留**池子里还有的**条目：换一轮搜索/刷新后旧行已经不在了，
-    // 留着它等于"批量下载一个屏幕上看不见的东西"。
+    // 勾选只保留**现在还看得见**的条目：换一轮搜索/刷新、或者换一次字幕组筛选后，
+    // 被筛掉的行已经不在屏幕上了，留着它等于"批量下载一个看不见的东西"
+    // （第四十五轮：筛选变化必须顺手收窄勾选）。
     final Set<String> poolIds = <String>{
-      for (final SourceItemView item in state.fetched) item.id,
+      for (final SourceItemView item in state.visible) item.id,
     };
     _selected.removeWhere((String id) => !poolIds.contains(id));
-    final int selectableCount = state.fetched.where(canBatchDownload).length;
+    final int selectableCount = state.visible.where(canBatchDownload).length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -519,14 +627,35 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               text: state.failure!.hint == null
                   ? state.failure!.message
                   : '${state.failure!.message}（${state.failure!.hint}）',
+              // 第四十二轮 UX #21：**必须给一个重试入口**。旧实现只有这一行文字，
+              // 用户唯一能试的是"再点一次那个页码"，而 `goToPage` 的
+              // `target == state.page` 闸门在"池子凑不出这一页"时会把它吞掉 ——
+              // 点了没反应，只能干看着。这里直接走 `retryFailedPage()`（绕开那个闸门）。
+              action: NeoButton(
+                label: '重试',
+                icon: Icons.refresh,
+                kind: NeoButtonKind.primary,
+                onPressed: () => unawaited(
+                  ref.read(searchProvider.notifier).retryFailedPage(),
+                ),
+              ),
             ),
           ),
         if (state.fromCache)
           Padding(
             padding: EdgeInsets.fromLTRB(t.spacing, 0, t.spacing, 7),
             child: DsBanner(
-              kind: DsBannerKind.warning,
-              text: '网络抓取失败，显示的是缓存结果（${formatRelative(state.fetchedAt)}）',
+              // 第四十二轮 UX #10：只有**过期回落**（网络真的失败过）才报"抓取失败"。
+              // 新鲜命中（默认 TTL 300 秒内，重搜同一个词必然命中）根本没发过网络请求，
+              // 旧实现把它也画成「网络抓取失败」，用户会以为网络一直在坏。
+              kind: state.staleFallback
+                  ? DsBannerKind.warning
+                  : DsBannerKind.info,
+              text: state.staleFallback
+                  ? '网络抓取失败，显示的是缓存结果（缓存写入于 '
+                      '${formatRelative(state.fetchedAt)}）'
+                  : '这是缓存结果（写入于 ${formatRelative(state.fetchedAt)}）：'
+                      '这一段时间内重搜同一个词不会重新联网',
             ),
           ),
         // 聚合：**部分**源没回来（用户 2026-10-12 第十四轮选定"警告带 + 其余照常显示"）。
@@ -535,6 +664,34 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           Padding(
             padding: EdgeInsets.fromLTRB(t.spacing, 0, t.spacing, 7),
             child: DsBanner(kind: DsBannerKind.warning, text: warning),
+          ),
+        // 字幕组筛选生效时的那一行（第四十五轮）：说清"正在按谁筛、命中几条"，
+        // 并给一颗就地关掉的出口。为什么必须有这一行 —— 筛选是**落盘**的，
+        // 用户下次打开 app 会带着它，没有这行提示就只剩"结果怎么这么少"。
+        if (state.filtering)
+          Padding(
+            padding: EdgeInsets.fromLTRB(t.spacing, 0, t.spacing, 7),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '正在按字幕组筛选：${_groupNames(state)}'
+                    '（命中 ${state.visible.length} 条 / 共 ${state.fetched.length} 条）'
+                    '${state.loadingPage ? ' · 正在继续往后拉取…' : ''}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: t.text2, fontSize: DsTypeScale.caption),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                NeoButton(
+                  label: '清空筛选',
+                  icon: Icons.filter_alt_off,
+                  compact: true,
+                  onPressed: ref.read(searchProvider.notifier).clearGroupFilter,
+                ),
+              ],
+            ),
           ),
         // 批量下载条（用户 2026-10-12 第二十三轮：「搜索页批量选择下载」）。
         // 放在结果表格**上面**：勾选是"我要下这一批"的前一步，按钮得在旁边看得见，
@@ -545,7 +702,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             items: pageItems,
             engineConnected: engineStatus.isConnected,
             busyItemId: _busyItemId,
-            onPlay: (SourceItemView item) => _play(item, state.fetched),
+            onPlay: (SourceItemView item) => _play(item, state.visible),
             onDownload: (SourceItemView item) => runGuarded(
               context,
               action: () => ref.read(queuePortProvider).enqueueDownload(item),
@@ -559,6 +716,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             selectedIds: _selected,
             onToggleSelect: _toggleSelect,
             onToggleSelectAll: (bool select) => _toggleSelectPage(pageItems, select),
+            // 结果行那个"来源"要写人看的名字（第四十二轮 UX #16）。
+            sources: sources,
           ),
         ),
         _footer(state),
@@ -1006,6 +1165,228 @@ class _PageChip extends StatelessWidget {
             fontWeight: current ? FontWeight.w700 : FontWeight.w500,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 字幕组筛选 chip（第四十五轮）：`字幕组` / `字幕组 · 2`。
+///
+/// 数字 = **勾了几个组**，不是命中几条：命中数会随后台续拉一直变，写在 chip 上会让人
+/// 觉得"数字自己在跳"；命中数放在结果区那一行里说（见 `_body` 的提示行）。
+class _GroupFilterChip extends StatelessWidget {
+  const _GroupFilterChip({
+    required this.pool,
+    required this.selected,
+    required this.filtered,
+    required this.onPressed,
+  });
+
+  final List<SourceItemView> pool;
+  final Set<String> selected;
+
+  /// 筛出几条（没开筛选时为 null，tooltip 里就不提这一句）。
+  final int? filtered;
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final DsTokens t = context.ds;
+    final bool on = selected.isNotEmpty;
+    final List<String> keys = selected.toList()..sort();
+    final String names = keys.map((String k) => subtitleGroupLabel(k, pool)).join(' / ');
+    final String label = on ? '字幕组 · ${selected.length}' : '字幕组';
+    return NeoActionChip(
+      key: dsGroupFilterChipKey,
+      label: label,
+      tooltip: on
+          ? '正在只看：$names${filtered == null ? '' : '（命中 $filtered 条）'}\n点开可以改'
+          : '按字幕组筛这批结果（筛的是已经取到的结果，不重新发请求；勾选会记住）',
+      labelWidget: Text(
+        label,
+        style: TextStyle(
+          color: on ? t.accent : t.text2,
+          fontSize: DsTypeScale.caption,
+          fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+        ),
+      ),
+      // 块体而不是 `() async => onPressed()`：后者会把 showDialog 的 Future 当返回值
+      // 一路 await 下去，面板打开期间这颗 chip 会一直显示「处理中…」（撒谎）。
+      onTap: () async {
+        onPressed();
+      },
+    );
+  }
+}
+
+/// 字幕组筛选面板（第四十五轮）。
+///
+/// 口径（用户第四十五轮逐条选定）：
+/// * 多选 = **并集**（勾两家 = 两家的都显示）；它与源/档位/关键字之间才是 AND；
+/// * 候选 = 预置 33 家 + 本批结果里动态出现的组，「最近用过的」排前面；
+/// * 「未知组」单列一项（组名解析不出来的条目，实测占 4~6%）；预置但这一批 0 命中的
+///   照列、显示 0 条 —— 用户要的是"知道有这个组、这次它没有资源"，而不是它凭空消失；
+/// * 勾一下就**立刻生效**，不用点"应用"：这个面板是 state 的视图，不是表单。
+class _GroupFilterDialog extends ConsumerStatefulWidget {
+  const _GroupFilterDialog();
+
+  @override
+  ConsumerState<_GroupFilterDialog> createState() => _GroupFilterDialogState();
+}
+
+class _GroupFilterDialogState extends ConsumerState<_GroupFilterDialog> {
+  final TextEditingController _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final DsTokens t = context.ds;
+    final SearchState state = ref.watch(searchProvider);
+    final AppSettings settings = ref.watch(settingsProvider);
+    final SearchQueryController controller = ref.read(searchProvider.notifier);
+    final String needle = _search.text.trim().toLowerCase();
+    // ⚠️ 计数必须拿**未筛的池子**（`state.fetched`）：拿 `state.visible` 的话，勾完一家
+    // 之后其余每一家的计数都会变成 0（它们都被筛掉了），面板会当场自相矛盾。
+    final List<SubtitleGroupOption> all = buildSubtitleGroupOptions(
+      pool: state.fetched,
+      selected: state.groupFilter,
+      recent: settings.recentSubtitleGroups,
+    );
+    final List<SubtitleGroupOption> options = <SubtitleGroupOption>[
+      for (final SubtitleGroupOption o in all)
+        if (o.isUnknown ||
+            needle.isEmpty ||
+            o.label.toLowerCase().contains(needle) ||
+            o.key.contains(needle))
+          o,
+    ];
+
+    return AlertDialog(
+      key: dsGroupFilterPanelKey,
+      title: const Text('按字幕组筛这批结果'),
+      content: SizedBox(
+        width: 470,
+        height: 460,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text(
+              state.fetched.isEmpty
+                  ? '还没有结果：先在搜索页搜一次，再回来按字幕组筛。'
+                  : '池子里 ${state.fetched.length} 条 · 已勾 ${state.groupFilter.length} 个组'
+                        '（多选 = 并集：勾两家就是两家的都显示）',
+              style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption, height: 1.5),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: dsGroupFilterSearchKey,
+              controller: _search,
+              style: TextStyle(color: t.text, fontSize: DsTypeScale.body),
+              decoration: const InputDecoration(
+                hintText: '在候选里找组名…',
+                prefixIcon: Icon(Icons.search, size: 15),
+              ),
+              onChanged: (String _) => setState(() {}),
+            ),
+            const SizedBox(height: 6),
+            Expanded(
+              child: options.isEmpty
+                  ? const DsEmpty(
+                      icon: Icons.search_off,
+                      title: '候选里没有这个组名',
+                      message: '换几个字试试；长尾里的组要等它出现在结果里才会进候选。',
+                    )
+                  : ListView(
+                      children: <Widget>[
+                        for (final SubtitleGroupOption o in options)
+                          _GroupToggleRow(
+                            option: o,
+                            onChanged: () => controller.toggleGroup(o.key),
+                          ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                NeoButton(
+                  label: '全清',
+                  icon: Icons.filter_alt_off,
+                  // 一个都没勾时不给点：点了也是原地不动。
+                  onPressed: state.groupFilter.isEmpty ? null : controller.clearGroupFilter,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '筛选只作用于已经取到的结果（不重新发请求）；不够一页时会自动往后拉，'
+                    '页数按筛选后的条数算。勾选记在设置里，下次启动照旧。',
+                    style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption, height: 1.5),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('完成'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 面板里的一行：组名 + 命中条数 + 一个开关。
+class _GroupToggleRow extends StatelessWidget {
+  const _GroupToggleRow({required this.option, required this.onChanged});
+
+  final SubtitleGroupOption option;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final DsTokens t = context.ds;
+    final bool zero = option.count == 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  option.label,
+                  style: TextStyle(
+                    color: option.selected ? t.text : (zero ? t.text3 : t.text2),
+                    fontSize: DsTypeScale.body,
+                    fontWeight: option.selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+                Text(
+                  option.isUnknown
+                      ? '${option.count} 条 · 组名没解析出来'
+                      : '${option.count} 条${option.preset ? ' · 预置' : ''}',
+                  style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          NeoSwitch(
+            key: ValueKey<String>('ds-group-toggle-${option.key}'),
+            value: option.selected,
+            onChanged: (bool _) => onChanged(),
+          ),
+        ],
       ),
     );
   }

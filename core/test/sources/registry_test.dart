@@ -265,6 +265,7 @@ void main() {
     expect(first.items, hasLength(5));
     expect(first.hasNext, isFalse);
     expect(first.fromCache, isFalse);
+    expect(first.staleFallback, isFalse, reason: '走的网络，谈不上回落');
     expect(factory.requestedUris.single.toString(), 'https://acg.rip/.xml');
 
     // 1) 未过期 → 直接命中缓存，不再发请求
@@ -272,12 +273,22 @@ void main() {
     expect(second.fromCache, isTrue);
     expect(second.items, hasLength(5));
     expect(factory.requestedUris, hasLength(1));
+    // 第四十二轮 UX #10：新鲜命中**不是**"网络失败回落"。旧实现两种情形共用
+    // `fromCache` 一个标志，界面于是把新鲜命中报成「网络抓取失败」——
+    // 而重搜同一个词必然命中这一条，用户会以为网络一直在坏。
+    expect(second.staleFallback, isFalse,
+        reason: '新鲜命中根本没发网络请求，界面不许报「网络抓取失败」');
+    // 同一处修的第二个毛病：缓存页的 `fetchedAt` 原来是 `clock()`（= 现在），
+    // 于是"这份缓存是 5 分钟前写的"在界面上永远显示「刚刚」。
+    expect(second.fetchedAt, first.fetchedAt,
+        reason: '要报缓存的**写入时间**，不是读取时间');
 
     // 2) 让缓存过期 + 网络失败 → 回落 stale，并标记 fromCache
     clock.advance(const Duration(seconds: 301));
     mode = 'fail';
     final third = await source.latest();
     expect(third.fromCache, isTrue);
+    expect(third.staleFallback, isTrue, reason: '这一条才是"网络抓取失败，显示的是缓存"');
     expect(third.items, hasLength(5));
     expect(third.items.first.id, '${source.id}:https://acg.rip/t/364729');
     expect(factory.requestedUris, hasLength(4)); // 3 次重试（1+2）

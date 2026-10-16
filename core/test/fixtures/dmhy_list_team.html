@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>動漫花園資源網 - 動漫花園</title>
+</head>
+<body>
+<!--
+  第四十五轮：**手工构造**的最小 fixture（不是真实抓取），只为钉住一件事 ——
+  dmhy 列表行标题单元格里那个 `a[href*="/topics/list/team_id/"]` 才是站点的字幕组字段。
+  真实形态取自 2026-10-16 对 `share.dmhy.org/topics/list?keyword=…` 的实测：
+  80 行里 62~68 行带这个链接，文本形如 `云光字幕组` / `LoliHouse` / `动漫国字幕组`。
+-->
+  <div class="nav_title">
+    <div class="fl">
+      第1頁
+      <a href="/topics/list/page/2?keyword=x">下一頁</a>
+    </div>
+  </div>
+<table style="width:100%;" class="tablesorter" id="topic_list" cellpadding="0" cellspacing="1" border="0" width="" frame="void">
+<thead>
+		<tr>
+			<th width="96"><span class="title">張貼日期</span></th>
+			<th width="5%"><span class="title">分類</span></th>
+			<th><span class="title">標題</span></th>
+			<th width="10%"><span class="title">磁鏈</span></th>
+			<th width="7%"><span class="title">大小</span></th>
+			<th width="5%"><span class="title">種子</span></th>
+			<th width="5%"><span class="title">下載</span></th>
+			<th width="5%"><span class="title">完成</span></th>
+			<th width="9%"><span class="title">發佈人</span></th>
+		</tr>
+	</thead>
+<tbody>
+<!-- ① 有 team 链接：站点字段与标题前导方括号**不一致**时，以站点字段为准 -->
+<tr class="">
+			<td width="98">2026/10/16 05:32<span style="display: none;">2026/10/16 05:32</span></td>
+			<td width="6%" align="center"><a class="sort-2" href="/topics/list/sort_id/2"><b><font color=red>動畫</font></b></a></td>
+			<td class="title">
+				<a href="/topics/list/team_id/303">动漫国字幕组</a>
+				<a href="/topics/view/900001_spy_family_01.html" target="_blank">[搬运] 【动漫国字幕组】★10月新番[SPY×FAMILY間諜家家酒][01][1080P][简体][MP4].mp4</a>
+			</td>
+			<td nowrap="nowrap" align="center">
+				<a class="download-arrow arrow-magnet" title="磁力下載" href="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=&tr=http%3A%2F%2Ftracker.example%2Fannounce">&nbsp;</a>
+			</td>
+			<td nowrap="nowrap" align="center">1.2GB</td>
+			<td nowrap="nowrap" align="center"><span class="btl_1">3</span></td>
+			<td nowrap="nowrap" align="center"><span class="bts_1">9</span></td>
+			<td nowrap="nowrap" align="center">2</td>
+			<td align="center"><a href="/topics/list/user_id/1">uploader-a</a></td>
+		</tr>
+<!-- ② 没有 team 链接（个人发布）：退回标题前导方括号 -->
+<tr class="">
+			<td width="98">2026/10/15 21:17<span style="display: none;">2026/10/15 21:17</span></td>
+			<td width="6%" align="center"><a class="sort-2" href="/topics/list/sort_id/2"><b><font color=red>動畫</font></b></a></td>
+			<td class="title">
+				<a href="/topics/view/900002_bocchi_s01.html" target="_blank">[7³ACG] 孤独摇滚！/Bocchi the Rock S01 [01][BDRip 1080p x265]</a>
+			</td>
+			<td nowrap="nowrap" align="center">
+				<a class="download-arrow arrow-magnet" title="磁力下載" href="magnet:?xt=urn:btih:89abcdef0123456789abcdef0123456789abcdef&dn=&tr=http%3A%2F%2Ftracker.example%2Fannounce">&nbsp;</a>
+			</td>
+			<td nowrap="nowrap" align="center">700MB</td>
+			<td nowrap="nowrap" align="center"><span class="btl_1">1</span></td>
+			<td nowrap="nowrap" align="center"><span class="bts_1">0</span></td>
+			<td nowrap="nowrap" align="center">0</td>
+			<td align="center"><a href="/topics/list/user_id/2">uploader-b</a></td>
+		</tr>
+<!-- ③ team 链接**文本为空**（站点上出现过）：不能因此编一个空组名 -->
+<tr class="">
+			<td width="98">2026/10/14 12:00<span style="display: none;">2026/10/14 12:00</span></td>
+			<td width="6%" align="center"><a class="sort-2" href="/topics/list/sort_id/2"><b><font color=red>動畫</font></b></a></td>
+			<td class="title">
+				<a href="/topics/list/team_id/999"></a>
+				<a href="/topics/view/900003_bocchi_movie.html" target="_blank">[云光字幕组] 剧场总集篇 孤独摇滚！[1080p][简体双语]</a>
+			</td>
+			<td nowrap="nowrap" align="center">
+				<a class="download-arrow arrow-magnet" title="磁力下載" href="magnet:?xt=urn:btih:fedcba9876543210fedcba9876543210fedcba98&dn=&tr=http%3A%2F%2Ftracker.example%2Fannounce">&nbsp;</a>
+			</td>
+			<td nowrap="nowrap" align="center">2.4GB</td>
+			<td nowrap="nowrap" align="center"><span class="btl_1">5</span></td>
+			<td nowrap="nowrap" align="center"><span class="bts_1">7</span></td>
+			<td nowrap="nowrap" align="center">3</td>
+			<td align="center"><a href="/topics/list/user_id/3">uploader-c</a></td>
+		</tr>
+</tbody>
+</table>
+</body>
+</html>

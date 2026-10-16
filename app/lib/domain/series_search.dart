@@ -20,6 +20,7 @@ import 'package:flutter/foundation.dart';
 import 'episode_group.dart' show episodeFingerprint;
 import 'models.dart';
 import 'playlist.dart' show episodeOf;
+import 'subtitle_groups.dart' show normalizeGroupKey;
 
 /// 关键字至少要有几个「有意义字符」（字母 / 中日韩文字）。
 ///
@@ -207,19 +208,14 @@ List<String> _aliasKeywordsFor(String keyword) {
   return List<String>.unmodifiable(out);
 }
 
-/// 组名归一化：`Skymoon-Raws` / `skymoon raws` / ` Skymoon_Raws ` → `skymoon-raws`。
+/// 组名归一化：`Skymoon-Raws` / `skymoon raws` / `桜都字幕組` → `skymoon-raws` / `桜都`。
 ///
-/// 为什么归一化：同一个组在源站的写法会在空格/下划线/连字符之间飘（mikan 番剧页的
-/// 字幕组名与 RSS 标题里的方括号标签就常不一致）。分隔符统一成 `-` 而不是删掉，
-/// 是为了保住 `A-One` 与 `AOne` 的区别。
-String? normalizedGroupName(String? raw) {
-  final String text = (raw ?? '').trim().toLowerCase();
-  if (text.isEmpty) return null;
-  final String normalized = text
-      .replaceAll(RegExp(r'[\s_\-–—.]+'), '-')
-      .replaceAll(RegExp(r'^-+|-+$'), '');
-  return normalized.isEmpty ? null : normalized;
-}
+/// ⚠️ **第四十五轮**：实现搬到了 `domain/subtitle_groups.dart` 的 [normalizeGroupKey]。
+/// 改造前这里、`playlist.dart` 的 `_normalizedGroup`、以及字幕组筛选各有一份**互不
+/// 复用**的归一化，三把尺子量同一件事是没道理的：同一部番在"翻页算不算同一系列"和
+/// "播放列表要不要归到一起"上必须一致，否则会出现"判为同系列、页也翻了，最后却被
+/// 归组丢掉"的白工。这里保留这个名字只因为调用点太多，行为直接转发。
+String? normalizedGroupName(String? raw) => normalizeGroupKey(raw);
 
 /// 新搜到的 [other] 算不算"正在播的 [base] 那一部番"。
 ///

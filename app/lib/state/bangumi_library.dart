@@ -169,15 +169,19 @@ class BangumiLibraryService implements BangumiLibraryPort {
 
   /// 补充内容：角色（`/v0/subjects/{id}/characters`）+ 关联条目（`/v0/subjects/{id}/subjects`）。
   ///
-  /// 三条策略（都写在 [BangumiLibraryPort.extras] 的契约里，这里是对应的实现）：
-  /// 1. **各自失败各自空**：一条挂了不影响另一条 —— 这两个盒子是装饰，不配让整页变成错误页；
+  /// 四条策略（都写在 [BangumiLibraryPort.extras] 的契约里，这里是对应的实现）：
+  /// 1. **各自失败各自空**：一条挂了不影响另一条，但**挂的那条要记下异常**
+  ///    （第四十四轮加：详情页靠 `charactersError`/`relatedError` 才能说出"哪一块没拉到"）；
   /// 2. **有失败就不落盘**：一次网络抖动不该把"这部没有角色"永久钉在盘上
   ///    （第三十四轮 `_details` 落盘的同一考量）；
-  /// 3. **两条都失败才抛**：调用方（详情页）才需要知道"这一块拿不到"。
+  /// 3. **有失败也不进程内缓存**（第四十四轮修）：旧实现无论成败都写 `_extras[id]`，
+  ///    于是详情页那颗「重试」永远拿到内存里那份缺一半的 —— 用户点了重试、界面纹丝不动，
+  ///    看起来就是"重试没用"。现在只有两条都成功才记，重试真的会再打一次网络；
+  /// 4. **两条都失败才抛**：调用方（详情页）才需要知道"这一块拿不到"。
   ///
   /// 两条请求会同时发出，但 [BangumiClient] 的限速闸门会把**开始时刻**排开 1.1s
-  /// （Bangumi 的硬要求），所以冷启一次点开大约要多等一次往返 —— 这两个盒子在
-  /// 首屏之下，用户看到的是"顶上先有内容，下面的角色块随后补上"，不会白屏等。
+  /// （Bangumi 的硬要求），所以冷启一次点开大约要多等一次往返 —— 详情页为此画了
+  /// 一块「正在加载角色与关联条目」的占位（第四十四轮），用户看得见这两块在来的路上。
   @override
   Future<BangumiSubjectExtra> extras(int id) async {
     final BangumiSubjectExtra? cached = _extras[id];
@@ -189,17 +193,16 @@ class BangumiLibraryService implements BangumiLibraryPort {
       return fromDisk;
     }
 
-    BangumiException? failure;
     List<BangumiCharacter> characters = const <BangumiCharacter>[];
     List<BangumiRelated> related = const <BangumiRelated>[];
-    bool failed = false;
+    Object? charactersError;
+    Object? relatedError;
 
     Future<void> loadCharacters() async {
       try {
         characters = await client.characters(id);
       } catch (error) {
-        failed = true;
-        if (error is BangumiException) failure = error;
+        charactersError = error;
       }
     }
 
@@ -207,20 +210,31 @@ class BangumiLibraryService implements BangumiLibraryPort {
       try {
         related = await client.relatedSubjects(id);
       } catch (error) {
-        failed = true;
-        if (error is BangumiException) failure = error;
+        relatedError = error;
       }
     }
 
     await Future.wait(<Future<void>>[loadCharacters(), loadRelated()]);
 
-    if (characters.isEmpty && related.isEmpty && failure != null) throw failure!;
+    final Object? cErr = charactersError;
+    final Object? rErr = relatedError;
+    // 两条都没拿到（且都没内容）⇒ 抛给调用方。优先抛 BangumiException（文案更具体）。
+    if (characters.isEmpty && related.isEmpty && cErr != null && rErr != null) {
+      throw cErr is BangumiException ? cErr : rErr;
+    }
 
-    final BangumiSubjectExtra result =
-        BangumiSubjectExtra(characters: characters, related: related);
-    _extras[id] = result;
-    // 有失败就不写盘（下次点开还会重试）；两条都成功（哪怕真的都是空表）才落盘。
-    if (!failed) await _writeExtras(id, result);
+    final BangumiSubjectExtra result = BangumiSubjectExtra(
+      characters: characters,
+      related: related,
+      charactersError: cErr,
+      relatedError: rErr,
+    );
+    final bool failed = cErr != null || rErr != null;
+    // 只有整份都成功才记（内存 + 盘）：缺一半的结果记下来，重试就再也没有意义了。
+    if (!failed) {
+      _extras[id] = result;
+      await _writeExtras(id, result);
+    }
     return result;
   }
 

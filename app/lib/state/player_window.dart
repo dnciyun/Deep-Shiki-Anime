@@ -294,6 +294,31 @@ class PlayerWindowArgs {
   }
 }
 
+/// 串行闸门：把并发调用排成一条链，一次只跑一个（第四十二轮 UX #51）。
+///
+/// 为什么单独一个类：`PlayerWindowService.open()` 里"建窗"这一步走平台通道
+/// （`WindowController.create`），组件测试里造不出真窗口；而"**两路同时进来必须串行**"
+/// 恰恰就是要钉住的那个行为。抽成不依赖任何插件的小闸门，就能直接单测它。
+///
+/// 语义：
+/// * 后来的调用**等**前一个真的做完（含它内部的 await）才开始；
+/// * 前一个**失败**不阻塞后面的（错误照样回给**它自己**的调用方，链继续往下走）。
+class SerialGate {
+  Future<void> _tail = Future<void>.value();
+
+  Future<T> run<T>(Future<T> Function() action) {
+    final Completer<T> out = Completer<T>();
+    _tail = _tail.then((_) async {
+      try {
+        out.complete(await action());
+      } catch (error, stackTrace) {
+        out.completeError(error, stackTrace);
+      }
+    });
+    return out.future;
+  }
+}
+
 /// 主窗口侧的播放窗口管理器。
 ///
 /// 职责只有四件：**开窗/复用**、**下发播放请求**、**推送环境（token/剧集分组）**、
@@ -424,7 +449,17 @@ class PlayerWindowService {
   ///
   /// 首次调用创建窗口并把请求放在启动参数里（避免子窗口启动后再补发的竞态）；
   /// 之后复用同一个窗口，用 [kMethodOpen] 下发新请求（换集时不会闪一个新窗口）。
-  Future<void> open(PlayerWindowArgs args) async {
+  ///
+  /// ⚠️ **必须串行**（第四十二轮 UX #51）：`_open()` 中间有一个 `await`（算落点），
+  /// 两路起播同时进来（搜索页点播 + 通知点击、或手快点两下）会**双双**看到
+  /// `_controller == null`，于是各建一扇窗 —— 两个 mpv、两份声音。
+  /// 排成一条链之后，后来那次等前一次做完，那时 `_controller` 已经就位，走的是复用。
+  Future<void> open(PlayerWindowArgs args) => _gate.run(() => _open(args));
+
+  /// 建窗/复用那条链的闸门。
+  final SerialGate _gate = SerialGate();
+
+  Future<void> _open(PlayerWindowArgs args) async {
     if (!isConfigured) {
       throw StateError('播放窗口服务没接上：装配根必须注入 PlayerWindowService');
     }

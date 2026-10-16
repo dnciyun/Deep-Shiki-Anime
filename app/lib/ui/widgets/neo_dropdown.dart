@@ -31,6 +31,13 @@ class NeoDropdownItem<T> {
 }
 
 /// 凹槽下拉触发器。
+///
+/// [fontSize] 默认是 [DsTypeScale.caption] —— **小凹槽控件里的字就是这一档**
+/// （`NeoPill`、`NeoActionChip`、队列页/正在追页/优先级的下拉都显式传了它）。
+/// 第四十六轮之前这里是 `DsTypeScale.body`（15），于是几个没显式传的调用点
+/// （动漫库右栏的年份/季度/形态/排序/评分下限、搜索页顶部的源选择、追番详情的
+/// 偏好分辨率）成了"同一排里最大的字"。用户原话：
+/// > 「优化一些框里字太大的问题，比如默认源 代理模式，动漫库的筛选年份等」
 class NeoDropdown<T> extends StatefulWidget {
   const NeoDropdown({
     super.key,
@@ -40,7 +47,7 @@ class NeoDropdown<T> extends StatefulWidget {
     required this.label,
     this.width = 176,
     this.height = 26,
-    this.fontSize = DsTypeScale.body,
+    this.fontSize = DsTypeScale.caption,
     this.tooltip,
   });
 

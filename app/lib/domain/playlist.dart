@@ -21,6 +21,7 @@ library;
 import 'episode_group.dart' show episodeFingerprint, parseEpisodeNumber;
 import 'episodes.dart' show episodeNumber;
 import 'models.dart';
+import 'subtitle_groups.dart' show normalizeGroupKey;
 
 /// 一组「同番剧 + 同压制组」的剧集 + 当前在播的那一集在里面的下标。
 class Playlist {
@@ -109,11 +110,12 @@ Playlist? playlistFor(
   return Playlist(List<SourceItemView>.unmodifiable(picked), index);
 }
 
-/// 字幕组/压制组：去空白转小写；空串按「没有」处理（保守：不知道组就不归组）。
-String? _normalizedGroup(SourceItemView item) {
-  final String text = (item.group ?? '').trim().toLowerCase();
-  return text.isEmpty ? null : text;
-}
+/// 字幕组/压制组：走共享的 [normalizeGroupKey]（第四十五轮统一）。
+///
+/// 这里原来是"只 trim + 小写"的第二份副本；现在与「翻页算不算同一系列」用同一把尺子。
+/// 顺带把「搬运」「合集」这类**不是组**的方括号标签判成 null（见 `kNonGroupTokens`）——
+/// 它们原本会把一堆互不相干的条目归成"同一系列"。
+String? _normalizedGroup(SourceItemView item) => normalizeGroupKey(item.group);
 
 /// 这一条是第几集。
 ///

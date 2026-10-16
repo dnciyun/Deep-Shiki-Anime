@@ -52,7 +52,10 @@ void main() {
       // 16.9GB 是从 description 的 `| 16.9GB |` 段里取的（enclosure length="1" 是假值）。
       expect(item.sizeBytes, 16900000000);
       expect(item.category, '季度全集');
-      expect(item.group, '華盟RIP鏡像');
+      // ⚠️ 第四十五轮修正：字幕组只认**标题前导方括号**，不再拿 RSS 的 `<author>` 兜底。
+      // 那个 `<author>` 写的是镜像站名（这条 fixture 里是 `華盟RIP鏡像`），
+      // 把它当组名会让搜索页的字幕组筛选面板里冒出一个叫「動漫花園鏡像」的选项。
+      expect(item.group, 'ToonsHub');
       expect(item.publishedAt, DateTime.utc(2026, 10, 12, 10, 6, 52),
           reason: '+0800 的 18:06:52 必须是 UTC 10:06:52');
       expect(item.extra['fromRssFeed'], isTrue);
@@ -68,7 +71,8 @@ void main() {
 
     test('《电影哆啦A梦》那条的体积也取对（3.1GB，描述里同样只有一处体积）', () {
       expect(outcome.items[2].sizeBytes, 3100000000);
-      expect(outcome.items[2].group, '動漫花園鏡像');
+      // 同上：不再把镜像站名（`動漫花園鏡像`）当字幕组，只认标题里的方括号。
+      expect(outcome.items[2].group, '7³ACG');
     });
   });
 

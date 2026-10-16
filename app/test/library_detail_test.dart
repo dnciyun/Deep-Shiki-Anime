@@ -12,6 +12,8 @@
 /// 全部用假端口（不联网），断言落在**看得见的东西**上（key / 文案 / 位置）。
 library;
 
+import 'dart:async';
+
 import 'package:dsanima/domain/bangumi.dart';
 import 'package:dsanima/domain/bangumi_library.dart';
 import 'package:dsanima/domain/ports.dart';
@@ -22,6 +24,7 @@ import 'package:dsanima/theme/app_theme.dart';
 import 'package:dsanima/ui/library_detail_page.dart';
 import 'package:dsanima/ui/widgets/cover.dart';
 import 'package:dsanima/ui/widgets/follow_button.dart';
+import 'package:dsanima/ui/widgets/library_seed_block.dart';
 import 'package:dsanima_core/sources/kv.dart' show InMemoryKeyValueStore;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -128,11 +131,23 @@ class _FakePort implements BangumiLibraryPort {
 
   /// 条目**真的没有**角色与关联条目（实测孤独摇滚 #462993 两条端点都回 `[]`）。
   bool extrasEmpty = false;
+
+  /// 只有**关联条目**那一路失败（第四十四轮：部分失败要能点名是哪一块）。
+  ///
+  /// 真端口在这种情况下不会抛，而是把异常记在 `relatedError` 上（见
+  /// `state/bangumi_library.dart` 的 `extras`），这里照那个形状返回。
+  bool relatedFail = false;
+
+  /// 卡住 extras 的返回（第四十四轮：用来观察"还在加载"那一帧画了什么）。
+  Completer<void>? extrasGate;
+
   int extrasCalls = 0;
 
   @override
   Future<BangumiSubjectExtra> extras(int id) async {
     extrasCalls++;
+    final Completer<void>? gate = extrasGate;
+    if (gate != null) await gate.future;
     if (extrasFail) throw const PortUnavailableException('角色没拉到（测试替身）');
     if (extrasEmpty) return BangumiSubjectExtra.empty;
     return BangumiSubjectExtra(
@@ -146,27 +161,31 @@ class _FakePort implements BangumiLibraryPort {
             actorName: '声优 $i',
           ),
       ],
-      related: const <BangumiRelated>[
-        BangumiRelated(
-          relation: '续集',
-          subject: BangumiSubject(
-            id: 900001,
-            name: '葬送のフリーレン 第2期',
-            nameCn: '葬送的芙莉莲 第二季',
-            coverUrl: 'https://lain.bgm.tv/r/100/pic/cover/l/x/900001.jpg',
-            type: 2,
-          ),
-        ),
-        BangumiRelated(
-          relation: '原声集',
-          subject: BangumiSubject(
-            id: 900002,
-            name: 'オリジナルサウンドトラック',
-            coverUrl: 'https://lain.bgm.tv/r/100/pic/cover/l/x/900002.jpg',
-            type: 3,
-          ),
-        ),
-      ],
+      related: relatedFail
+          ? const <BangumiRelated>[]
+          : const <BangumiRelated>[
+              BangumiRelated(
+                relation: '续集',
+                subject: BangumiSubject(
+                  id: 900001,
+                  name: '葬送のフリーレン 第2期',
+                  nameCn: '葬送的芙莉莲 第二季',
+                  coverUrl: 'https://lain.bgm.tv/r/100/pic/cover/l/x/900001.jpg',
+                  type: 2,
+                ),
+              ),
+              BangumiRelated(
+                relation: '原声集',
+                subject: BangumiSubject(
+                  id: 900002,
+                  name: 'オリジナルサウンドトラック',
+                  coverUrl: 'https://lain.bgm.tv/r/100/pic/cover/l/x/900002.jpg',
+                  type: 3,
+                ),
+              ),
+            ],
+      relatedError:
+          relatedFail ? const PortUnavailableException('关联条目没拉到（测试替身）') : null,
     );
   }
 }
@@ -178,10 +197,12 @@ Future<_FakePort> _pump(
   Size size = const Size(1400, 900),
   bool extrasFail = false,
   bool extrasEmpty = false,
+  bool relatedFail = false,
 }) async {
   final _FakePort port = _FakePort(detailSubject ?? listSubject)
     ..extrasFail = extrasFail
-    ..extrasEmpty = extrasEmpty;
+    ..extrasEmpty = extrasEmpty
+    ..relatedFail = relatedFail;
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -245,7 +266,9 @@ void main() {
     expect(find.text('MADHOUSE'), findsOneWidget);
 
     // ④ 两个动作照旧（第三十三轮的能力一个都没丢）。
-    expect(find.byKey(const Key('library-detail-search-seeds')), findsOneWidget);
+    // 第四十五轮：那颗「按这个名字搜种子」按钮换成了页内的**种子块**
+    //（位置：评分统计之后、资料与简介之前）。
+    expect(find.byKey(dsDetailSeedsKey), findsOneWidget);
     expect(find.byType(FollowButton), findsOneWidget);
 
     // ⑤ 标签与简介在页面靠下：`ListView` 是懒建的，滚过去才在树里 ——
@@ -300,7 +323,9 @@ void main() {
     Finder inRail(Finder f) => find.descendant(of: rail, matching: f);
     Finder inMain(Finder f) => find.descendant(of: main, matching: f);
     expect(inRail(find.byKey(const Key('library-detail-score'))), findsOneWidget, reason: '分数胶囊在左栏');
-    expect(inRail(find.byKey(const Key('library-detail-search-seeds'))), findsOneWidget, reason: '动作在左栏');
+    // 第四十五轮：种子块按用户选定的位置落在**右栏**（评分统计之后、资料之前），
+    // 所以它不再是左栏那颗按钮。
+    expect(inMain(find.byKey(dsDetailSeedsKey)), findsOneWidget, reason: '种子块在右栏（评分与资料之间）');
     expect(inRail(find.byKey(const Key('collection-想看'))), findsOneWidget, reason: '收藏统计在左栏');
     expect(inRail(find.byKey(const Key('library-tag-治愈'))), findsOneWidget, reason: '标签在左栏');
     expect(inMain(find.byKey(const Key('rating-bar-10'))), findsOneWidget, reason: '评分分布在右栏');
@@ -588,20 +613,119 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('角色 / 关联条目拉不到 ⇒ 主内容照旧，不变成错误页（它们是装饰）', (WidgetTester tester) async {
+  // ── 第四十四轮（用户：「优化详细页反馈。加载关联等没有反馈，是突然出现在下面的」）────
+  //
+  // 这两块由两个端点拼出来，而客户端限速会把两条请求的开始时刻排开 1.1s ⇒ 它们**必然**
+  // 比详情晚一秒以上。旧实现这一秒里界面是"没有"，到了就整块蹦出来；端点半路挂了则永远
+  // "没有"。下面三条钉住三种状态都**画得出来**、而且"重试"真的会再打一次网络。
+
+  testWidgets('还在拉角色 / 关联条目时，先画一块占位（不是"下面什么都没有"）', (WidgetTester tester) async {
+    final _FakePort port = _FakePort(_fullSubject())..extrasGate = Completer<void>();
+    tester.view.physicalSize = const Size(1400, 1500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          keyValueStoreProvider.overrideWithValue(InMemoryKeyValueStore()),
+          bangumiLibraryProvider.overrideWithValue(port),
+        ],
+        child: MaterialApp(
+          theme: buildDsanimaTheme(),
+          home: LibraryDetailPage(subject: _bareSubject()),
+        ),
+      ),
+    );
+    // ⚠️ 这里**不能** `pumpAndSettle`：占位盒里的 `DsSpinner` 是无限旋转的
+    //（`_spin.repeat()`，见 ds_spinner.dart），settle 会一直等下去。
+    // 手动推两帧就够把详情 future 与首帧放出来。
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(dsDetailExtrasLoadingKey), findsOneWidget,
+        reason: '下面要有一块「正在加载角色与关联条目」的占位');
+    expect(find.textContaining('正在问 Bangumi（角色'), findsOneWidget);
+    expect(find.byKey(dsDetailCharactersKey), findsNothing, reason: '还没到就不许先画内容');
+    expect(find.byKey(dsDetailRelatedKey), findsNothing);
+
+    // 放行：占位换成真内容。
+    port.extrasGate!.complete();
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byKey(dsDetailExtrasLoadingKey), findsNothing);
+    final Finder page = find
+        .descendant(of: find.byType(ListView), matching: find.byType(Scrollable))
+        .first;
+    await tester.scrollUntilVisible(find.byKey(dsDetailCharactersKey), 400, scrollable: page);
+    expect(find.byKey(dsDetailCharactersKey), findsOneWidget);
+    expect(find.byKey(dsDetailRelatedKey), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('角色 / 关联条目拉不到 ⇒ 说清"没拉到"并给一颗**真的会重打网络**的「重试」', (WidgetTester tester) async {
     final _FakePort port = await _pump(
       tester,
       listSubject: _bareSubject(),
       detailSubject: _fullSubject(),
-      size: const Size(1400, 900),
+      size: const Size(1400, 1500),
       extrasFail: true,
     );
 
     expect(port.extrasCalls, 1);
+    expect(find.byKey(dsDetailExtrasFailedKey), findsOneWidget, reason: '不许静静地什么都不显示');
+    expect(find.textContaining('角色没拉到（测试替身）'), findsOneWidget, reason: '要说清为什么');
     expect(find.byKey(dsDetailCharactersKey), findsNothing);
     expect(find.byKey(dsDetailRelatedKey), findsNothing);
-    expect(find.textContaining('详情没拉到'), findsNothing, reason: '主内容好好的，不该弹警告');
+    expect(find.textContaining('详情没拉到'), findsNothing, reason: '主内容好好的，不该弹主内容的警告');
     expect(find.textContaining('共 36596 人评分'), findsOneWidget, reason: '评分分布照旧');
+
+    // 点「重试」：端口这次给得出内容 ⇒ 必须**再打一次网络**（旧实现无论成败都进程内缓存，
+    // 那颗重试拿回来的还是同一份缺的，点了等于没点）。
+    port.extrasFail = false;
+    await tester.tap(find.byKey(dsDetailExtrasRetryKey));
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(port.extrasCalls, 2, reason: '重试要真的再问一次 Bangumi');
+    expect(find.byKey(dsDetailExtrasFailedKey), findsNothing);
+    final Finder page = find
+        .descendant(of: find.byType(ListView), matching: find.byType(Scrollable))
+        .first;
+    await tester.scrollUntilVisible(find.byKey(dsDetailCharactersKey), 400, scrollable: page);
+    expect(find.byKey(dsDetailCharactersKey), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('只拉到一半：点名是哪一块没拉到，另一半照常画', (WidgetTester tester) async {
+    // `extras()` 的契约是"各自失败各自空"——旧实现只把那半边的空表交出去，
+    // 页面于是画了角色、没有关联条目，用户分不出"这部没有关联条目"与"没拉到"。
+    final _FakePort port = await _pump(
+      tester,
+      listSubject: _bareSubject(),
+      detailSubject: _fullSubject(),
+      size: const Size(1400, 1500),
+      relatedFail: true,
+    );
+
+    expect(port.extrasCalls, 1);
+    expect(find.textContaining('关联条目没拉到（测试替身）'), findsOneWidget);
+    expect(find.textContaining('角色没拉到'), findsNothing, reason: '角色那一路是好的，别一起背锅');
+    expect(find.byKey(dsDetailCharactersKey), findsOneWidget, reason: '拿到的那一半照常画');
+    expect(find.byKey(dsDetailRelatedKey), findsNothing);
+    expect(find.byKey(dsDetailExtrasPartialRetryKey), findsOneWidget);
+
+    // 同样的重试入口：这次两路都成 —— 角色块不会被重复问一遍（服务层只有整份成功才缓存，
+    // 所以这里会整份再问一次，但页面上不该出现两份角色卡）。
+    port.relatedFail = false;
+    await tester.tap(find.byKey(dsDetailExtrasPartialRetryKey));
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(port.extrasCalls, 2);
+    expect(find.byKey(dsDetailCharactersKey), findsOneWidget);
+    final Finder page = find
+        .descendant(of: find.byType(ListView), matching: find.byType(Scrollable))
+        .first;
+    await tester.scrollUntilVisible(find.byKey(dsDetailRelatedKey), 400, scrollable: page);
+    expect(find.byKey(dsDetailRelatedKey), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

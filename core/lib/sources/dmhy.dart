@@ -276,6 +276,16 @@ class DmhyListParser {
       final sizeText = normalizeWhitespace(cells[4].text);
       final dateText = _firstDate(cells[0].text);
       final parsed = TitleParser.parse(title, sourceId: sourceId);
+      // 站点自己的**字幕组**字段（第四十五轮实测加上的）：列表行标题单元格里那个
+      // `a[href*="/topics/list/team_id/"]` 的文本就是组名（`云光字幕组` / `LoliHouse` /
+      // `动漫国字幕组`）。实测 80 行里 62~68 行有它，且**文本从来不为空**。
+      //
+      // 为什么优先信它而不是标题前导方括号：方括号里那个 token 常常是**发布者**，
+      // 而这个链接是站点登记的团队（dmhy 的 `/topics/list/team_id/<id>` 页就按它归类）。
+      // 解析不出来才退回标题（不少个人发布没有 team，只有方括号）。
+      final String? siteGroup = normalizeWhitespace(
+        row.querySelector('a[href*="/topics/list/team_id/"]')?.text,
+      );
 
       items.add(SourceItem(
         id: '$sourceId:$topicId',
@@ -292,12 +302,13 @@ class DmhyListParser {
         downloads: parseIntLoose(normalizeWhitespace(cells[7].text)),
         publishedAt: parseFeedDate(dateText),
         category: normalizeWhitespace(cells[1].text),
-        group: parsed.group,
+        group: siteGroup ?? parsed.group,
         episodeHints: parsed.episodeHints,
         extra: <String, dynamic>{
           ...parsed.toExtra(),
           'sizeText': ?sizeText,
           'publishedText': ?dateText,
+          'siteGroup': ?siteGroup,
           if (cells.length > 8)
             'uploader': ?normalizeWhitespace(cells[8].text),
           'fromHtmlList': true,

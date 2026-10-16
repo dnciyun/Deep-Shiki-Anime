@@ -74,7 +74,6 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
   Future<void> _export() async {
     final List<WatchRecord> records = ref.read(watchHistoryProvider);
     final int days = ref.read(settingsProvider).historyRetentionDays;
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     setState(() => _busy = true);
     try {
       await runGuarded(
@@ -85,7 +84,9 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
             records,
             retentionDays: days,
           );
-          messenger.showSnackBar(SnackBar(content: Text('观看记录已导出：$path')));
+          if (!mounted) return;
+          // 第四十二轮 UX #14：统一走反馈通道（原来是裸 SnackBar）。
+          showSuccess(context, '观看记录已导出：$path', seconds: 5);
         },
       );
     } finally {
@@ -101,6 +102,7 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
         title: const Text('清空观看记录？'),
         content: Text(
           '会删掉全部 $count 条记录（含进度）。'
+          '**磁盘上的视频文件一个都不动**。'
           '「已看过」的勾在「正在追」里，不受影响 —— 那份数据是另一份。',
         ),
         actions: <Widget>[
@@ -109,13 +111,37 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
         ],
       ),
     );
-    if (ok != true) return;
-    await ref.read(watchHistoryProvider.notifier).clear();
+    if (!mounted || ok != true) return;
+    // 走统一反馈通道：落盘失败必须说出来（第四十二轮 UX #5/#19）。
+    await runGuarded(
+      context,
+      action: () => ref.read(watchHistoryProvider.notifier).clear(),
+      success: '已清空观看记录（$count 条）',
+    );
+  }
+
+  /// 删掉一条观看记录。
+  ///
+  /// 单条删除**不给二次确认**（同「删一条搜索历史」的既定口径：低摩擦优先），
+  /// 但必须**可撤销 + 有反馈**：旧实现是 `onDelete: () => ...remove(id)` ——
+  /// 不 await 不 catch，删失败时连"没删掉"都不说（第四十二轮 UX #5 / #20）。
+  Future<void> _deleteOne(WatchRecord record) async {
+    try {
+      await ref.read(watchHistoryProvider.notifier).remove(record.id);
+      if (!mounted) return;
+      showUndo(
+        context,
+        '已删掉「${record.title}」这条记录',
+        onUndo: () => ref.read(watchHistoryProvider.notifier).restore(record),
+      );
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      showFailure(context, describeFailure(error, stackTrace: stackTrace));
+    }
   }
 
   /// 「继续播放」：拿记录里的 `infoHash`（引擎重启后 `engineId` 会变）回引擎找那一条。
   Future<void> _play(WatchRecord record) async {
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final List<EngineTorrentView> torrents =
         ref.read(engineTorrentsProvider).value ?? const <EngineTorrentView>[];
     EngineTorrentView? torrent;
@@ -139,10 +165,12 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
               ? torrent.files[record.fileIndex!]
               : null);
     if (torrent == null || file == null) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('引擎里已经没有这一条了（被移除或换过种子）——到「已完成」或「正在追」重新点一集'),
-        ),
+      // 第四十二轮 UX #14：统一走反馈通道（原来是裸 SnackBar，与全仓那套不是一套）。
+      // 这不是"操作失败"，是"这条记录指向的东西已经不在了" —— 警告形态最贴切。
+      showWarning(
+        context,
+        '这条记录对应的种子已经不在引擎里了',
+        hint: '被移除或换过种子？到「已完成」或「正在追」重新点一集',
       );
       return;
     }
@@ -154,9 +182,21 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
           coverUrl: record.coverUrl,
           coverReferer: record.coverReferer,
           mikanBangumiId: record.mikanBangumiId,
+          // 从上次看到的地方接着播（第四十二轮 UX #2）。null = 这一条没进度、
+          // 或已经看完（行里那个按钮对看完的集写的是「重看」）。
+          startPositionMs: record.resumePositionMs,
         );
     final DsFailure? failure = ref.read(playbackProvider).failure;
     if (failure != null && mounted) showFailure(context, failure);
+    // 真的从上次那儿接上了吗 —— 说一句，别让用户自己盯着进度条猜。
+    final int? from = record.resumePositionMs;
+    if (from != null && mounted && failure == null) {
+      showSuccess(
+        context,
+        '从 ${formatDuration(Duration(milliseconds: from))} 接着播：${record.title}',
+        seconds: 4,
+      );
+    }
   }
 
   @override
@@ -206,12 +246,20 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
         ),
         Expanded(
           child: records.isEmpty
-              ? const DsEmpty(
+              // 空态必须带一个"下一步动作"（同仓库其它页都有；第四十二轮 UX #17）。
+              ? DsEmpty(
                   icon: Icons.history,
                   title: '还没有观看记录',
                   message:
                       '用播放器看过一集就会记在这里（番名 / 集数 / 字幕组 / 看到哪儿）；'
                       '过期的按设置里的天数自动移除，也可以随时导出成 JSON。',
+                  action: NeoButton(
+                    label: '去搜索',
+                    icon: Icons.search,
+                    kind: NeoButtonKind.primary,
+                    onPressed: () =>
+                        ref.read(navProvider.notifier).select(ShellTab.search),
+                  ),
                 )
               : ListView.builder(
                   padding: EdgeInsets.fromLTRB(t.spacing, 12, t.spacing, t.spacing),
@@ -221,9 +269,12 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
                     return DsStaggerFade(index: index, child: _HistoryRow(
                       key: ValueKey<String>(record.id),
                       record: record,
+                      // 关掉「记录观看进度」之后，行里那份进度是**以前**记下的：
+                      // 页头写着"只记时间不记进度"，行里却还在报百分比，两边自相矛盾
+                      //（第四十二轮 UX #18）。所以把开关传下去，由行内说明它的来历。
+                      recordingProgress: recordingProgress,
                       onPlay: () => _play(record),
-                      onDelete: () =>
-                          ref.read(watchHistoryProvider.notifier).remove(record.id),
+                      onDelete: () => _deleteOne(record),
                     ));
                   },
                 ),
@@ -235,9 +286,19 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
 
 /// 一条观看记录。
 class _HistoryRow extends StatelessWidget {
-  const _HistoryRow({super.key, required this.record, required this.onPlay, required this.onDelete});
+  const _HistoryRow({
+    super.key,
+    required this.record,
+    required this.recordingProgress,
+    required this.onPlay,
+    required this.onDelete,
+  });
 
   final WatchRecord record;
+
+  /// 设置里「记录观看进度」现在是开还是关。关掉之后行里那条进度是**历史遗留**，
+  /// 要说明来历，不能和页头的「只记时间不记进度」打架（UX #18）。
+  final bool recordingProgress;
   final Future<void> Function() onPlay;
   final Future<void> Function() onDelete;
 
@@ -260,6 +321,10 @@ class _HistoryRow extends StatelessWidget {
     final String progressText = r.durationMs > 0
         ? '看到 ${_clock(r.positionMs)} / ${_clock(r.durationMs)}（${(r.progress * 100).round()}%）'
         : (r.positionMs > 0 ? '看到 ${_clock(r.positionMs)}（时长未知）' : '没有进度记录');
+    // 关掉「记录观看进度」时，这条进度不会再更新了 —— 明说"这是以前记下的"，
+    // 否则页头说"只记时间"、行里却报百分比，用户会以为设置没生效（UX #18）。
+    final String progressLine =
+        (!recordingProgress && r.positionMs > 0) ? '$progressText（已关掉进度记录，这是以前记下的）' : progressText;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -325,7 +390,7 @@ class _HistoryRow extends StatelessWidget {
                 _ProgressBar(progress: r.progress, active: r.durationMs > 0),
                 const SizedBox(height: 5),
                 Text(
-                  progressText,
+                  progressLine,
                   style: TextStyle(
                     color: t.text3,
                     fontSize: DsTypeScale.caption,
@@ -336,11 +401,16 @@ class _HistoryRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
+          // 文案必须与**真的会做什么**一致（第四十二轮 UX #2）：有进度 = 「继续播放」
+          // （会从上次那儿接上），已看完 = 「重看」（从 0 开始，行里也写着「已看完」）。
           NeoButton(
-            label: '继续播放',
+            label: r.resumePositionMs == null ? (r.finished ? '重看' : '播放') : '继续播放',
             icon: Icons.play_arrow,
             kind: NeoButtonKind.primary,
             compact: true,
+            tooltip: r.resumePositionMs == null
+                ? null
+                : '从 ${formatDuration(Duration(milliseconds: r.resumePositionMs!))} 接着播',
             onPressed: () => onPlay(),
           ),
           const SizedBox(width: 6),

@@ -21,6 +21,7 @@ class SearchHistoryBar extends StatelessWidget {
     required this.onForget,
     required this.onClear,
     this.keyPrefix = 'search-history',
+    this.showLabel = true,
   });
 
   final List<String> history;
@@ -30,6 +31,13 @@ class SearchHistoryBar extends StatelessWidget {
 
   /// 每组控件的 key 前缀（两个页面同时挂在 `IndexedStack` 里，key 必须区分）。
   final String keyPrefix;
+
+  /// 要不要自带那半截「最近搜索」标签。
+  ///
+  /// 第四十四轮加：动漫库把搜索与筛选搬进**右栏**（248 宽），条里的标签 + 「清空」
+  /// 会把胶囊挤成"每行一颗" —— 那儿由右栏自己出一行小标题（`_railLabel`），
+  /// 于是这里只留胶囊与清空。搜索页是通栏的，照旧用默认的 `true`。
+  final bool showLabel;
 
   Future<void> _confirmClear(BuildContext context) async {
     final bool ok = await showDialog<bool>(
@@ -61,13 +69,14 @@ class SearchHistoryBar extends StatelessWidget {
       key: Key('$keyPrefix-bar'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.only(top: 3, right: 8),
-          child: Text(
-            '最近搜索',
-            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+        if (showLabel)
+          Padding(
+            padding: const EdgeInsets.only(top: 3, right: 8),
+            child: Text(
+              '最近搜索',
+              style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+            ),
           ),
-        ),
         Expanded(
           child: Wrap(
             spacing: 6,

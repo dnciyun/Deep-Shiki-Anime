@@ -8,6 +8,7 @@
 /// | 关键词 | `POST /v0/search/subjects` body `keyword` | 可用（`葬送的芙莉莲` → total 5） |
 /// | 排序 | body `sort` | 只认 `match` / `heat` / `rank` / `score`；`date` → **400 sort not supported** |
 /// | 标签 | `filter.tag: []string` | 可用（`["百合"]`；多个标签取**交集**：`["百合","科幻"]` → 251） |
+/// | 类型 | 同「标签」 | 第四十四轮：界面上叫「类型」的就是标签，清单见 [kLibraryGenreTags]（逐个实测过） |
 /// | 评分下限 | `filter.rating: []string` | **必须是字符数组**（`[">=7"]`）。写成对象 → 400
 ///   `Unmarshal type error: expected=[]string, got=object, field=filter.rating` |
 /// | 年份/季度 | `filter.air_date: [">=YYYY-MM-DD","<YYYY-MM-DD"]` | 可用 |
@@ -125,6 +126,75 @@ const List<String> kLibraryQuarterLabels = <String>['全年', '1 月番', '4 月
 /// 评分下限档位（`null` = 不限）。
 const List<double> kLibraryMinScoreChoices = <double>[6, 7, 7.5, 8, 8.5, 9];
 
+/// 「类型」筛选的标签清单（第四十四轮，**顺序就是界面上的顺序**：常见 → 冷门）。
+///
+/// 用户原话：「优化动漫库…并加入类型的筛选，比如异世界 玄幻 校园这些」。
+///
+/// Bangumi **没有**「类型」这个字段 —— 类型就是**用户打的标签**，走的是与详情页标签胶囊
+/// 完全同一条路（`filter.tag`，见 [BangumiLibraryQuery.filter]）。而标签是自由文本，
+/// 凭空列一份清单必然有一半是没人用的（「玄幻」这种中文网文词，动画条目上到底有没有人打？
+/// 凭空猜是不负责任的），所以先**真打了一遍**：
+/// `tool/round44_genre_probe.py`（2026-10-16 本机实测，`filter.type=[2]` + `filter.tag=[标签]`，
+/// 35 个候选逐个查 `POST /v0/search/subjects`，原始表在 `build/round44/genre-probe.txt`）。
+/// 下表是它回来的 `total`（服务端宽查询封顶 1000）：
+///
+/// | 标签 | total | 标签 | total | 标签 | total |
+/// |---|---|---|---|---|---|
+/// | 校园 | 1000 | 奇幻 | 1000 | 科幻 | 1000 |
+/// | 恋爱 | 1000 | 日常 | 1000 | 搞笑 | 1000 |
+/// | 治愈 | 1000 | 战斗 | 1000 | 冒险 | 1000 |
+/// | 机战 | 1000 | 热血 | 1000 | 百合 | 1000 |
+/// | 后宫 | 1000 | 泡面番 | 1000 | 子供向 | 1000 |
+/// | **异世界** | **803** | 青春 | 719 | 悬疑 | 652 |
+/// | 音乐 | 621 | **玄幻** | **537** | 运动 | 511 |
+/// | 战争 | 439 | 猎奇 | 439 | 偶像 | 425 |
+/// | 历史 | 413 | 女性向 | 392 | 魔法 | 357 |
+/// | 竞技 | 357 | 推理 | 301 | 催泪 | 273 |
+/// | 超能力 | 255 | 武侠 | 239 | 恐怖 | 176 |
+///
+/// 落选的两个（**故意不列**，因为列了等于骗人）：`悬疑推理` 只有 4 条、`奇幻冒险` 9 条 ——
+/// 用户点了它得到一屏空结果，看起来就是"这个筛选坏了"。清单里每一条最少也有 176 条。
+const List<String> kLibraryGenreTags = <String>[
+  // 题材
+  '奇幻',
+  '科幻',
+  '异世界',
+  '玄幻',
+  '校园',
+  '恋爱',
+  '日常',
+  '搞笑',
+  '治愈',
+  '战斗',
+  '冒险',
+  '悬疑',
+  '推理',
+  '恐怖',
+  '音乐',
+  '运动',
+  '机战',
+  '魔法',
+  '超能力',
+  '历史',
+  '战争',
+  '青春',
+  '热血',
+  '武侠',
+  // 氛围 / 受众
+  '百合',
+  '后宫',
+  '偶像',
+  '竞技',
+  '猎奇',
+  '催泪',
+  '泡面番',
+  '子供向',
+  '女性向',
+];
+
+/// 这个标签是不是清单里的「类型」（右栏的类型胶囊靠它决定要不要额外补一颗"当前标签"）。
+bool isLibraryGenre(String tag) => kLibraryGenreTags.contains(tag.trim());
+
 /// 一次动漫库查询。
 @immutable
 class BangumiLibraryQuery {
@@ -154,10 +224,13 @@ class BangumiLibraryQuery {
   /// 评分下限；`null` = 不限。
   final double? minScore;
 
-  /// 标签（如「百合」「科幻」）；`null` = 不限。
+  /// 标签（如「异世界」「百合」）；`null` = 不限。界面上叫**类型**。
   ///
-  /// 入口在**条目详情页的标签**上（点一下标签 = 回库里按这个标签筛）：Bangumi 没有
-  /// 「标签列表」接口，凭空列一堆标签名只会是一份永远过时的清单 —— 从真实条目上点最准。
+  /// 两个入口（都是同一个字段，所以两处永远一致）：
+  /// * 动漫库右栏的**类型胶囊**（[kLibraryGenreTags] 那份实测清单，点一下筛、再点一下取消）；
+  /// * **条目详情页的标签**（点一下 = 回库里按这个标签筛）—— 那儿的标签不限于清单
+  ///   （「公路片」「2022年10月」都可能），所以右栏遇到清单外的标签会补一颗"当前标签"胶囊
+  ///   把它显示出来，否则用户会看到"结果被筛过、但界面上找不到原因"。
   final String? tag;
 
   String get trimmedKeyword => keyword.trim();
@@ -174,7 +247,7 @@ class BangumiLibraryQuery {
       if (year != null) quarter == 0 ? '$year 年' : '$year 年 ${kLibraryQuarterLabels[quarter]}',
       if (form != BangumiLibraryForm.any) form.label,
       if (minScore != null) '≥${_scoreLabel(minScore!)} 分',
-      if ((tag ?? '').trim().isNotEmpty) '标签「${tag!.trim()}」',
+      if ((tag ?? '').trim().isNotEmpty) '类型「${tag!.trim()}」',
     ];
     if (parts.isEmpty) return '全部动画';
     return parts.join(' · ');
@@ -252,10 +325,20 @@ class BangumiLibraryQuery {
     return <String>['>=${_scoreLabel(min)}'];
   }
 
-  /// 缓存键 / 历史记录用的稳定串。
+  /// 缓存键 / 在途去重键 / 历史记录用的稳定串。
+  ///
+  /// ⚠️ **每一个会影响服务端结果的字段都必须在里面**。第四十四轮补上了 `t=`（标签）：
+  /// 旧串只到 `r=`（评分）为止，而 [tag] 同样进 [filter] —— 于是"同一个关键词/年份/形态，
+  /// 只换了类型标签"两份查询会算出**同一个键**，而它被用在两处关键地方：
+  /// * `state/bangumi_library.dart` 的**页缓存**（键 `cacheKey|offset|limit`）：
+  ///   点了「异世界」会拿到上一次（无标签）那一页，**最多错 10 分钟**；
+  /// * `state/library_provider.dart` 的在途去重：筛选期间改标签会被当成"同一份请求"，
+  ///   新的那次查询**根本不发**。
+  /// 也就是说：少了这一节，第四十四轮新加的「类型」筛选在界面上点得动、结果却纹丝不动。
   String get cacheKey =>
       'k=${trimmedKeyword.toLowerCase()}|y=${year ?? ''}|q=$quarter|'
-      'f=${form.code}|s=$serverSort|r=${minScore ?? ''}';
+      'f=${form.code}|s=$serverSort|r=${minScore ?? ''}|'
+      't=${(tag ?? '').trim()}';
 
   Map<String, Object?> toJson() => <String, Object?>{
     'keyword': keyword,

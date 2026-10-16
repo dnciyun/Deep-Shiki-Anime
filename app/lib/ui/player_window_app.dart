@@ -100,7 +100,7 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
     _bindProgressReporting();
 
     // 主窗口后续的请求/控制走这里。
-    widget.controller.setWindowMethodHandler((MethodCall call) async {
+    unawaited(widget.controller.setWindowMethodHandler((MethodCall call) async {
       switch (call.method) {
         case kMethodOpen:
           final PlayerWindowArgs? args = PlayerWindowArgs.decode(_encodeArgs(call.arguments));
@@ -137,7 +137,7 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
           }
       }
       return null;
-    });
+    }));
 
     // 关窗：**先拦下来**做收尾，收完再把这一扇窗收起来（默认）或关掉。
     //
@@ -518,8 +518,9 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
     if (to == target) return;
     _tokenFrom = _shownTokens(to ?? target);
     _tokenTo = target;
-    _tokenFade.forward(from: 0);
-  }
+    // token 过渡动画：`forward` 的 TickerFuture 只在动画跑完时 resolve，
+    // 这里不等它（等也没意义）—— 用 unawaited 写明是**有意丢弃**。
+    unawaited(_tokenFade.forward(from: 0));  }
 
   /// 当前该用的 token：动画中 = 旧→新插值，否则 = 目标值。
   shikiin.ThemeTokens _shownTokens(shikiin.ThemeTokens target) {

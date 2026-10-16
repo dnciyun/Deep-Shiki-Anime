@@ -35,6 +35,7 @@ import '../state/export_service.dart';
 import '../state/providers.dart';
 import '../state/tracker_refresh.dart';
 import '../state/update.dart';
+import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/feedback.dart';
@@ -195,15 +196,72 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     setState(() => _hostCache = hostCacheUsage(store));
   }
 
+  /// 缓存清理的二次确认（第四十二轮 UX #26）。
+  ///
+  /// 背景：设置页两颗「清空」（封面缓存 / 源缓存·番剧信息）以前都是**一点就走**，
+  /// 而"周期 = 不清除"时的封面清理是**全量删除**。它们都能重建，所以对话框**不**说
+  /// "不可恢复"（那是撒谎），只把真实代价摆出来：要重新联网下载。
+  Future<bool> _confirmCacheClear({
+    required String title,
+    required String body,
+  }) async {
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(title),
+        content: Text(
+          body,
+          style: TextStyle(
+            color: context.ds.text2,
+            fontSize: kSettingsBodySize,
+            height: 1.5,
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   /// 「清空其它缓存」：源缓存 + 推荐 + 番剧信息。这些条目随时会重建（下次抓取/下次看番），
   /// 所以这里**不问周期、直接清空** —— 用户点了按钮就是要腾地方。
+  ///
+  /// 第四十二轮 UX #11：`_busyCache` 原来只在成功路径上被放回 false，而两处 await
+  /// 都没有 try —— 清理抛异常（Hive 写失败 / 封面目录被占用）时这个标志**永远是 true**：
+  /// 两颗按钮一起变灰、标签卡在「清理中…」，直到重启程序，而且一句错误都没有。
+  /// 现在统一 try/finally 收口 + 失败走底部条。
   Future<void> _clearHostCacheNow() async {
+    // 第四十二轮 UX #26：先问一句。两颗「清空」以前都是一点就走，而这里删掉的
+    // 是"上次抓到的结果"——代价是下次抓取要重新联网（慢/费流量），说清楚再动手。
+    final bool ok = await _confirmCacheClear(
+      title: '清空源缓存 / 番剧信息？',
+      body: '这些条目是"上次抓到的结果"。删掉之后，下一次搜索、下一次看番详情要重新联网取一遍'
+          '（慢一点、费点流量）。设置、观看记录、已下载的文件都不受影响。',
+    );
+    if (!ok || !mounted) return;
     setState(() => _busyCache = true);
-    final int removed = await clearHostCache(ref.read(keyValueStoreProvider));
-    if (!mounted) return;
-    setState(() => _busyCache = false);
-    _loadHostCacheUsage();
-    _setNote(removed == 0 ? '没有需要清理的缓存' : '已清掉 $removed 条缓存（下次抓取会重建）');
+    try {
+      final int removed = await clearHostCache(ref.read(keyValueStoreProvider));
+      if (!mounted) return;
+      _loadHostCacheUsage();
+      _setNote(removed == 0 ? '没有需要清理的缓存' : '已清掉 $removed 条缓存（下次抓取会重建）');
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      // 失败走统一反馈通道（SnackBar），**不**塞进 `_applyFailure`：那一位是
+      // "设置没生效"专用，底部条上它还会压过「有未保存的改动」提示。
+      showFailure(context, describeFailure(error, stackTrace: stackTrace));
+    } finally {
+      if (mounted) setState(() => _busyCache = false);
+    }
   }
 
   /// 「立即清理」：周期为 0（不清除）时=**清空**（用户明确点了按钮就是要腾地方）。
@@ -213,24 +271,41 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       _setNote('应用支持目录未注入，无法清理封面缓存');
       return;
     }
-    setState(() => _busyCache = true);
     final int days = _cachePeriodValue;
-    final CoverCacheSweep sweep = await sweepCoverCache(
-      coverCacheDirOf(support),
-      maxAge: days == 0 ? null : Duration(days: days),
-    );
-    // ⭐ 第三十七轮：清完之后**必须**把封面缓存的内存索引也丢掉 ——
-    // 索引里存的是"盘上那个文件"，文件刚被删掉时再把它交出去，`Image.file` 会走到
-    // errorBuilder（那一格变灰框）直到下次下载。丢空之后下一次显示会重新探盘/重下。
-    _refreshCoverCacheIndex();
-    if (!mounted) return;
-    setState(() => _busyCache = false);
-    await _loadCacheUsage();
-    _setNote(
-      sweep.deleted == 0
-          ? '没有需要清理的封面缓存'
-          : '已清理 ${sweep.deleted} 张封面，释放 ${formatBytes(sweep.bytes)}',
-    );
+    // 第四十二轮 UX #26：周期是「不清除」时这一下是**全量删除**（把已经下过的封面
+    // 全清掉），必须问一句；周期 > 0 时只清过期的，那是它本来的日常动作，不打扰。
+    if (days == 0) {
+      final bool ok = await _confirmCacheClear(
+        title: '清空全部封面缓存？',
+        body: '周期设成「不清除」时，这颗按钮等于把已经下载过的封面**全部删掉**。'
+            '下次进首页 / 搜索页会重新下载它们（费流量，但能长回来）。',
+      );
+      if (!ok || !mounted) return;
+    }
+    setState(() => _busyCache = true);
+    try {
+      final CoverCacheSweep sweep = await sweepCoverCache(
+        coverCacheDirOf(support),
+        maxAge: days == 0 ? null : Duration(days: days),
+      );
+      // ⭐ 第三十七轮：清完之后**必须**把封面缓存的内存索引也丢掉 ——
+      // 索引里存的是"盘上那个文件"，文件刚被删掉时再把它交出去，`Image.file` 会走到
+      // errorBuilder（那一格变灰框）直到下次下载。丢空之后下一次显示会重新探盘/重下。
+      _refreshCoverCacheIndex();
+      if (!mounted) return;
+      await _loadCacheUsage();
+      if (!mounted) return;
+      _setNote(
+        sweep.deleted == 0
+            ? '没有需要清理的封面缓存'
+            : '已清理 ${sweep.deleted} 张封面，释放 ${formatBytes(sweep.bytes)}',
+      );
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      showFailure(context, describeFailure(error, stackTrace: stackTrace));
+    } finally {
+      if (mounted) setState(() => _busyCache = false);
+    }
   }
 
   /// 丢掉封面缓存的内存索引（第三十七轮）。
@@ -447,6 +522,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// 用户打字**不会**走到这里（`onChanged` 只动草稿，不碰这个计数）。
   int _draftRevision = 0;
 
+  /// 数字输入框当前的错误提示（键 = 字段名；空 = 这个框是合法的）。
+  ///
+  /// 第四十二轮 UX #12：旧实现每个数字框都是 `int.tryParse(v.trim()) ?? 0` ——
+  /// 框里还显示着你打的字，草稿里已经**悄悄换成了别的数字**（清空 ⇒ 上传/下载限速
+  /// 变 0 = 「不限速」；`?? 86400` 那种更隐蔽）。用户不可能发现，保存后行为却变了。
+  /// 现在：解析不出来就**不写进草稿**、框下标红说明 ——「框里显示的字」与
+  /// 「点保存会写下去的值」永远一致。
+  final Map<String, String> _fieldErrors = <String, String>{};
+
+  /// 草稿被**程序化整份替换**（保存成功 / 撤销 / 导入 / 后台对齐）：
+  /// 输入框要按 `initialValue` 重建（见 [_draftRevision]），数字框的错误提示同时作废 ——
+  /// 那条错误说的是"旧那份草稿里的字"，留着只会让人以为新值也有问题。
+  void _bumpDraftRevision() {
+    _draftRevision++;
+    _fieldErrors.clear();
+  }
+
   /// 草稿被改了、但**没有** `setState` 的地方喊一声（这一页 13 个输入框的 `onChanged`）。
   ///
   /// 为什么这些地方刻意不 setState：它们是 `TextFormField`，每敲一下就重铺整页既浪费、
@@ -494,7 +586,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         setState(() {
           _baseline = payload;
           _draft = payload;
-          _draftRevision++; // 屏幕上的 13 个输入框要跟着吃一遍新值
+          _bumpDraftRevision(); // 屏幕上的 13 个输入框要跟着吃一遍新值
         });
         try {
           await ref.read(lifecyclePortProvider).applySettings(payload);
@@ -522,7 +614,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     setState(() {
       _draft = current;
       _baseline = current;
-      _draftRevision++; // 输入框里的字也要一起回到已保存那份
+      _bumpDraftRevision(); // 输入框里的字也要一起回到已保存那份
       _applyFailure = null;
       _applySuccess = null;
     });
@@ -593,7 +685,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             // 否则屏幕上还是旧配置，用户根本没法核对刚导入了什么。
             setState(() {
               _draft = imported;
-              _draftRevision++;
+              _bumpDraftRevision();
             });
             _setNote('配置已导入到草稿：确认无误后点「保存并生效」；想撤销就点「撤销改动」');
           },
@@ -633,7 +725,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         setState(() {
           _baseline = next;
           _draft = next;
-          _draftRevision++; // 干净时对齐后台那份 → 输入框里的字也得跟着变
+          _bumpDraftRevision(); // 干净时对齐后台那份 → 输入框里的字也得跟着变
         });
       }
     });
@@ -886,6 +978,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           decoration: const InputDecoration(labelText: '代理模式'),
                           isExpanded: true,
                           dropdownColor: t.surfaceAlt,
+                          // ⚠️ 第四十六轮（用户：「优化一些框里字太大的问题，
+                          // 比如默认源 代理模式」）：这里**必须**显式给字号 ——
+                          // `DropdownButton` 不给 style 就吃 `textTheme.titleMedium`
+                          // （本站 = 17 + w600），于是这一格比同一行的输入框（13）大一圈，
+                          // 出图见 `build/probe-size/S_settings_network.png`。
+                          // `dsControlTextStyle` 同时把字体族带上（这个 style 不与主题
+                          // merge，裸写 `TextStyle(...)` 会掉回系统默认字体）。
+                          style: dsControlTextStyle(t, fontSize: kSettingsBodySize),
+                          // 箭头跟着字一起收（Material 默认 24，比 13 的字高一倍）。
+                          iconSize: 18,
                           items: <DropdownMenuItem<ProxyMode>>[
                             for (final ProxyMode mode in ProxyMode.values)
                               DropdownMenuItem<ProxyMode>(value: mode, child: Text(mode.label)),
@@ -910,18 +1012,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      SizedBox(
+                      _numberField(
+                        t,
+                        name: 'proxyPort',
+                        value: _draft.proxyPort,
+                        label: '端口',
                         width: 110,
-                        child: TextFormField(
-                          key: _fieldKey('proxyPort'),
-                          initialValue: '${_draft.proxyPort}',
-                          decoration: const InputDecoration(labelText: '端口'),
-                          style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
-                          onChanged: (String v) {
-                            _draft = _draft.copyWith(proxyPort: int.tryParse(v.trim()) ?? 0);
-                            _touchDraft();
-                          },
-                        ),
+                        onChanged: (num v) => _draft =
+                            _draft.copyWith(proxyPort: v.toInt()),
                       ),
                     ]),
                     const SizedBox(height: 16),
@@ -955,51 +1053,36 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     ]),
                     const SizedBox(height: 16),
                     _row(<Widget>[
-                      SizedBox(
+                      _numberField(
+                        t,
+                        name: 'sourceRequestIntervalMs',
+                        value: _draft.sourceRequestIntervalMs,
+                        label: '每 host 最小请求间隔（毫秒）',
                         width: 240,
-                        child: TextFormField(
-                          key: _fieldKey('sourceRequestIntervalMs'),
-                          initialValue: '${_draft.sourceRequestIntervalMs}',
-                          decoration: const InputDecoration(labelText: '每 host 最小请求间隔（毫秒）'),
-                          style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
-                          onChanged: (String v) {
-                            _draft = _draft.copyWith(
-                              sourceRequestIntervalMs: int.tryParse(v.trim()) ?? 1200,
-                            );
-                            _touchDraft();
-                          },
+                        onChanged: (num v) => _draft = _draft.copyWith(
+                          sourceRequestIntervalMs: v.toInt(),
                         ),
                       ),
                       const SizedBox(width: 10),
-                      SizedBox(
+                      _numberField(
+                        t,
+                        name: 'sourceCacheTtlSeconds',
+                        value: _draft.sourceCacheTtlSeconds,
+                        label: '源缓存 TTL（秒，搜索/最新）',
                         width: 240,
-                        child: TextFormField(
-                          key: _fieldKey('sourceCacheTtlSeconds'),
-                          initialValue: '${_draft.sourceCacheTtlSeconds}',
-                          decoration: const InputDecoration(labelText: '源缓存 TTL（秒，搜索/最新）'),
-                          style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
-                          onChanged: (String v) {
-                            _draft = _draft.copyWith(
-                              sourceCacheTtlSeconds: int.tryParse(v.trim()) ?? 300,
-                            );
-                            _touchDraft();
-                          },
+                        onChanged: (num v) => _draft = _draft.copyWith(
+                          sourceCacheTtlSeconds: v.toInt(),
                         ),
                       ),
                       const SizedBox(width: 10),
-                      SizedBox(
+                      _numberField(
+                        t,
+                        name: 'sourceDetailCacheTtlSeconds',
+                        value: _draft.sourceDetailCacheTtlSeconds,
+                        label: '详情缓存 TTL（秒）',
                         width: 220,
-                        child: TextFormField(
-                          key: _fieldKey('sourceDetailCacheTtlSeconds'),
-                          initialValue: '${_draft.sourceDetailCacheTtlSeconds}',
-                          decoration: const InputDecoration(labelText: '详情缓存 TTL（秒）'),
-                          style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
-                          onChanged: (String v) {
-                            _draft = _draft.copyWith(
-                              sourceDetailCacheTtlSeconds: int.tryParse(v.trim()) ?? 86400,
-                            );
-                            _touchDraft();
-                          },
+                        onChanged: (num v) => _draft = _draft.copyWith(
+                          sourceDetailCacheTtlSeconds: v.toInt(),
                         ),
                       ),
                     ]),
@@ -1013,50 +1096,33 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     Divider(height: 1, color: t.divider),
                     const SizedBox(height: 14),
                     _row(<Widget>[
-                      SizedBox(
-                        width: 200,
-                        child: TextFormField(
-                          key: _fieldKey('uploadLimitKbps'),
-                          initialValue: '${_draft.uploadLimitKbps}',
-                          decoration: const InputDecoration(labelText: '上传限速 (KB/s)'),
-                          style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
-                          onChanged: (String v) {
-                            _draft = _draft.copyWith(
-                              uploadLimitKbps: int.tryParse(v.trim()) ?? 0,
-                            );
-                            _touchDraft();
-                          },
-                        ),
+                      _numberField(
+                        t,
+                        name: 'uploadLimitKbps',
+                        value: _draft.uploadLimitKbps,
+                        label: '上传限速 (KB/s)',
+                        onChanged: (num v) =>
+                            _draft = _draft.copyWith(uploadLimitKbps: v.toInt()),
                       ),
                       const SizedBox(width: 10),
-                      SizedBox(
-                        width: 200,
-                        child: TextFormField(
-                          key: _fieldKey('downloadLimitKbps'),
-                          initialValue: '${_draft.downloadLimitKbps}',
-                          decoration: const InputDecoration(labelText: '下载限速 (KB/s)'),
-                          style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
-                          onChanged: (String v) {
-                            _draft = _draft.copyWith(
-                              downloadLimitKbps: int.tryParse(v.trim()) ?? 0,
-                            );
-                            _touchDraft();
-                          },
-                        ),
+                      _numberField(
+                        t,
+                        name: 'downloadLimitKbps',
+                        value: _draft.downloadLimitKbps,
+                        label: '下载限速 (KB/s，0 = 不限速)',
+                        onChanged: (num v) => _draft =
+                            _draft.copyWith(downloadLimitKbps: v.toInt()),
                       ),
                       const SizedBox(width: 10),
-                      SizedBox(
+                      _numberField(
+                        t,
+                        name: 'seedRatio',
+                        value: _draft.seedRatio,
+                        label: '做种比（达到该比例后自动暂停；0 = 不按比例停）',
                         width: 220,
-                        child: TextFormField(
-                          key: _fieldKey('seedRatio'),
-                          initialValue: '${_draft.seedRatio}',
-                          decoration: const InputDecoration(labelText: '做种比（达到该比例后自动暂停；0 = 不按比例停）'),
-                          style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
-                          onChanged: (String v) {
-                            _draft = _draft.copyWith(seedRatio: double.tryParse(v.trim()) ?? 0);
-                            _touchDraft();
-                          },
-                        ),
+                        integer: false,
+                        onChanged: (num v) =>
+                            _draft = _draft.copyWith(seedRatio: v.toDouble()),
                       ),
                     ]),
                   ],
@@ -1172,6 +1238,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           decoration: const InputDecoration(labelText: '并发下载数（1–3）'),
                           isExpanded: true,
                           dropdownColor: t.surfaceAlt,
+                          style: dsControlTextStyle(t, fontSize: kSettingsBodySize),
+                          iconSize: 18,
                           items: const <DropdownMenuItem<int>>[
                             DropdownMenuItem<int>(value: 1, child: Text('1')),
                             DropdownMenuItem<int>(value: 2, child: Text('2')),
@@ -1881,6 +1949,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         decoration: const InputDecoration(labelText: '默认源'),
         isExpanded: true,
         dropdownColor: t.surfaceAlt,
+        // 第四十六轮：同「代理模式」——不给 style 就是 17 的 titleMedium。
+        style: dsControlTextStyle(t, fontSize: kSettingsBodySize),
+        iconSize: 18,
         items: <DropdownMenuItem<String>>[
           for (final SourceOption s in sources)
             DropdownMenuItem<String>(value: s.id, child: Text(s.displayName)),
@@ -1905,6 +1976,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           decoration: const InputDecoration(labelText: '搜索模式'),
           isExpanded: true,
           dropdownColor: t.surfaceAlt,
+          // 第四十六轮：同「代理模式」。顺带修掉"17 号字把「聚合（全部 / 动漫 / 全集）」
+          // 挤成省略号"—— 260 宽的格子在 13 下装得下全句。
+          style: dsControlTextStyle(t, fontSize: kSettingsBodySize),
+          iconSize: 18,
           items: const <DropdownMenuItem<SearchMode>>[
             DropdownMenuItem<SearchMode>(
               value: SearchMode.aggregate,
@@ -1936,18 +2011,52 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     ]);
   }
 
+  /// 加一条排除规则。
+  ///
+  /// 第四十二轮 UX #25：旧实现空输入/重复都是**直接 return** —— 框里的字不清、列表不变、
+  /// 一句提示都没有（同页 tracker 来源那个动作是逐条反馈的，两条路不一致）。
+  /// 更麻烦的是"正则"这件事：标签与示例都写着正则，而 core 以前按子串匹配，于是照着
+  /// 示例填的 `合集|总集篇` 永远不生效也没人告诉你。现在两头都对齐：
+  /// * core 真的按正则匹配（`BandwidthPolicy.isExcluded`）；
+  /// * 这里空/重复/编不出来都有话说，编不出来时**按纯文本存**（转义后），不静默丢。
   void _addExclude(String raw) {
     final String value = raw.trim();
-    if (value.isEmpty) return;
-    if (_draft.bandwidth.excludePatterns.contains(value)) return;
+    if (value.isEmpty) {
+      showWarning(context, '先在输入框里填一条规则再点「添加」',
+          hint: '它是正则，例如 合集|总集篇（`|` = 或）');
+      return;
+    }
+    if (_draft.bandwidth.excludePatterns.contains(value)) {
+      showWarning(context, '「$value」已经在下面的列表里了', hint: '列表保持不变，不用重复添加');
+      return;
+    }
+    // 编不出来（例如 `C++`）就**转义成纯文本**再存：比拒绝更实用，
+    // 而且存下去的正是"会匹配什么"，列表里显示的就是它。
+    final bool validRegex = _isValidRegex(value);
+    final String stored = validRegex ? value : RegExp.escape(value);
     setState(() {
       _draft = _draft.copyWith(
         bandwidth: _draft.bandwidth.copyWith(
-          excludePatterns: <String>[..._draft.bandwidth.excludePatterns, value],
+          excludePatterns: <String>[..._draft.bandwidth.excludePatterns, stored],
         ),
       );
       _newExclude.clear();
     });
+    if (validRegex) {
+      showSuccess(context, '已加入省流量列表：$value');
+    } else {
+      showWarning(context, '「$value」不是合法的正则，已按**纯文本**加入',
+          hint: '存进去的是转义后的 $stored —— 匹配的是这几个字本身，不会被当成语法');
+    }
+  }
+
+  static bool _isValidRegex(String pattern) {
+    try {
+      RegExp(pattern);
+      return true;
+    } on FormatException {
+      return false;
+    }
   }
 
   Widget _row(List<Widget> children) =>
@@ -1956,6 +2065,61 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// 非受控输入框的 key：带上草稿版本，让程序化替换草稿时它重新吃一遍 `initialValue`
   /// （理由见 [_draftRevision]）。
   Key _fieldKey(String name) => ValueKey<String>('$name@$_draftRevision');
+
+  /// 数字设置框：**只把合法数字写进草稿**，解析不出来就地标红（第四十二轮 UX #12/#37）。
+  ///
+  /// 与手写 `TextFormField(onChanged: ... int.tryParse(v) ?? 0)` 的区别：
+  /// * 非法/空输入**不改进草稿** —— 值仍是上一个合法值，保存时写下去的也是它；
+  /// * 框下标红说清为什么不认（只认整数 / 不能是负数 / 空着不算 0）；
+  /// * 提示只在状态真的变了才 `setState`（这一页刻意避免每次按键重铺整页）。
+  ///
+  /// [integer] false 时按小数解析（做种比那种）。
+  Widget _numberField(
+    DsTokens t, {
+    required String name,
+    required num value,
+    required String label,
+    required void Function(num parsed) onChanged,
+    double width = 200,
+    bool integer = true,
+  }) {
+    return SizedBox(
+      width: width,
+      child: TextFormField(
+        key: _fieldKey(name),
+        initialValue: '$value',
+        decoration: InputDecoration(
+          labelText: label,
+          errorText: _fieldErrors[name],
+        ),
+        style: TextStyle(color: t.text, fontSize: kSettingsBodySize),
+        onChanged: (String raw) {
+          final String text = raw.trim();
+          final num? parsed =
+              integer ? int.tryParse(text) : double.tryParse(text);
+          final String? error = text.isEmpty
+              ? '空着不算 0（要填 0 就写 0）：这一项还用着上一个值'
+              : parsed == null
+                  ? '只认数字${integer ? '（整数）' : ''}：这一项还用着上一个值'
+                  : parsed < 0
+                      ? '不能是负数：这一项还用着上一个值'
+                      : null;
+          if (_fieldErrors[name] != error) {
+            setState(() {
+              if (error == null) {
+                _fieldErrors.remove(name);
+              } else {
+                _fieldErrors[name] = error;
+              }
+            });
+          }
+          if (error != null) return; // 非法输入不进草稿
+          onChanged(parsed!);
+          _touchDraft();
+        },
+      ),
+    );
+  }
 
   /// 一行「标题 + 分段控件 + 一句说明」（决策 F23/F24：封面大小 / 轮播封面 / 轮播大小）。
   ///
@@ -1985,6 +2149,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 NeoSegmented<T>(
                   options: options,
                   value: value,
+                  // 第四十六轮：分段控件里的字跟这一页同一档（13）——
+                  // 不传就是全局 body（15），比左边的行标题还大。
+                  fontSize: kSettingsBodySize,
                   onChanged: onChanged,
                 ),
               ],
@@ -2043,15 +2210,22 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   ///
   /// 三件事同一帧里对齐，避免"页面显示 A、盘上是 B"：
   /// 1. 盘上写新 themeId（`settingsProvider.patch`：**同步改内存态**，落盘异步跟在后头）；
-  /// 2. 草稿与基线一起跟上 —— 否则底部条会显示"有未保存的改动"，而那个改动其实已经生效了；
+  /// 2. 草稿跟上（选中态落在被点的那一格）；
   /// 3. 圆形揭开（旧界面快照 + 新配色），圆心 = 被点的那一格。
+  ///
+  /// ⚠️ **基线要等落盘成功才推上去**（第四十二轮 UX #41）：旧的 apply 里 `_baseline`
+  /// 和 `_draft` 一起改，于是底部条在写盘还没回来时就已经显示「设置已保存」；
+  /// 写盘失败时更糟 —— `replace` 把内存态回滚了（配色变回旧的那套），而页面草稿
+  /// 还停在新的那格，**选择器与真实主题相反**。现在：成功才推基线，失败把草稿也退回去。
   Future<void> _pickAppearance(DsAppearance appearance, Offset origin) async {
     final DsThemeRevealHostState? host =
         context.findAncestorStateOfType<DsThemeRevealHostState>();
+    // 失败时要退回的那一套 = 基线里的（基线是"盘上那份"的镜像）。
+    final String persistedThemeId = _baseline.themeId;
     void apply() {
       setState(() {
+        // 只动草稿。基线留到写盘成功再动。
         _draft = _draft.copyWith(themeId: appearance.code);
-        _baseline = _baseline.copyWith(themeId: appearance.code);
       });
       // 同步改内存态（这一帧界面就换色），落盘与失败回滚在后台完成。
       unawaited(
@@ -2059,12 +2233,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             .read(settingsProvider.notifier)
             .patch((AppSettings s) => s.copyWith(themeId: appearance.code))
             .then<void>((_) {
-          if (mounted) _setNote('外观已切换并保存：${appearance.label}');
+          if (!mounted) return;
+          // 真的写下去了：这时才把基线推上去（页面回到"干净"）。
+          setState(() {
+            _baseline = _baseline.copyWith(themeId: appearance.code);
+          });
+          _setNote('外观已切换并保存：${appearance.label}');
         }).catchError((Object error) {
-          // 落盘失败时 `replace` 已经把内存态回滚了；这里如实说一句，不装作成功。
-          if (mounted) {
-            setState(() => _applyFailure = describeFailure(error));
-          }
+          // 落盘失败时 `replace` 已经把内存态回滚了；这里如实说一句，不装作成功，
+          // 并把**页面草稿也退回旧的那一套** —— 否则选择器还标着新那格。
+          if (!mounted) return;
+          setState(() {
+            _draft = _draft.copyWith(themeId: persistedThemeId);
+            _applyFailure = describeFailure(error);
+          });
         }),
       );
     }

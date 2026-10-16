@@ -68,6 +68,7 @@ domain.SourcePageView toPageView(core.SourcePage page) => domain.SourcePageView(
   hasNext: page.hasNext,
   fetchedAt: page.fetchedAt,
   fromCache: page.fromCache,
+  staleFallback: page.staleFallback,
 );
 
 core.Subscription toCoreSubscription(domain.SubscriptionView view) => core.Subscription(
@@ -375,6 +376,9 @@ class HostDataRuntime {
         final core.MikanBangumiDetail detail = await client.bangumi(bangumiId);
         return detail.episodes;
       } catch (_) {
+        // 「失败不留缓存」：返回值是 Map 里存着的那个 Future（调用方正在 await 它），
+        // 不是丢了一个没人等的任务。
+        // ignore: unawaited_futures
         _seriesCache.remove(key); // 失败不留缓存：下次播放再试
         return const <core.SourceItem>[];
       }

@@ -1,4 +1,13 @@
 include: package:flutter_lints/flutter.yaml
 
+linter:
+  rules:
+    # ---- 第四十二轮加入：异步失败的静态守卫（docs/ROUND42-UX.md §2.2） -------------
+    # 与 app/ 同一套口径。core 是队列 / 源 / 订阅的实现层，本轮一批"静默失败"
+    # （`_tryEngineRemove` 不抛、`_forgetJobs` 无条件、批量删只记第一条）都在这层，
+    # 漏包 await 在这里的代价同样是"用户什么都看不到"。
+    unawaited_futures: true
+    discarded_futures: true
+
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options
