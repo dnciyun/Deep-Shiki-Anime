@@ -344,6 +344,26 @@ class HostDataRuntime {
     return item;
   }
 
+  /// 取「这一条发在**哪个番剧页**」（`extra['bangumiId'] / ['bangumiTitle']`）。
+  ///
+  /// 与 [ensurePlayable] 的关键区别：**不看有没有磁力**。mikan **搜索页**的行天生带磁力
+  /// （`td[0]` 的 `data-magnet`），而番剧 id 只在**单集页**里 —— 第四十七轮真机上，
+  /// 动漫库详细页的「种子」块就是被 [ensurePlayable] 那条短路整死的：1000 行里一条候选
+  /// 都攒不出来，每部番都报"mikan 上没找到"。
+  ///
+  /// 拿不到就**原样返回**（不抛）：调用方要的答案是"认不认得出来"，认不出来就是原条目。
+  Future<core.SourceItem> episodeInfo(core.SourceItem item) async {
+    final core.SourceClient? client = _registry.byId(item.sourceId);
+    if (client == null) return item;
+    try {
+      final core.SourceItem? rich = await client.detail(item);
+      if (rich != null) return rich;
+    } catch (_) {
+      // 离线 / 单集页结构变了 / 这个源本来就没有单集页：不抛（同上）。
+    }
+    return item;
+  }
+
   Future<void> dispose() async {
     await queue.dispose();
     _registry.dispose();
@@ -706,6 +726,18 @@ class CoreHostDataPort implements HostDataPort {
     final core.SourceItem rich = await _require().ensurePlayable(_toCoreItem(item));
     // 没补到东西就别造一个新的视图对象（`id` 相同但字段可能被覆盖）。
     final bool unchanged = rich.magnet == item.magnet && rich.infoHash == item.infoHash;
+    return unchanged ? item : toItemView(rich);
+  }
+
+  @override
+  Future<domain.SourceItemView> episodeInfo(domain.SourceItemView item) async {
+    final core.SourceItem rich = await _require().episodeInfo(_toCoreItem(item));
+    // 同一口径：没补到东西就把原视图还回去。判据看"番剧 id / 标题 / 磁力"这三样
+    // （`episodeInfo` 可能在磁力相同的情况下只多带一个 `bangumiId`）。
+    final bool unchanged =
+        '${rich.extra['bangumiId'] ?? ''}' == '${item.extra['bangumiId'] ?? ''}' &&
+            rich.title == item.title &&
+            rich.magnet == item.magnet;
     return unchanged ? item : toItemView(rich);
   }
 

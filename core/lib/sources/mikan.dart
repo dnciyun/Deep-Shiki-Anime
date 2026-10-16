@@ -17,6 +17,8 @@
 /// 站点抓取样本见 `core/test/fixtures/mikan_*.{xml,html}`（2026-10-08 / 10-12 抓取）。
 library;
 
+import 'dart:isolate';
+
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:xml/xml.dart';
@@ -31,6 +33,83 @@ import 'source_client.dart';
 
 /// mikan 站点根。
 const String mikanBaseUrl = 'https://mikanani.me';
+
+/// 超过这个长度（UTF-16 code unit ≈ 字节，页面里中日文都是实体，基本全是 ASCII）
+/// 就把 mikan 页面的解析挪到子 isolate（见 [parseMikanOffThread]）。
+///
+/// 128KB 是量出来的：
+/// * `package:html` 建整页 DOM ≈ **80ms/MB，而且全是同步的** ⇒ 128KB ≈ 10ms ≈ 半帧；
+/// * 空 `Isolate.run` 的启动开销实测 **0ms**（Dart VM，5 次全 0）—— 挪走几乎不要钱，
+///   所以阈值只该按"这一页解析要多久"来定，不必留余量；
+/// * 实测页面大小：单集页 26KB、RSS 81KB（都留在同步路径，2~7ms）；
+///   番剧页 **928KB~1MB**、搜索页 **1.8~4.3MB**（都挪走）。
+///
+/// ⚠️ 一开始定的是 1MB，结果 `/Home/Bangumi/3821`（928KB）刚好落在阈值下面，
+/// 同步解析把主线程卡了 **113ms**（真机探针实测）—— 所以阈值按"半帧"定，不按"整数好看"定。
+const int kMikanParseOffloadBytes = 128 * 1024;
+
+/// 把 mikan 大页面的解析挪到**子 isolate**（第四十七轮）。
+///
+/// 为什么非挪不可：源抓取跑在 **UI isolate** 上，而 `html_parser.parse` 是同步 CPU ——
+/// 用户点进动漫库详细页时，「种子」块要拿 mikan 搜索页（4.12MB）里的候选，
+/// 那一次解析就把界面冻住 300~500ms（用户原话：「点进去时必卡一下」）。
+/// 实测：`Isolate.run` 把整段挪走往返只要 ~260ms，**主线程全程不占**（比同步解析还快，
+/// 因为同步那 460ms 里主线程什么都干不了）。
+///
+/// 两条约定（都踩过）：
+/// * 时钟按**值**传（[now]），别把 `clock` 闭包带过去：同一页每一行本来就用同一个"现在"
+///   算相对日期，语义不变；而测试里的假时钟不保证可跨 isolate。
+/// * ⚠️ [compute] 必须**在顶层函数里造**（见 `_parseSearchPage` / `_parseBangumiPage`），
+///   不能在 `MikanSource` 的实例方法里直接写闭包 —— Dart 的闭包按**上下文**捕获，
+///   实例方法里的上下文连着 `this`，于是 `Isolate.run` 会当场抛
+///   `Illegal argument in isolate message: … _Future ← RateLimiter ← SourceHttp ← MikanSource`
+///   （实测 2026-10-16：把 `id` / `baseUrl` 先取成局部变量**也不够**）。
+Future<T> parseMikanOffThread<T>({
+  required String html,
+  required DateTime now,
+  required T Function(DateTime now) compute,
+}) {
+  if (html.length < kMikanParseOffloadBytes) {
+    return Future<T>.value(compute(now));
+  }
+  return Isolate.run<T>(() => compute(now));
+}
+
+/// 搜索页解析的**顶层**入口（搜到的行数最多、页面最大，见 [kMikanParseOffloadBytes]）。
+Future<ParseOutcome> _parseSearchPage({
+  required String body,
+  required String sourceId,
+  required String base,
+  required DateTime now,
+}) => parseMikanOffThread<ParseOutcome>(
+  html: body,
+  now: now,
+  compute: (DateTime at) => MikanSearchParser.parse(
+    body,
+    sourceId: sourceId,
+    baseUrl: base,
+    clock: () => at,
+  ),
+);
+
+/// 番剧页解析的**顶层**入口（单集页面 432KB+，长番更大）。
+Future<MikanBangumiDetail> _parseBangumiPage({
+  required String body,
+  required Uri url,
+  required String sourceId,
+  required String base,
+  required DateTime now,
+}) => parseMikanOffThread<MikanBangumiDetail>(
+  html: body,
+  now: now,
+  compute: (DateTime at) => MikanBangumiParser.parse(
+    body,
+    url: url,
+    sourceId: sourceId,
+    baseUrl: base,
+    clock: () => at,
+  ),
+);
 
 /// mikan 扩展命名空间（`<torrent>` 元素）。
 const String mikanTorrentNamespace = 'https://mikanani.me/0.1/';
@@ -112,11 +191,12 @@ class MikanSource extends CachedSourceClient {
       request: CacheRequest.search(q, page: page),
       fetch: () async {
         final body = await http.getText(searchHtmlUri(q), sourceId: id);
-        final outcome = MikanSearchParser.parse(
-          body,
+        // ⚠️ 这一页实测 1.8~4.3MB：解析走子 isolate（见 [parseMikanOffThread]）。
+        final outcome = await _parseSearchPage(
+          body: body,
           sourceId: id,
-          baseUrl: baseUrl,
-          clock: clock,
+          base: baseUrl,
+          now: clock(),
         );
         return SourcePage(
           items: outcome.items,
@@ -153,12 +233,12 @@ class MikanSource extends CachedSourceClient {
         );
       } else {
         final body = await http.getText(bangumiUri(bangumiId!), sourceId: id);
-        final parsed = MikanBangumiParser.parse(
-          body,
+        final parsed = await _parseBangumiPage(
+          body: body,
           url: bangumiUri(bangumiId),
           sourceId: id,
-          baseUrl: baseUrl,
-          clock: clock,
+          base: baseUrl,
+          now: clock(),
         );
         enriched = item.copyWith(
           title: parsed.title ?? item.title,
@@ -198,12 +278,12 @@ class MikanSource extends CachedSourceClient {
   Future<MikanBangumiDetail> bangumi(Object bangumiId) async {
     final url = bangumiUri(bangumiId);
     final body = await http.getText(url, sourceId: id);
-    return MikanBangumiParser.parse(
-      body,
+    return _parseBangumiPage(
+      body: body,
       url: url,
       sourceId: id,
-      baseUrl: baseUrl,
-      clock: clock,
+      base: baseUrl,
+      now: clock(),
     );
   }
 

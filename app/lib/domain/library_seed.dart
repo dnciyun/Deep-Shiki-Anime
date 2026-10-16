@@ -206,11 +206,14 @@ String _normalizeSeedTitle(String raw, {required bool dropBrackets}) {
 int seedTitleScore(String candidateTitle, Iterable<String> names) {
   final String candidate = normalizeSeedTitle(candidateTitle);
   if (candidate.isEmpty) return 0;
+  // ⚠️ 这两个只跟"候选"有关，**必须在循环外算**（第四十七轮）：它们各含一次正则归一化，
+  // 放在循环里就是每个名字重算一遍 —— 1000 条候选 × 3~4 个名字，白烧几十毫秒。
+  final int? candidateSeason = _seasonOf(candidateTitle);
+  final String candidateShort = normalizeSeedTitle(dropSeasonSuffix(candidateTitle) ?? '');
   int best = 0;
   for (final String raw in names) {
     final String name = normalizeSeedTitle(raw);
     if (name.isEmpty) continue;
-    final int? candidateSeason = _seasonOf(candidateTitle);
     final int? nameSeason = _seasonOf(raw);
     if (candidateSeason != null && nameSeason != null && candidateSeason != nameSeason) {
       continue; // 同一部番的不同季：不算命中
@@ -223,9 +226,8 @@ int seedTitleScore(String candidateTitle, Iterable<String> names) {
       if (best < 60) best = 60;
       continue;
     }
-    final String cs = normalizeSeedTitle(dropSeasonSuffix(candidateTitle) ?? '');
-    final String ns = normalizeSeedTitle(dropSeasonSuffix(raw) ?? '');
-    if (cs.isNotEmpty && cs == ns && best < 40) best = 40;
+    final String nameShort = normalizeSeedTitle(dropSeasonSuffix(raw) ?? '');
+    if (candidateShort.isNotEmpty && candidateShort == nameShort && best < 40) best = 40;
   }
   return best;
 }

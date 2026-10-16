@@ -2165,7 +2165,11 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
         details++;
         final SourceItemView rich;
         try {
-          rich = await ref.read(hostDataPortProvider).ensurePlayable(item);
+          // ⚠️ 这里**必须**用 `episodeInfo`，不能用 `ensurePlayable`（第四十七轮真机踩到）：
+          // 后者的契约是"缺磁力才补，有磁力就一次网络都不打"，而 mikan **搜索页**的行
+          // 天生带磁力 ⇒ `extra['bangumiId']` 永远是空 ⇒ 候选一条都攒不出来，
+          // 每部番都报"mikan 上没找到"（用户报的"什么都搜不到了"就是它）。
+          rich = await ref.read(hostDataPortProvider).episodeInfo(item);
         } catch (_) {
           continue; // 这一条升级不了（离线 / 结构变了）→ 试下一条
         }
@@ -2343,24 +2347,35 @@ List<String> _seedNamesOf(BangumiSubject subject) {
 /// mikan 搜索结果按"像不像这一部"排序（分高的在前；同分按时间新→旧）。
 ///
 /// 只排前几条去升级单集页（每条 = 一次网络），所以分数必须由 [seedTitleScore] 给。
+///
+/// ⚠️ **先算一次分，再排**（第四十七轮）：旧写法把 `seedTitleScore` 直接写在
+/// `sort` 的比较器里，而比较器要跑 O(n log n) 次 —— mikan 搜索页一次给 1000 行，
+/// 于是**同一批条目被打分了两万多次**，纯 CPU 97ms 全压在 UI isolate 上（用户报的
+/// "点进去必卡一下"里有它一份）。打分是纯函数，每条算一次就够。
 List<SourceItemView> _seedRankMikan(
   List<SourceItemView> items,
   List<String> names,
 ) {
-  final List<SourceItemView> out = List<SourceItemView>.of(items);
-  int scoreOf(SourceItemView item) => seedTitleScore(item.title ?? '', names);
-  out.sort((SourceItemView a, SourceItemView b) {
-    final int byScore = scoreOf(b).compareTo(scoreOf(a));
+  final List<({SourceItemView item, int score})> scored =
+      <({SourceItemView item, int score})>[
+    for (final SourceItemView item in items)
+      (item: item, score: seedTitleScore(item.title ?? '', names)),
+  ];
+  // 分数为 0 的一条都不试（搜了 1000 行但没一条沾边时，别拿它们去打详情页）。
+  final List<({SourceItemView item, int score})> ranked = scored
+      .where((({SourceItemView item, int score}) s) => s.score > 0)
+      .toList(growable: false);
+  ranked.sort((({SourceItemView item, int score}) a, ({SourceItemView item, int score}) b) {
+    final int byScore = b.score.compareTo(a.score);
     if (byScore != 0) return byScore;
-    final DateTime? at = a.publishedAt;
-    final DateTime? bt = b.publishedAt;
+    final DateTime? at = a.item.publishedAt;
+    final DateTime? bt = b.item.publishedAt;
     if (at != null && bt != null && at != bt) return bt.compareTo(at);
     if (at == null && bt != null) return 1;
     if (at != null && bt == null) return -1;
     return 0;
   });
-  // 分数为 0 的一条都不试（搜了 1000 行但没一条沾边时，别拿它们去打详情页）。
-  return out.where((SourceItemView i) => scoreOf(i) > 0).toList(growable: false);
+  return <SourceItemView>[for (final ({SourceItemView item, int score}) r in ranked) r.item];
 }
 
 /// 种子块的聚合兜底：把 [query] 在 [targets] 上搜一遍（并发与超时口径同搜索页）。

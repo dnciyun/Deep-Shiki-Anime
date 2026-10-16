@@ -65,18 +65,30 @@ class _FakeSources extends UnavailableSourcePort {
   }
 }
 
-/// 假宿主数据层：`ensurePlayable` 补上 `extra['bangumiId'] / ['bangumiTitle']`
-/// —— 真实实现就是去 mikan 单集页 HTML 里认这两样（`MikanEpisodeParser`）。
+/// 假宿主数据层：**照真实现的契约来**。
+///
+/// ⚠️ 第四十七轮修的那条真机 bug 就死在"假契约"上，所以这里刻意把两条都建准：
+/// * [episodeInfo] —— "去单集页认番剧页"，**不看有没有磁力**（真实现是
+///   `MikanEpisodeParser` 认 `extra['bangumiId'] / ['bangumiTitle']`）；
+/// * [ensurePlayable] —— "**缺磁力才补**，已经有磁力就一次网络都不打"
+///   （`host_data.dart` 真实现的第一条）。旧版假实现这里无脑补 `bangumiId`，
+///   于是"控制器错用了 `ensurePlayable`"在测试里永远看不见，真机上却全军覆没。
 class _FakeHostData extends UnavailableHostDataPort {
   _FakeHostData(this.byItem);
 
   /// 条目 id → 这个条目所在的番剧页。
   final Map<String, ({String id, String title})> byItem;
 
+  /// 真的去"单集页"取过信息的条目（= 打了几次网络）。
   final List<String> enriched = <String>[];
 
+  /// `core.SourceItem.bestMagnet` 的等价判据（视图层没有这个 getter，见
+  /// `core/lib/sources/models.dart:87`）：有 magnet 或能用 infoHash 拼出磁力。
+  static bool _playableAlready(SourceItemView item) =>
+      (item.magnet ?? '').isNotEmpty || (item.infoHash ?? '').isNotEmpty;
+
   @override
-  Future<SourceItemView> ensurePlayable(SourceItemView item) async {
+  Future<SourceItemView> episodeInfo(SourceItemView item) async {
     enriched.add(item.id);
     final ({String id, String title})? hit = byItem[item.id];
     if (hit == null) return item;
@@ -85,6 +97,10 @@ class _FakeHostData extends UnavailableHostDataPort {
       'bangumiTitle': hit.title,
     });
   }
+
+  @override
+  Future<SourceItemView> ensurePlayable(SourceItemView item) async =>
+      _playableAlready(item) ? item : episodeInfo(item);
 
   static SourceItemView _withExtras(SourceItemView item, Map<String, Object?> extra) =>
       SourceItemView(
@@ -340,6 +356,54 @@ void main() {
       expect(source.searched, <String>['mikan:葬送的芙莉莲'], reason: '命中即停');
       expect(host.enriched, hasLength(1));
       expect(schedule.asked, <String>['3141']);
+    });
+
+    // ⚠️ 第四十七轮真机踩到的**整块失效**：真站上 mikan 搜索页的行天生带磁力
+    // （`td[0]` 的 `input.js-episode-select[data-magnet]`），而这一条链要的番剧 id
+    // **只在单集页里**。`ensurePlayable` 的契约是"缺磁力才补" ⇒ 它对这种行**一次网络
+    // 都不打** ⇒ `extra['bangumiId']` 永远为空 ⇒ 1000 行一条候选都攒不出来，
+    // 每部番都报"mikan 上没找到"（用户原话：「什么都搜不到了」）。
+    test('带磁力的搜索行也要去单集页认番剧 id（不许踩 ensurePlayable 的短路）', () async {
+      final _FakeSources source = _FakeSources(
+        mikanHits: <String, List<SourceItemView>>{
+          '葬送的芙莉莲': <SourceItemView>[
+            _item(
+              1,
+              '[7³ACG] 葬送的芙莉莲/Sousou no Frieren S01 | 01-28+SPx11 [简繁字幕] BDrip 1080p',
+            ),
+          ],
+        },
+      );
+      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
+        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
+      });
+      final ProviderContainer c = _container(
+        source: source,
+        host: host,
+        schedule: _FakeSchedule(<String, BangumiDetailView>{
+          '3141': _detail('3141', '葬送的芙莉莲', <SourceItemView>[_item(1, '葬送的芙莉莲 - 01')]),
+        }),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(_subject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready, reason: '"有磁力"不等于"不用去单集页"');
+      expect(s.binding?.bangumiId, '3141');
+      expect(host.enriched, hasLength(1), reason: '必须真的去单集页取过（episodeInfo）');
+    });
+
+    test('对照：ensurePlayable 的短路仍然成立（有磁力就一次网络都不打）', () async {
+      final _FakeHostData host = _FakeHostData(<String, ({String id, String title})>{
+        'mikan:${_hash(1)}': (id: '3141', title: '葬送的芙莉莲'),
+      });
+      final SourceItemView item = _item(1, '[桜都字幕组] 葬送的芙莉莲 - 01 [1080p]');
+
+      final SourceItemView out = await host.ensurePlayable(item);
+
+      expect(identical(out, item), isTrue, reason: '已经有磁力 → 原样返回');
+      expect(host.enriched, isEmpty, reason: '一次网络都不打（搜索页那一大片真播/下载靠它）');
     });
 
     test('中文名 0 条 → 退到原名；不再往下试（命中即停）', () async {

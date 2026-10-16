@@ -392,6 +392,11 @@ class UnavailableHostDataPort implements HostDataPort {
   @override
   Future<SourceItemView> ensurePlayable(SourceItemView item) async => item;
 
+  /// 没有宿主数据层 = 没有源客户端 = 取不到单集页。原样返回（调用方按"这一条认不出
+  /// 属于哪部番"处理，别在这里假装认出来了）。
+  @override
+  Future<SourceItemView> episodeInfo(SourceItemView item) async => item;
+
   /// 没有宿主数据层 = 没有源客户端 = 取不到整部番的剧集清单。空表 = 播放列表只用
   /// 手头这一批（与旧行为一致），绝不假装"这就是全部"。
   @override

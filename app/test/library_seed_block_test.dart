@@ -57,8 +57,10 @@ class _FakeHostData extends UnavailableHostDataPort {
 
   final Map<String, ({String id, String title})> byItem;
 
+  /// ⚠️ 契约照真实现：番剧 id 只在单集页里，而"去单集页"这一步**不看有没有磁力**
+  /// （`episodeInfo`）；`ensurePlayable` 则是"缺磁力才补"（第四十七轮真机踩到的分界）。
   @override
-  Future<SourceItemView> ensurePlayable(SourceItemView item) async {
+  Future<SourceItemView> episodeInfo(SourceItemView item) async {
     final ({String id, String title})? hit = byItem[item.id];
     if (hit == null) return item;
     return SourceItemView(
@@ -80,6 +82,12 @@ class _FakeHostData extends UnavailableHostDataPort {
       },
     );
   }
+
+  @override
+  Future<SourceItemView> ensurePlayable(SourceItemView item) async =>
+      (item.magnet ?? '').isNotEmpty || (item.infoHash ?? '').isNotEmpty
+          ? item
+          : episodeInfo(item);
 }
 
 class _FakeSchedule extends UnavailableSchedulePort {
