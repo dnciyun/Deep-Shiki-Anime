@@ -749,7 +749,7 @@ void main() {
       expect(more.remainingGroups, 0);
     });
 
-    test('「展开全部」一次把段全露出来，「收起全部」退回刚进页面的那 4 段', () async {
+    test('「展开全部字幕组」一次把段全露出来，「收起字幕组」退回刚进页面的那 4 段', () async {
       final _FakeSources source = _FakeSources(
         hits: <String, List<SourceItemView>>{
           'mikan:葬送的芙莉莲': <SourceItemView>[
@@ -770,8 +770,9 @@ void main() {
       await controller.resolve(_subject());
       expect(c.read(librarySeedProvider).shownGroups, hasLength(kSeedVisibleGroups));
 
-      // 第四十八轮·补四：用户「展开全部不把全部打开，就展开所有字幕组」——
-      // 展开全部不该还留着 8 段要再点一次「显示更多字幕组」。
+      // 第四十八轮·补四：用户「我说的张开字幕组列表」—— 这颗按钮展开的是**组名列表**，
+      // 一次把 12 段全放出来，不该还留着 8 段要再点一次「显示更多字幕组」。
+      // （它**不碰**每段自己的开合，那是界面上的 `_openGroups`，provider 这边看不见。）
       controller.showAllGroups();
       final LibrarySeedState all = c.read(librarySeedProvider);
       expect(all.shownGroups, hasLength(12));
@@ -780,7 +781,7 @@ void main() {
       // 「显示更多字幕组」原本是条单向路（只能越加越多）；收起时把它一起退回来。
       controller.collapseGroups();
       final LibrarySeedState back = c.read(librarySeedProvider);
-      expect(back.shownGroups, hasLength(kSeedVisibleGroups), reason: '收起全部 = 回到刚进这一页的样子');
+      expect(back.shownGroups, hasLength(kSeedVisibleGroups), reason: '收起字幕组 = 回到刚进这一页的样子');
       expect(back.remainingGroups, 12 - kSeedVisibleGroups);
 
       // 已经在默认窗口上时再收一次是空操作（不会把窗口收成 0 段）。

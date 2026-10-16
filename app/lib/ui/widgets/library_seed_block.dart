@@ -18,13 +18,13 @@
 ///   而且「这一组都入队」在收起状态下照样点得到；
 /// * 展开之后先露 [kSeedGroupVisibleStep] 条，其余藏在「本组还有 N 条」后面；
 /// * 段本身先露 [kSeedVisibleGroups] 个，其余的走「显示更多字幕组」；
-/// * **「展开全部 ⇄ 收起全部」是真·全开全收**（第四十八轮·补四，用户原话「展开全部不把
-///   全部打开，就展开所有字幕组」+「只有展开没有收起」）：
-///   展开 = 段全露出来 + 每段都展开 + 段内**不再截断**（「本组还有 N 条」一个都不剩）；
-///   收起 = 段窗口退回 [kSeedVisibleGroups] 个 + 全收，也就是**回到刚进这一页的样子**
-///   （「显示更多字幕组」原本是条单向路，收起时把它一起退回来，两个方向才都有）。
-///   ⚠️ 所以这排控制画在结果**上面**：画在下面的话，一展开就被顶到几千像素之外 ——
-///   用户点得到"展开"、却再也找不到"收起"；
+/// * **「展开全部字幕组 ⇄ 收起字幕组」只管组名列表的宽窄**（第四十八轮·补四）：展开 = 把被
+///   「显示更多字幕组」挡住的那些组名一次全放出来；收起 = 段窗口退回 [kSeedVisibleGroups] 个。
+///   ⚠️ **不碰每段自己的开合** —— 用户两次说的都是同一件事：「我说的张开字幕组列表，不是把
+///   字幕组也展开了」。哪一段要展开，是用户点**那一段抬头**的事（第一版把这颗按钮做成
+///   "连段内容也一起打开"，被退回来了）；
+/// * 这一排跟着结果走，画在结果**下面**（第四十八轮·补四：「这些位置也不应该在上面」——
+///   控制行挪到上面那一版也被退回了）；
 /// * 每一段展开后的末尾另有一颗「收起这一组」：翻完 80 行想收起来时，不用再滚回抬头去点；
 /// * mikan 番剧页降级成**手动**口（「改搜索词 / 粘链接」里粘地址或 id）—— 它给的东西更完整
 ///   （整部剧集表 + 每组自己的 RSS），只是不该再当主力，见 `domain/library_seed.dart` 的库注释。
@@ -73,7 +73,8 @@ const Key dsDetailSeedsTableKey = Key('library-detail-seeds-table');
 /// 「显示更多字幕组」。
 const Key dsDetailSeedsMoreKey = Key('library-detail-seeds-more');
 
-/// 「展开全部 / 收起全部」（第四十八轮·补：每段默认收起，这颗是全开 / 全收的开关）。
+/// 「展开全部字幕组 / 收起字幕组」（第四十八轮·补四：这颗只管**组名列表**的宽窄，
+/// 不碰每段自己的开合）。
 const Key dsDetailSeedsExpandAllKey = Key('library-detail-seeds-expand-all');
 
 /// 字幕组那一段（每段一个，key 带组名 —— 用例据此定位某一段）。
@@ -121,8 +122,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   final Set<String> _openGroups = <String>{};
 
   /// 哪几段把「本组还有 N 条」也点开了（= 这一段全露）。收起那一段时一起丢掉，
-  /// 再展开又回到"先露 12 条"。「展开全部」会把**每一段**都放进来（第四十八轮·补四：
-  /// 用户要的"全部打开"就是连段内的截断也一起打开）。
+  /// 再展开又回到"先露 12 条"。（「展开全部字幕组」**不**碰它：那颗只管组名列表。）
   final Set<String> _fullGroups = <String>{};
 
   final TextEditingController _word = TextEditingController();
@@ -339,39 +339,19 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     }
   });
 
-  /// 「展开全部」= **真·全开**（第四十八轮·补四）。
+  /// 「展开全部字幕组 ⇄ 收起字幕组」：**只动段窗口**（露几个组名），**不碰每段自己的开合**。
   ///
-  /// 三件事一起做，少一件用户就会说"展开全部不把全部打开"：
-  /// 1. 段全露出来（`showAllGroups` —— 原来只开"现在露出来的那几段"，剩下 8 段还得再点
-  ///    「显示更多字幕组」，那不叫全部）；
-  /// 2. 每一段都展开（[_openGroups]）；
-  /// 3. 段内**不再截断**（[_fullGroups]）—— 否则每段照样停在 12 条、「本组还有 N 条」
-  ///    一颗不少，用户看到的就是"只展开了所有字幕组"。
-  void _expandAllGroups(LibrarySeedState s, LibrarySeedController controller) {
-    final Set<String> keys = <String>{
-      for (final SeedGroup g in s.groups) g.key,
-    };
-    controller.showAllGroups();
-    setState(() {
-      _openGroups
-        ..clear()
-        ..addAll(keys);
-      _fullGroups
-        ..clear()
-        ..addAll(keys);
-    });
-  }
-
-  /// 「收起全部」= **真·全收**：回到刚进这一页的样子 —— 段窗口也退回 [kSeedVisibleGroups] 个。
+  /// 用户第四十八轮·补四的原话：「我说的张开字幕组列表，不是把字幕组也展开了，收起也没加」——
+  /// 第一版把这颗按钮做成了"连每一段的内容也一起打开 + 段内也不截断"，被退回来了：
+  /// 哪一段要展开是用户点**那一段抬头**的事，不该由这颗按钮代劳（那样一按就是几百行）。
   ///
-  /// 段窗口一起退，是因为「显示更多字幕组」原本只会越加越多（单向路）。用户第四十八轮·补四
-  /// 说的「只有展开没有收起」，两个地方都算：这颗按钮一直是"展开"，以及"显示更多"加出去就收不回来。
-  void _collapseAllGroups(LibrarySeedController controller) {
-    controller.collapseGroups();
-    setState(() {
-      _openGroups.clear();
-      _fullGroups.clear();
-    });
+  /// 收起那一半是补上「显示更多字幕组」的反向 —— 那颗原本只能越加越多（单向路）。
+  void _toggleGroupList(LibrarySeedState s, LibrarySeedController controller) {
+    if (s.visibleGroups > kSeedVisibleGroups) {
+      controller.collapseGroups();
+    } else {
+      controller.showAllGroups();
+    }
   }
 
   // ── 渲染 ────────────────────────────────────────────────────────────────────
@@ -411,25 +391,29 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             padding: const EdgeInsets.only(bottom: 10),
             trailing: _headerActions(s),
           ),
-          // 控制行画在结果**上面**（第四十八轮·补四）：这里面有「展开全部 / 收起全部」，
-          // 而它只要落在结果下面，用户点完"展开"就等于把它推出了屏幕 —— 只剩展开、没有收起。
-          if (s.phase == LibrarySeedPhase.ready) ...<Widget>[
-            _controls(s),
-            const SizedBox(height: 10),
-          ],
-          if (_tools) ...<Widget>[_toolsRow(s), const SizedBox(height: 10)],
           _body(context, s, showTitle, marks, jobs, torrents),
+          if (_tools) ...<Widget>[const SizedBox(height: 10), _toolsRow(s)],
+          if (s.phase == LibrarySeedPhase.ready) ...<Widget>[
+            const SizedBox(height: 8),
+            // ⚠️ 这一排跟着结果走，画在结果**下面** —— 第四十八轮·补四用户退回过
+            // "挪到上面"那一版：「这些位置也不应该在上面」。
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _controls(s),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  /// 结果区上面那一排：显示更多字幕组 / 展开全部·收起全部 / 改搜索词·粘链接。
+  /// 结果下面那一排：显示更多字幕组 / 展开全部字幕组·收起字幕组 / 改搜索词·粘链接。
   Widget _controls(LibrarySeedState s) {
     final LibrarySeedController controller = ref.read(
       librarySeedProvider.notifier,
     );
-    final bool anyOpen = _openGroups.isNotEmpty;
+    // 「展开 / 收起」说的是**组名列表的宽窄**（露几个段），不是"把每一段也打开"。
+    final bool listWide = s.visibleGroups > kSeedVisibleGroups;
     return Wrap(
       spacing: 8,
       runSpacing: 6,
@@ -442,17 +426,16 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             compact: true,
             onPressed: controller.showMoreGroups,
           ),
-        // 每段默认收起，所以给一颗"全开 / 全收"的开关：想通览条目的人不用一段段点，
-        // 想收回去的人也不用一段段收（第四十八轮·补四：见 `_expandAllGroups`）。
-        if (s.shownGroups.isNotEmpty)
+        // 段数超过首屏那几个才有得展开 / 收起（没超过就画一颗点了没反应的按钮）。
+        // 为什么要有「收起字幕组」这一半：「显示更多字幕组」原本只能越加越多（单向路），
+        // 用户第四十八轮·补四的原话正是「只有展开没有收起」。
+        if (s.groups.length > kSeedVisibleGroups)
           NeoButton(
             key: dsDetailSeedsExpandAllKey,
-            label: anyOpen ? '收起全部' : '展开全部',
-            icon: anyOpen ? Icons.unfold_less : Icons.unfold_more,
+            label: listWide ? '收起字幕组' : '展开全部字幕组',
+            icon: listWide ? Icons.unfold_less : Icons.unfold_more,
             compact: true,
-            onPressed: anyOpen
-                ? () => _collapseAllGroups(controller)
-                : () => _expandAllGroups(s, controller),
+            onPressed: () => _toggleGroupList(s, controller),
           ),
         NeoButton(
           label: _tools ? '收起工具' : '改搜索词 / 粘链接',
