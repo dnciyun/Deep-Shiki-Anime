@@ -17,14 +17,16 @@
 ///   一行行组抬头，点哪一段抬头才画那一段的条目：一屏十几个组名比一屏几行番名好挑，
 ///   而且「这一组都入队」在收起状态下照样点得到；
 /// * 展开之后先露 [kSeedGroupVisibleStep] 条，其余藏在「本组还有 N 条」后面；
-/// * 段本身先露 [kSeedVisibleGroups] 个，其余的走「显示更多字幕组」；
+/// * 段本身先露 [kSeedVisibleGroups] 个，其余的**再点一次多露一档** [kSeedGroupsStep] 个；
 /// * **组名列表的宽窄 = 两颗纯图标按钮**（第四十八轮·补四，用户第三版原话「去掉展开这些文字，
-///   多加一个收起按钮，只需要矢量图」）：结果下面那排只有 `unfold_more`（展开全部字幕组，把被
-///   首屏挡住的那几个组名一次放出来）与 `unfold_less`（收起字幕组，退回 [kSeedVisibleGroups] 个）
-///   —— **中文只留在悬停提示里，一个文字标签都不画**；两颗**同时都在**（不是一颗按钮变来变去），
-///   所以"只要比首屏宽，收起就是亮的"，不会再出现「必须要展开完才能收起」；
+///   多加一个收起按钮，只需要矢量图」）：结果下面那排只有 `unfold_more`（多露一档组名）与
+///   `unfold_less`（收起字幕组，退回 [kSeedVisibleGroups] 个）—— **中文只留在悬停提示里，
+///   一个文字标签都不画**；两颗**同时都在**（不是一颗按钮变来变去），所以"只要比首屏宽，
+///   收起就是亮的"，不会再出现「必须要展开完才能收起」；
 ///   ⚠️ 它们**不碰每段自己的开合** —— 用户第二版原话：「我说的张开字幕组列表，不是把字幕组也
 ///   展开了」。哪一段要展开，是用户点**那一段抬头**的事；
+/// * 展开那颗是**一次一档**（第四十八轮·补五，用户原话「展开一些加回来」）：一次
+///   [kSeedGroupsStep] 个，不再把五十多段一次铺开（那版被退回）；还剩几个写在悬停提示里；
 /// * 这一排跟着结果走，画在结果**下面**（第四十八轮·补四：「这些位置也不应该在上面」——
 ///   控制行挪到上面那一版也被退回了）；
 /// * 每一段展开后的末尾另有一颗「收起这一组」：翻完 80 行想收起来时，不用再滚回抬头去点；
@@ -72,7 +74,8 @@ const Key dsDetailSeedsSearchPageKey = Key('library-detail-seeds-search-page');
 /// 结果表（整块的外壳 key）。
 const Key dsDetailSeedsTableKey = Key('library-detail-seeds-table');
 
-/// 「展开全部字幕组」那颗图标（`unfold_more`）。第四十八轮·补四：纯图标，中文只在悬停提示里。
+/// 「多露一档字幕组」那颗图标（`unfold_more`）。第四十八轮·补四：纯图标，中文只在悬停提示里；
+/// 补五（用户「展开一些加回来」）：一次只多露 [kSeedGroupsStep] 个，不再一次全露。
 const Key dsDetailSeedsExpandAllKey = Key('library-detail-seeds-expand-all');
 
 /// 「收起字幕组」那颗图标（`unfold_less`）。第四十八轮·补四：与展开那颗**同时都在**。
@@ -123,7 +126,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   final Set<String> _openGroups = <String>{};
 
   /// 哪几段把「本组还有 N 条」也点开了（= 这一段全露）。收起那一段时一起丢掉，
-  /// 再展开又回到"先露 12 条"。（「展开全部字幕组」**不**碰它：那颗只管组名列表。）
+  /// 再展开又回到"先露 12 条"。（组名列表那两颗图标**不**碰它：它们只管组名列表。）
   final Set<String> _fullGroups = <String>{};
 
   final TextEditingController _word = TextEditingController();
@@ -393,12 +396,16 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 结果下面那一排：展开全部字幕组（图标）/ 收起字幕组（图标）/ 改搜索词·粘链接。
+  /// 结果下面那一排：多露一档字幕组（图标）/ 收起字幕组（图标）/ 改搜索词·粘链接。
   ///
   /// 第四十八轮·补四第三版（用户原话「去掉展开这些文字，多加一个收起按钮，只需要矢量图」）：
   /// 组名列表这一对**只有矢量图标**，中文只留在悬停提示里；而且两颗**同时都在**——
   /// 不再是一颗按钮的标签变来变去，所以"比首屏宽"这件事一眼就能从"收起那颗亮着"看出来
   /// （用户上一版那句「必须要展开完才能收起」就是一颗按钮变标签导致的）。
+  ///
+  /// 第四十八轮·补五（用户原话「展开一些加回来」）：展开那颗回到**一次一档**
+  /// （[kSeedGroupsStep] 个 —— 就是更早那颗文字按钮「显示更多字幕组」的量），
+  /// 不再一次把几十段全铺出来；还剩几个、这一次会多露几个，都写在悬停提示里。
   ///
   /// ⚠️ 它们只动**段窗口**（露几个组名），不碰每段自己的开合。
   Widget _controls(LibrarySeedState s) {
@@ -409,6 +416,12 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     final bool toggleable = s.groups.length > kSeedVisibleGroups;
     final int remaining = s.remainingGroups;
     final bool wide = s.visibleGroups > kSeedVisibleGroups;
+    // 展开那颗的悬停提示：这一下会多露几个 + 还剩几个（最后一档就是"剩下这些"）。
+    final String expandTip = remaining <= 0
+        ? '字幕组已经全露出来了'
+        : remaining <= kSeedGroupsStep
+        ? '展开剩下的 $remaining 个字幕组'
+        : '展开更多字幕组（一次 $kSeedGroupsStep 个，还有 $remaining 个）';
     return Wrap(
       spacing: 8,
       runSpacing: 6,
@@ -417,10 +430,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
           NeoIconButton(
             key: dsDetailSeedsExpandAllKey,
             icon: Icons.unfold_more,
-            tooltip: remaining > 0
-                ? '展开全部字幕组（还有 $remaining 个）'
-                : '字幕组已经全露出来了',
-            onPressed: remaining > 0 ? controller.showAllGroups : null,
+            tooltip: expandTip,
+            onPressed: remaining > 0 ? controller.showMoreGroups : null,
           ),
           NeoIconButton(
             key: dsDetailSeedsCollapseKey,

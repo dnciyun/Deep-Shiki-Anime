@@ -719,7 +719,7 @@ void main() {
       expect(source.searched, isEmpty);
     });
 
-    test('字幕组先露 4 段；showMoreGroups 一次加 8 段（界面上现在只有"全露/全收"两颗图标）', () async {
+    test('字幕组先露 4 段；「展开一些」一次加 8 段（界面上是那颗 unfold_more 图标）', () async {
       final _FakeSources source = _FakeSources(
         hits: <String, List<SourceItemView>>{
           'mikan:葬送的芙莉莲': <SourceItemView>[
@@ -749,11 +749,11 @@ void main() {
       expect(more.remainingGroups, 0);
     });
 
-    test('「展开全部字幕组」一次把段全露出来，「收起字幕组」退回刚进页面的那 4 段', () async {
+    test('「展开一些」一档一档加（4 → 12 → 全露），「收起字幕组」退回刚进页面的那 4 段', () async {
       final _FakeSources source = _FakeSources(
         hits: <String, List<SourceItemView>>{
           'mikan:葬送的芙莉莲': <SourceItemView>[
-            for (int i = 1; i <= 12; i++)
+            for (int i = 1; i <= 20; i++)
               _item(i, '[组$i] 葬送的芙莉莲 - 01', group: '组$i'),
           ],
         },
@@ -770,21 +770,34 @@ void main() {
       await controller.resolve(_subject());
       expect(c.read(librarySeedProvider).shownGroups, hasLength(kSeedVisibleGroups));
 
-      // 第四十八轮·补四：用户「我说的张开字幕组列表」—— 这颗图标展开的是**组名列表**，
-      // 一次把 12 段全放出来（界面上现在是 `unfold_more` 那颗纯图标）。
+      // 第四十八轮·补五（用户「展开一些加回来」）：界面那颗 `unfold_more` 图标挂在这一档上 ——
+      // 点一次多露 kSeedGroupsStep 个，**不是**一次全露（20 段要点两次）。
       // （它**不碰**每段自己的开合，那是界面上的 `_openGroups`，provider 这边看不见。）
-      controller.showAllGroups();
+      controller.showMoreGroups();
+      final LibrarySeedState step1 = c.read(librarySeedProvider);
+      expect(step1.shownGroups, hasLength(kSeedVisibleGroups + kSeedGroupsStep));
+      expect(step1.remainingGroups, 20 - kSeedVisibleGroups - kSeedGroupsStep);
+
+      controller.showMoreGroups();
       final LibrarySeedState all = c.read(librarySeedProvider);
-      expect(all.shownGroups, hasLength(12));
+      expect(all.shownGroups, hasLength(20));
       expect(all.remainingGroups, 0);
 
-      // 「显示更多字幕组」原本是条单向路（只能越加越多）；收起时把它一起退回来。
+      // 全露之后再点一次是空操作（窗口不会被加到 28）。
+      controller.showMoreGroups();
+      expect(c.read(librarySeedProvider).shownGroups, hasLength(20));
+
+      // 「一次全露」那个方法还在（界面不挂了，见它的注释）—— 留个口径：它一步到底。
+      controller.collapseGroups();
+      controller.showAllGroups();
+      expect(c.read(librarySeedProvider).remainingGroups, 0);
+
+      // 收起：一次回到刚进这一页的样子（不是退一档 —— 「展开一些加回来」只管展开那颗）；
+      // 已经在默认窗口上时再收一次是空操作（不会把窗口收成 0 段）。
       controller.collapseGroups();
       final LibrarySeedState back = c.read(librarySeedProvider);
       expect(back.shownGroups, hasLength(kSeedVisibleGroups), reason: '收起字幕组 = 回到刚进这一页的样子');
-      expect(back.remainingGroups, 12 - kSeedVisibleGroups);
-
-      // 已经在默认窗口上时再收一次是空操作（不会把窗口收成 0 段）。
+      expect(back.remainingGroups, 20 - kSeedVisibleGroups);
       controller.collapseGroups();
       expect(c.read(librarySeedProvider).shownGroups, hasLength(kSeedVisibleGroups));
     });

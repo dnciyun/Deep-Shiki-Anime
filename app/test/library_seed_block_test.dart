@@ -5,9 +5,10 @@
 /// * 有结果时：**一段一个字幕组**（抬头写着组名与条数）、**默认全收起**（一进来只有组抬头，
 ///   点哪一段抬头才画那一段的条目）、表头只在第一张展开的表上画一次、
 ///   行尾的「已看过 / 在队列 / 已完成」与「别的站也有」标记；
-/// * 「展开全部字幕组 / 收起字幕组」是**两颗纯图标**（`unfold_more` / `unfold_less`），
+/// * 「展开一些 / 收起字幕组」是**两颗纯图标**（`unfold_more` / `unfold_less`），
 ///   只管组名列表的宽窄、不碰每段自己的开合，而且**同时都在**：比首屏宽时收起就是亮的
 ///   （第四十八轮·补四，三个方向都是用户退回过的）；
+/// * 展开那颗**一次只多露一档**（8 个）—— 第四十八轮·补五「展开一些加回来」，不是一次全露；
 /// * 这一排画在结果**下面**（「这些位置也不应该在上面」）；
 /// * 每一段展开后的末尾还有一颗「收起这一组」；
 /// * 每段展开后先露 12 条（「本组还有 N 条」）、整块先露 4 段；
@@ -331,7 +332,7 @@ void main() {
     expect(find.text('展开全部字幕组'), findsNothing, reason: '去掉展开这些文字');
     expect(find.text('收起字幕组'), findsNothing);
     expect(find.textContaining('显示更多字幕组'), findsNothing);
-    expect(find.byTooltip('展开全部字幕组（还有 8 个）'), findsOneWidget);
+    expect(find.byTooltip('展开剩下的 8 个字幕组'), findsOneWidget);
 
     // ③ 收起在**没展开的时候就在**（只是还没亮 —— 现在就等于首屏那 4 个）。
     expect(
@@ -352,7 +353,7 @@ void main() {
     await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
     await tester.pumpAndSettle();
 
-    // ① 12 个组名全露出来了（展开那颗按下去就没得按了，收起那颗反过来亮了）。
+    // ① 12 个组名全露出来了（12 段 = 首屏 4 + 一档 8，这一下正好是最后一档；展开那颗随后就没得按了，收起那颗反过来亮了）。
     expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsOneWidget);
     expect(find.text('组12（1 条）'), findsOneWidget);
     expect(
@@ -380,7 +381,7 @@ void main() {
 
     // ③ 反向：收回 4 个组名，展开那颗又亮回来（提示里带着还剩几个）。
     expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsNothing);
-    expect(find.byTooltip('展开全部字幕组（还有 8 个）'), findsOneWidget);
+    expect(find.byTooltip('展开剩下的 8 个字幕组'), findsOneWidget);
     expect(
       tester.widget<NeoIconButton>(find.byKey(dsDetailSeedsCollapseKey)).onPressed,
       isNull,
@@ -395,9 +396,8 @@ void main() {
   });
 
   testWidgets('列表只露了一部分时，收起那颗也点得动（不用先展开完）', (WidgetTester tester) async {
-    // 用户第四十八轮·补四那句「只点一次时不能收起」：把列表放到"露了 12 个、还剩 8 个"这一档
-    // （分档展开现在界面上没有入口，所以这一步直接推 provider 的状态），
-    // 收起那颗必须是亮的、且真的能收回首屏那 4 个。
+    // 用户第四十八轮·补四那句「只点一次时不能收起」：**界面上点一次展开**（4 → 12，还剩 8 个没露）
+    // 就把列表放到"露了 12 个"这一档，收起那颗必须是亮的、且真的能收回首屏那 4 个。
     final _Harness h = _Harness(
       source: _FakeSources(<String, List<SourceItemView>>{
         'mikan:葬送的芙莉莲': <SourceItemView>[
@@ -411,12 +411,9 @@ void main() {
 
     expect(find.byKey(dsDetailSeedsGroupKey('组4')), findsOneWidget);
     expect(find.byKey(dsDetailSeedsGroupKey('组5')), findsNothing);
-    expect(find.byTooltip('展开全部字幕组（还有 16 个）'), findsOneWidget);
+    expect(find.byTooltip('展开更多字幕组（一次 8 个，还有 16 个）'), findsOneWidget);
 
-    final ProviderContainer container = ProviderScope.containerOf(
-      tester.element(find.byKey(dsDetailSeedsKey)),
-    );
-    container.read(librarySeedProvider.notifier).showMoreGroups();
+    await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
     await tester.pumpAndSettle();
 
     expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsOneWidget);
@@ -431,11 +428,74 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(dsDetailSeedsGroupKey('组5')), findsNothing);
-    expect(find.byTooltip('展开全部字幕组（还有 16 个）'), findsOneWidget, reason: '收回首屏那 4 个');
+    expect(
+      find.byTooltip('展开更多字幕组（一次 8 个，还有 16 个）'),
+      findsOneWidget,
+      reason: '收回首屏那 4 个',
+    );
     expect(
       tester.widget<NeoIconButton>(find.byKey(dsDetailSeedsCollapseKey)).onPressed,
       isNull,
     );
+  });
+
+  testWidgets('展开那颗**一次只多露一档**（第四十八轮·补五「展开一些加回来」）', (
+    WidgetTester tester,
+  ) async {
+    // 20 段：首屏 4 段 → 点一次 12 段（还剩 8）→ 再点一次才全露。用户退回的是"一次全铺开"，
+    // 所以要钉住"点一次不等于全露"：第 13 段还在窗外、展开那颗还亮着。
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[
+          for (int i = 1; i <= 20; i++) _item(i, group: '组$i', day: 21 - i),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+
+    expect(find.byKey(dsDetailSeedsGroupKey('组4')), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsGroupKey('组5')), findsNothing);
+
+    // 第一档：4 → 12（= kSeedVisibleGroups + kSeedGroupsStep）。
+    await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(dsDetailSeedsGroupKey('组12')), findsOneWidget);
+    expect(
+      find.byKey(dsDetailSeedsGroupKey('组13')),
+      findsNothing,
+      reason: '点一次只多露 8 个 —— 不是一次全铺开',
+    );
+    expect(
+      tester.widget<NeoIconButton>(find.byKey(dsDetailSeedsExpandAllKey)).onPressed,
+      isNotNull,
+      reason: '还有 8 段没露 → 展开那颗还亮着',
+    );
+    expect(find.byTooltip('展开剩下的 8 个字幕组'), findsOneWidget);
+    // 露的只是**组名**：一条条目都不许跟着出来。
+    expect(find.textContaining('葬送的芙莉莲 - '), findsNothing);
+
+    // 第二档：12 → 20（剩下的全露），展开那颗这才灰掉。
+    await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(dsDetailSeedsGroupKey('组20')), findsOneWidget);
+    expect(
+      tester.widget<NeoIconButton>(find.byKey(dsDetailSeedsExpandAllKey)).onPressed,
+      isNull,
+      reason: '全露出来了 → 展开那颗灰掉',
+    );
+    expect(find.byTooltip('字幕组已经全露出来了'), findsOneWidget);
+    expect(find.textContaining('葬送的芙莉莲 - '), findsNothing);
+
+    // 收起：一次回到首屏那 4 个（展开那颗又亮回来）。
+    await tester.tap(find.byKey(dsDetailSeedsCollapseKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(dsDetailSeedsGroupKey('组5')), findsNothing);
+    expect(find.byTooltip('展开更多字幕组（一次 8 个，还有 16 个）'), findsOneWidget);
   });
 
   testWidgets('跨站同名合并成一条：行尾带「别的站也有」的小标记', (WidgetTester tester) async {
@@ -518,7 +578,7 @@ void main() {
     expect(find.textContaining('12 个字幕组'), findsOneWidget);
     expect(find.byKey(dsDetailSeedsExpandAllKey), findsOneWidget);
     expect(find.byKey(dsDetailSeedsCollapseKey), findsOneWidget);
-    expect(find.byTooltip('展开全部字幕组（还有 8 个）'), findsOneWidget);
+    expect(find.byTooltip('展开剩下的 8 个字幕组'), findsOneWidget);
 
     await tester.tap(find.byKey(dsDetailSeedsExpandAllKey));
     await tester.pumpAndSettle();

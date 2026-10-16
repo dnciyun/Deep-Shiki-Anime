@@ -2066,17 +2066,18 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     );
   }
 
-  /// 「显示更多字幕组」：多露 [kSeedGroupsStep] 个。
+  /// 「展开一些」：多露 [kSeedGroupsStep] 个（界面那颗 `unfold_more` 图标用）。
   ///
-  /// ⚠️ 第四十八轮·补四第三版起**界面不再用它**：那一排现在是"全露 / 全收"两颗纯图标
-  /// （用户「去掉展开这些文字，多加一个收起按钮，只需要矢量图」）。这个方法与
-  /// [kSeedGroupsStep] 留着 —— 分档展开随时能再挂回界面上，状态机这边不用重写。
+  /// 第四十八轮·补五（用户原话「展开一些加回来」）：界面上那颗图标就挂在这一档上 —— 一次
+  /// 多露 8 个组名，不是一次把五十多段全铺出来（那一版被退回了）。它只动**组名列表**：
+  /// 不碰每段自己的开合。
   void showMoreGroups() {
     if (state.remainingGroups <= 0) return;
     state = state.copyWith(visibleGroups: state.visibleGroups + kSeedGroupsStep);
   }
 
-  /// 「展开全部字幕组」：段**一次全露**（界面那颗 `unfold_more` 图标用）。
+  /// 「一次全露」：段窗口直接拉到全部（第四十八轮·补五起界面**不挂**它 —— 那颗图标改成
+  /// 一次一档 [showMoreGroups]；这个方法留着给"全露"这种用法）。
   ///
   /// ⚠️ 它只改**组名列表的宽窄**（露几个段），**不碰**每段自己的开合 —— 那是界面上的
   /// `_openGroups`：用户第四十八轮·补四的原话是「我说的张开字幕组列表，不是把字幕组也展开了」。
