@@ -45,6 +45,64 @@ const double kDefaultCoverRadius = 12;
 /// 那种槽继续用默认的 `BoxFit.cover` 铺满。
 const BoxFit kPosterFit = BoxFit.contain;
 
+/// 封面**解码宽度**的量化（1.1.0 M1/T5「封面按显示尺寸解码」）。
+///
+/// 为什么要有这一层：盘上那张封面是按 URL 档下好的（Bangumi `/r/100|200|400|800/`、
+/// mikan `?width=200|400|800` —— 见 `domain/bangumi.dart` / `domain/mikan_cover.dart`），
+/// 但 `Image.file` 不带 `cacheWidth` 时是**按文件原始像素整张解进 ImageCache** 的：
+/// 一张 208pt 的海报卡（本机 1.25 缩放 = 260 设备像素）会把 400×600 的图整张解成
+/// 960 000 字节，其中大半是画不出来的。首页网格 + 动漫库 + 轮播一屏几十张，
+/// 几十 MB 就这么躺在解码缓存里（用户 2026-10-17 定的 1.1.0 方向：数据性能「D 全都要」，
+/// 其中 C = 启动与内存；任务见 `docs/specs/2026-10-17-dsanima-1.1.0-plan.md` 的 T5）。
+///
+/// ## 为什么是 64 的台阶（不是 128，也不是逐像素）
+///
+/// * **128 台阶太粗**：本机最常见的就是 208pt 卡 @ 125% 缩放 = 260 设备像素 ——
+///   128 台阶把它抬到 384 档（多用 48% 像素，实测只省 7.8% 内存）；64 台阶抬到 320 档
+///   （同一条链实测省约 36%）。用户的诉求是"轻便"，这 28 个百分点的差别不是细节。
+/// * **逐像素太细**：ImageCache 按宽度分 key（`ResizeImageKey`），窗口拖动时每一像素
+///   都会变成一条新的解码条目 —— 条目涨得比省下的字节还快。
+/// * 64 是常见的位图/DPR 对齐粒度（Windows 缩放档 100/125/150/175/200% 落上去都不亏）。
+const int kCoverDecodeStep = 64;
+
+/// 下限：比它还小的槽按 128 解码（图标/缩略图档，再细没有意义）。
+const int kCoverDecodeMinWidth = 128;
+
+/// 上限：1536。
+///
+/// 为什么不封在 768 上（第一版就是 768，被自己抓出来了）：轮播主卡 552pt 在 200%
+/// 缩放下显示宽 **1104 设备像素**，768 档会比旧行为**更糊**（旧行为按文件原尺寸解，
+/// 源上最大 800 宽）。而把上限放到 1536 的内存代价**是零**：源上的封面文件最宽 800，
+/// `ResizeImage` 又 `allowUpscaling = false`，档位再大也只是"不缩"。
+const int kCoverDecodeMaxWidth = 1536;
+
+/// 全部可能的解码档位（[kCoverDecodeStep] 的整数倍，含两端）。
+///
+/// 截图探针要按档位往 ImageCache 里注入解码结果（`ResizeImage` 的 key 是
+/// `obtainKey()` 的结果，不是 provider 本身），所以这个表得是公开的。
+final List<int> coverDecodeWidths = <int>[
+  for (int width = kCoverDecodeMinWidth; width <= kCoverDecodeMaxWidth; width += kCoverDecodeStep)
+    width,
+];
+
+/// 把「显示需要多少设备像素」抬到 [kCoverDecodeStep] 的整数倍（0 = 不缩放）。
+///
+/// 一律**向上**取整：解码宽必须 ≥ 显示物理宽，否则高 DPI 屏会把图放大变糊
+/// （`ResizeImage` 的 `allowUpscaling` 只管"文件比档位小"这一侧）。
+///
+/// `devicePixels <= 0`（布局还没算出宽度 / 约束是无限宽）→ 返回 0：调用方不传
+/// `cacheWidth`，行为与本轮之前**完全一样**，绝不乱猜一个尺寸把图缩坏。
+///
+/// 小图不用单独管：`Image.file` 的 `cacheWidth` 走 [ResizeImage]（`allowUpscaling = false`），
+/// 文件本身比档位小时只按原尺寸解，**不会上采样** —— 100px 的图标不会被拉成 256 糊掉
+/// （用户 2026-10-15 的「封面图还是显示不全」教过：宁可按原尺寸画，也别猜错尺寸）。
+int snapCoverDecodeWidth(int devicePixels) {
+  if (devicePixels <= 0) return 0;
+  if (devicePixels <= kCoverDecodeMinWidth) return kCoverDecodeMinWidth;
+  if (devicePixels >= kCoverDecodeMaxWidth) return kCoverDecodeMaxWidth;
+  return ((devicePixels + kCoverDecodeStep - 1) ~/ kCoverDecodeStep) * kCoverDecodeStep;
+}
+
 class DsCover extends ConsumerStatefulWidget {
   const DsCover({
     super.key,
@@ -108,6 +166,12 @@ class _DsCoverState extends ConsumerState<DsCover> {
   String? _ensuredRaw;
   int? _lastDevicePixels;
 
+  /// 这一帧该按多宽**解码**（设备像素；0 = 不缩放，保持旧行为）。
+  ///
+  /// 与 URL 抬档同一个数（[snapCoverDecodeWidth]）：轮播传了 [DsCover.tierDevicePixels]
+  /// 时两者一起钉在同一个值上，不会出现「URL 不跳档、解码宽度却跟着动画跳」的重新解码。
+  int _decodeWidth = 0;
+
   @override
   void didUpdateWidget(covariant DsCover oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -132,6 +196,9 @@ class _DsCoverState extends ConsumerState<DsCover> {
     final int pixels = widget.tierDevicePixels ?? devicePixels;
     _ensuredRaw = raw;
     _lastDevicePixels = pixels;
+    // ⚠️ 解码宽度要**在 key 判重之前**刷新：URL 档位可能没变（比如 208→250 都还在 400 档），
+    // 但解码档位变了（256→384），这时也得按新的宽度解 —— 否则大卡会一直用着偏小的解码图发糊。
+    _decodeWidth = snapCoverDecodeWidth(pixels);
     final String target =
         mikanCoverAt(bangumiImageAt(raw, pixels), pixels) ?? '';
     final String key = '$target|${widget.referer ?? ''}';
@@ -244,6 +311,12 @@ class _DsCoverState extends ConsumerState<DsCover> {
         fit: widget.fit,
         width: double.infinity,
         height: double.infinity,
+        // 1.1.0 M1/T5：按这一帧**实际显示**的设备像素解码，别把整张图解进 ImageCache
+        // （档位换算见 [snapCoverDecodeWidth]；0 = 尺寸还没算出来 → 不传，照旧整张解）。
+        // `cacheWidth` 的内部就是 [ResizeImage] + `allowUpscaling: false`：
+        // 文件比档位小时只按原尺寸解，小图不会被上采样放大。`filterQuality` /
+        // `gaplessPlayback` 一个都不动 —— 这一轮只换解码尺寸。
+        cacheWidth: _decodeWidth > 0 ? _decodeWidth : null,
         gaplessPlayback: true,
         // 文件坏了（半截下载/不是图片）也降级，不让一屏卡片变红。
         errorBuilder: (BuildContext context, Object error, StackTrace? stack) =>
