@@ -472,7 +472,7 @@ class ExtensionsController extends Notifier<ExtensionsState> {
   String _installedNotice(InstalledExtension installed) {
     final String base = '「${installed.name}」已安装';
     if (installed.usable) {
-      return '$base · 下次打开播放窗口可在「超分」菜单里选用';
+      return '$base · 可在播放器的「超分」菜单里选用';
     }
     if (!installed.manifest.isKnownKind) {
       return '$base · 类型「${installed.manifest.kind}」本版本不接运行时，暂时不会有新功能';

@@ -171,6 +171,15 @@ const String kMethodWatchProgress = 'watchProgress';
 /// `PlayerSurface._beginEpisodeSwitch`。
 const String kMethodSwitchFailed = 'switchFailed';
 
+/// 主窗口 → 子窗口：「扩展目录变了，重新扫一遍超分方案」（1.1.0 第六十四轮用户实测）。
+///
+/// 用户原话：「删除扩展后，超分内的 anime4k-mini 不会消失，只有重启后才会没」——
+/// 播放子窗口是独立引擎，方案清单是它启动时扫的；不通知它，菜单就会一直挂着已经
+/// 卸载/禁用的扩展，点下去只会静默挂不上（比"没有这个选项"更糟）。
+///
+/// 不带参数：子窗口自己按数据根重扫（它本来就有 `resolveDataRoot()`，与开窗时同一口径）。
+const String kMethodExtensionsChanged = 'extensionsChanged';
+
 /// 观看进度上报的最小间隔（毫秒）：每前进这么多就报一条（第二十七轮）。
 ///
 /// 5 秒是"够用且不吵"的档：再密就是每帧一条跨窗口消息，再疏则关掉播放器那一下
@@ -590,6 +599,25 @@ class PlayerWindowService {
       });
     } catch (e) {
       _log('观看进度记账失败：$e');
+    }
+  }
+
+  /// 通知播放窗口：扩展目录变了，请重扫超分方案（见 [kMethodExtensionsChanged]）。
+  ///
+  /// 没有窗口 / 窗口已彻底关闭时不报错：下一次开窗本来就会重新扫（这是正常路径，
+  /// 不是失败）；发送失败也只记日志 —— 用户还能靠重开播放窗口恢复，不能因为
+  /// "通知没发出去"把装/卸扩展本身判成失败。
+  Future<void> notifyExtensionsChanged() async {
+    final WindowController? c = _controller;
+    if (c == null) {
+      _log('扩展变更：当前没有播放窗口（下次开窗会重新扫描）');
+      return;
+    }
+    try {
+      await c.invokeMethod<void>(kMethodExtensionsChanged);
+      _log('扩展变更已通知播放窗口重扫方案');
+    } catch (e) {
+      _log('通知播放窗口扩展变更失败（下次开窗会重新扫描）：$e');
     }
   }
 

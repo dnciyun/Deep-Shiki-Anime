@@ -222,4 +222,111 @@ void main() {
     final List<UpscaleScheme> schemes = await loadExtensionUpscaleSchemes(support);
     expect(schemes.map((UpscaleScheme s) => s.id), <String>['aaa-pack', 'mmm-pack', 'zzz-pack']);
   });
+
+  group('热重载：删/禁用扩展后播放器菜单立刻跟上（1.1.0 第六十四轮用户实测）', () {
+    Anime4kController newController() => Anime4kController(runner: (List<String> args) async {});
+
+    test('装上扩展 → 重扫后进清单；选中的那套被删 → 回退内置 Anime4K 并保留档位', () async {
+      final Directory support = _newSupportDir();
+      addTearDown(() => support.deleteSync(recursive: true));
+      final Directory ext = Directory(p.join(support.path, kExtensionsDirName, 'mini-pack'))
+        ..createSync(recursive: true);
+      _writeManifest(ext, _manifest(id: 'mini-pack', name: '迷你链'));
+      _writeShaderFiles(ext, 'shaders', <String>['a.glsl']);
+
+      final Anime4kController controller = newController();
+      ExtensionSchemeRefresh first = await refreshExtensionSchemes(
+        controller: controller,
+        supportDir: support,
+      );
+      expect(first.schemes.map((UpscaleScheme s) => s.id),
+          <String>[kAnime4kSchemeId, 'anime4k-ultra', 'mini-pack']);
+      expect(first.selectionReset, isFalse);
+
+      // 用户先选内置 Anime4K 标准档，再切到扩展方案。
+      await controller.setSelection(const UpscaleSelection(preset: Anime4kPreset.standard));
+      await controller.setSelection(const UpscaleSelection(schemeId: 'mini-pack'));
+      expect(controller.schemeId, 'mini-pack');
+
+      // 卸载（这里用"删目录"模拟，等价于 extensions 页卸载/手删）。
+      ext.deleteSync(recursive: true);
+      final ExtensionSchemeRefresh after = await refreshExtensionSchemes(
+        controller: controller,
+        supportDir: support,
+      );
+
+      expect(after.schemes.map((UpscaleScheme s) => s.id),
+          <String>[kAnime4kSchemeId, 'anime4k-ultra']);
+      expect(after.selectionReset, isTrue, reason: '选中的扩展没了必须当场回退');
+      expect(controller.schemeId, kAnime4kSchemeId);
+      // ⚠️ 这里 preset 已经是 off：切到扩展方案时 `_setUpscale` 把 `selection.preset`
+      // 一起写进了设置（扩展方案的 preset 就是 off）。所以回退 = Anime4K + off = 「关」——
+      // 与**下次启动**的回退完全一致（`fromSettings` 找不到 schemeId 时保留同一个 preset），
+      // 不会出现"热更新后是关、重启后又变成标准"的矛盾。想恢复超分由用户自己再点一下。
+      expect(controller.preset, Anime4kPreset.off);
+      expect(controller.isOff, isTrue, reason: '用户上次用的是扩展方案，回退到「关」最不意外');
+    });
+
+    test('被禁用（state.json enabled=false）也会从菜单里消失并触发回退', () async {
+      final Directory support = _newSupportDir();
+      addTearDown(() => support.deleteSync(recursive: true));
+      final Directory ext = Directory(p.join(support.path, kExtensionsDirName, 'mini-pack'))
+        ..createSync(recursive: true);
+      _writeManifest(ext, _manifest(id: 'mini-pack', name: '迷你链'));
+      _writeShaderFiles(ext, 'shaders', <String>['a.glsl']);
+
+      final Anime4kController controller = newController();
+      await refreshExtensionSchemes(controller: controller, supportDir: support);
+      await controller.setSelection(const UpscaleSelection(schemeId: 'mini-pack'));
+
+      _writeState(support, <String, Object?>{
+        'mini-pack': <String, Object?>{'enabled': false},
+      });
+      final ExtensionSchemeRefresh after = await refreshExtensionSchemes(
+        controller: controller,
+        supportDir: support,
+      );
+      expect(after.schemes.map((UpscaleScheme s) => s.id),
+          isNot(contains('mini-pack')));
+      expect(after.selectionReset, isTrue);
+      expect(controller.schemeId, kAnime4kSchemeId);
+    });
+
+    test('选着的是内置方案时，扩展增删都不改选择（不打扰用户）', () async {
+      final Directory support = _newSupportDir();
+      addTearDown(() => support.deleteSync(recursive: true));
+      final Anime4kController controller = newController();
+      await controller.setSelection(const UpscaleSelection(preset: Anime4kPreset.light));
+
+      final ExtensionSchemeRefresh refresh = await refreshExtensionSchemes(
+        controller: controller,
+        supportDir: support,
+      );
+      expect(refresh.selectionReset, isFalse);
+      expect(refresh.selection.schemeId, kAnime4kSchemeId);
+      expect(refresh.selection.preset, Anime4kPreset.light);
+      expect(controller.preset, Anime4kPreset.light);
+    });
+
+    test('扩展升级（同 id 换版本）不会让选中的方案失效', () async {
+      final Directory support = _newSupportDir();
+      addTearDown(() => support.deleteSync(recursive: true));
+      final Directory ext = Directory(p.join(support.path, kExtensionsDirName, 'mini-pack'))
+        ..createSync(recursive: true);
+      _writeManifest(ext, _manifest(id: 'mini-pack', name: '迷你链', version: '1.0.0'));
+      _writeShaderFiles(ext, 'shaders', <String>['a.glsl']);
+
+      final Anime4kController controller = newController();
+      await refreshExtensionSchemes(controller: controller, supportDir: support);
+      await controller.setSelection(const UpscaleSelection(schemeId: 'mini-pack'));
+
+      _writeManifest(ext, _manifest(id: 'mini-pack', name: '迷你链', version: '1.1.0'));
+      final ExtensionSchemeRefresh after = await refreshExtensionSchemes(
+        controller: controller,
+        supportDir: support,
+      );
+      expect(after.selectionReset, isFalse);
+      expect(controller.schemeId, 'mini-pack');
+    });
+  });
 }

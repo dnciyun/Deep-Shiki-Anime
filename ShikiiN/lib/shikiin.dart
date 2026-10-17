@@ -67,6 +67,7 @@ export 'models/upscale_scheme.dart'
         UpscaleTier,
         anime4kScheme,
         builtinUpscaleSchemes,
+        mergedUpscaleSchemes,
         kAnime4kSchemeId;
 export 'models/theme_tokens.dart' show ThemeTokens;
 export 'models/track.dart' show TrackInfo, TrackKind;

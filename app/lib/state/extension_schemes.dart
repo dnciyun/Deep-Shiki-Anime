@@ -8,8 +8,11 @@
 /// 谁调用：
 /// * 主窗口启动/设置页（列"有哪些可用方案"）；
 /// * **播放子窗口**每次 `bootstrapPlayer` 之前（子窗口是独立引擎，有自己的扫描，
-///   见 `main.dart` 的 `_runPlayerWindow`）——装完扩展**下次打开播放窗口**才生效，
-///   这是 1.1.0 的已知边界（跨窗口热通知留到 1.2.0）。
+///   见 `main.dart` 的 `_runPlayerWindow`）——窗口**每次打开**都重新扫；
+/// * **已经打开的播放窗口**：主窗口在扩展页装/卸/启停成功后经窗口通道发
+///   `kMethodExtensionsChanged`，子窗口收到就调 [refreshExtensionSchemes] 重扫
+///   （1.1.0 第六十四轮，用户实测"删了扩展菜单里还留着"之后补的）。所以没有"必须重启"
+///   这一步；窗口没开时下次开窗扫描兜底。
 ///
 /// 三条判据（宁可不显示，也不显示一个点不动的方案）：
 /// 1. 必须 `enabled == true`（禁用 = 不参与运行时）；
@@ -147,6 +150,56 @@ UpscaleScheme? _schemeOf(Directory dir, String id) {
     dir: shaderDir,
     note: _noteOf(manifest),
   );
+}
+
+/// 一次「扩展变更 → 播放器方案清单」的热重载结果（给调用方记日志/写测试用）。
+@immutable
+class ExtensionSchemeRefresh {
+  const ExtensionSchemeRefresh({
+    required this.schemes,
+    required this.selection,
+    required this.selectionReset,
+  });
+
+  /// 重扫之后播放器现在拿到的完整清单（内置 + 扩展）。
+  final List<UpscaleScheme> schemes;
+
+  /// 重扫之后的选中项（正常情况下与重扫前一样）。
+  final UpscaleSelection selection;
+
+  /// true = 之前选的那套扩展**已经被卸载/禁用**，已回退到内置 Anime4K（档位沿用上次）。
+  ///
+  /// 为什么回退到"内置 Anime4K + 原档位"而不是直接关：这与**下次启动**的行为一致
+  /// —— 设置里存的 schemeId 找不到时，`UpscaleSelection.fromSettings` 就是回退
+  /// Anime4K 并保留 `anime4kPreset`。两处口径一样，用户不会遇到"热更新后是关、
+  /// 重启后又变成标准"这种自相矛盾。
+  final bool selectionReset;
+}
+
+/// 扩展目录变化后，把新的方案清单灌进**正在运行的播放器**（1.1.0 第六十四轮）。
+///
+/// 调用点：播放子窗口收到 [kMethodExtensionsChanged] 之后（主窗口在扩展页装/卸/启停
+/// 成功时发）。做三件事，一件都不能少：
+/// 1. 重扫扩展目录（[loadExtensionUpscaleSchemes]：只收 enabled + 文件真在盘上的）；
+/// 2. 换掉控制器的清单（内置在前，扩展在后）；
+/// 3. 如果用户**正选着**的那套扩展已经没了，立刻回退（否则播放器还挂着一条指向
+///    不存在文件的 `glsl-shaders`，画面不变、菜单里却还写着它 —— 正是用户报的那个）。
+Future<ExtensionSchemeRefresh> refreshExtensionSchemes({
+  required Anime4kController controller,
+  required Directory supportDir,
+}) async {
+  final List<UpscaleScheme> extra = await loadExtensionUpscaleSchemes(supportDir);
+  final List<UpscaleScheme> merged = mergedUpscaleSchemes(extra: extra);
+  final UpscaleSelection before = controller.selection;
+  final bool gone = !before.isOff && !merged.any((UpscaleScheme s) => s.id == before.schemeId);
+  final UpscaleSelection next =
+      gone ? UpscaleSelection(preset: before.preset) : before;
+  controller.setSchemes(merged);
+  if (gone) {
+    // `setSelection` 会立刻下发（清掉旧链 / 挂上新方案），并把状态推给播放面。
+    await controller.setSelection(next);
+  }
+  return ExtensionSchemeRefresh(schemes: merged, selection: next, selectionReset: gone);
 }
 
 /// 控制栏胶囊里的短名：名字够短就用名字，否则截断（胶囊只有一行的宽度）。

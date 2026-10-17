@@ -16,6 +16,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
@@ -24,7 +25,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shikiin/shikiin.dart' as shikiin;
 import 'package:window_manager/window_manager.dart' as wm;
 
+import '../state/extension_schemes.dart';
 import '../state/player_window.dart';
+import '../state/store_layout.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 
@@ -135,6 +138,10 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
             _trace('切集失败通知：${notice.message}');
             windowSwitchNoticeNotifier.value = notice;
           }
+        case kMethodExtensionsChanged:
+          // 1.1.0 第六十四轮（用户实测）：主窗口装了/卸了/启停了扩展 —— 本窗口是独立
+          // 引擎，方案清单是开窗时扫的，不重扫就会一直挂着已经没了的扩展。
+          await _reloadExtensionSchemes();
       }
       return null;
     }));
@@ -161,6 +168,28 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
 
     // 排障：把「本窗口是谁」记进日志（见 [_traceHwnd]）。
     unawaited(_traceHwnd('initState'));
+  }
+
+  /// 扩展目录变了 → 重扫方案清单并灌进正在跑的播放器（见 [kMethodExtensionsChanged]）。
+  ///
+  /// 失败只记日志、**不影响当前播放**：最坏情况是菜单里还挂着旧扩展，用户重开播放窗口
+  /// 就能恢复（那条路径每次开窗都重扫）。
+  Future<void> _reloadExtensionSchemes() async {
+    try {
+      final DataRoot dataRoot = await resolveDataRoot();
+      final ExtensionSchemeRefresh refresh = await refreshExtensionSchemes(
+        controller: ref.read(shikiin.anime4kProvider),
+        supportDir: Directory(dataRoot.path),
+      );
+      _trace(
+        '扩展变更：方案 ${refresh.schemes.length} 个（选中 ${refresh.selection.schemeId}'
+        '${refresh.selectionReset ? '，原方案已被卸载/禁用 → 已回退内置 Anime4K' : ''}）',
+      );
+      // 方案清单变了：控制栏胶囊文案/菜单都读它，重建一次让界面跟上。
+      if (mounted) setState(() {});
+    } catch (e) {
+      _trace('扩展变更后重扫方案失败（当前播放不受影响，重开播放窗口会再扫）：$e');
+    }
   }
 
   /// 收到"被最大化"就退回去（见 `_OnMaximize` 的说明）。

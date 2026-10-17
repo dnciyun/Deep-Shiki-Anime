@@ -404,6 +404,15 @@ Future<void> main(List<String> args) async {
   );
   liveContainer = container;
 
+  // 扩展页装/卸/启停成功 → 立刻通知**已经打开的**播放窗口重扫超分方案
+  // （1.1.0 第六十四轮，用户实测：「删除扩展后，超分里的 anime4k-mini 不会消失，
+  // 只有重启后才会没」）。不通知的话，那份清单要等下次开窗才更新；这里监听扩展版本号
+  // （`ExtensionsController` 在装/卸/启停成功时 +1），没有播放窗口时那一次通知是空操作。
+  container.listen<int>(
+    extensionsRevisionProvider,
+    (int? previous, int next) => unawaited(playerWindow.notifyExtensionsChanged()),
+  );
+
   trace('runApp');
   startup('container ok → runApp');
   // 播放列表里点了一条（子窗口只报 id，见 `kMethodEpisodeSelect`）：交给宿主那条

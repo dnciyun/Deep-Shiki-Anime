@@ -5,7 +5,7 @@
 /// * 空态把"扩展是资源包 / 本版本支持 shader-pack"说清楚；
 /// * 已安装行：名称/版本/类型中文/大小/来源/启用状态 + 启用·禁用·卸载；
 /// * `usable == false` 的行必须写「本版本不接运行时」，`usable == true` 写
-///   「可在播放器的「超分」菜单里选用（重开播放窗口生效）」——
+///   「可在播放器的「超分」菜单里选用」——
 ///   ⚠️ **不许写「设置 → 超分方案」**（Lead 2026-10-17 更正：设置页这一轮没有方案区）；
 /// * 安装中：名字 + 进度条（总量未知 = 不确定进度）+ 取消（cancelling 时禁用）；
 /// * notice 与 problem 是**两个落点**（problem 红字 + 怎么办）；
@@ -301,7 +301,7 @@ void main() {
       expect(find.text('已启用'), findsOneWidget);
       expect(find.text('已禁用'), findsOneWidget);
       expect(_textOf(tester, dsExtensionUseHintKey('shader-pack-demo')),
-          '可在播放器的「超分」菜单里选用（重开播放窗口生效）');
+          '可在播放器的「超分」菜单里选用');
       expect(_textOf(tester, dsExtensionUseHintKey('data-demo')), contains('本版本不接运行时'));
       // 统计行跟着列表走。
       expect(_textOf(tester, dsExtensionsStatsKey), contains('已安装 2 个 · 启用 1 · 可用 1'));
@@ -437,7 +437,7 @@ void main() {
       expect(find.byKey(dsExtensionsNoticeKey), findsOneWidget);
       expect(find.textContaining('已安装'), findsWidgets);
       expect(find.textContaining('「超分」菜单'), findsWidgets,
-          reason: '状态机的新口径：下次打开播放窗口可在超分菜单选用');
+          reason: '状态机口径：装好即可在播放器「超分」菜单选用（第六十四轮起热刷新，不用重开窗口）');
       expect(find.textContaining('设置 → 超分方案'), findsNothing);
       final NeoBanner banner = tester.widget<NeoBanner>(find.byKey(dsExtensionsNoticeKey));
       expect(banner.kind, NeoBannerKind.success, reason: '成功是绿条');
