@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:path/path.dart' as p;
 import '../models/anime4k_preset.dart';
 import '../models/upscale_scheme.dart';
@@ -5,18 +7,18 @@ import '../infra/diagnostics/diag.dart';
 
 /// 把「超分方案 + 档位」翻译成 libmpv 命令并下发。
 ///
-/// 历史：本类原本只管 Anime4K 三档（`change-list glsl-shaders set/clr`）。
-/// 2026-10-17 起扩成方案制（用户「模型我想多试试其他的，只使用可以实时播放的」）：
-/// * Anime4K：行为与以前**逐字一致**（默认方案、三档、换片保护窗口都保留）；
-/// * mpv 内置缩放器：`clr` 掉 shader 后 `set scale <算法>`，离开时把原值写回；
-/// * 第三方 GLSL 包：与 Anime4K 同一条 `glsl-shaders` 通路，只是目录/文件链来自方案。
+/// 历史：本类原本只管 Anime4K 三档（`change-list glsl-shaders set/clr`）；
+/// 2026-10-17 扩成方案制，随后按用户「去除内置的mpv这套」砍掉了 mpv 缩放器
+/// （不再改 `scale` 属性、不再存/还原属性原值）。现在只有一条通路：
+/// **一串 GLSL 文件 → `change-list glsl-shaders set <paths>`**。
 ///
-/// [runner] 注入「下发一条 mpv 命令」（生产接 PlayerController.runMpvCommand），
-/// [readProperty] 注入「读一个 mpv 属性」（mpv 缩放器方案要存原值，离开时恢复）。
+/// [runner] 注入「下发一条 mpv 命令」（生产接 PlayerController.runMpvCommand）；
+/// [readProperty] 注入「读一个 mpv 属性」—— 只用于诊断：记录当前硬解状态与
+/// 像素格式，判断 LUMA 钩子的 shader 有没有可能被硬件解码旁路（真机排查用）。
 class Anime4kController {
   final Future<void> Function(List<String> args) runner;
 
-  /// 读 mpv 属性；不注入时 mpv 缩放器方案无法恢复原值（仅测试会出现）。
+  /// 读 mpv 属性（诊断用；不注入时日志里就是空）。
   final Future<String> Function(String name)? readProperty;
 
   Anime4kController({required this.runner, this.readProperty});
@@ -28,10 +30,7 @@ class Anime4kController {
 
   UpscaleSelection _selection = UpscaleSelection.off;
 
-  /// mpv 缩放器改过的属性原值（key → 原值；空串 = 读不到，不恢复）。
-  final Map<String, String> _savedMpvProps = <String, String>{};
-
-  /// shader 解包目录（Anime4K；解包完成后由启动流程注入）。
+  /// shader 解包目录（Anime4K 与随包 GLSL 共用；解包完成后由启动流程注入）。
   void setShaderDir(String dir) => _shaderDir = dir;
 
   /// 替换方案清单（内置 + 扩展安装的 GLSL 包）。空清单 → 回到内置。
@@ -53,13 +52,12 @@ class Anime4kController {
   /// 是否有实际生效的超分（任何方案）；换片窗口据此决定要不要补发。
   bool get hasEffect => !isOff;
 
-  /// 当前是否挂了 shader 链（mpv 缩放器方案 → false）。
+  /// 当前是否有文件链要挂（任何非关方案都有；关 → false）。
   bool get hasShaders => _chainOf(_resolve()).isNotEmpty;
 
   /// 只记选择、**不下发**（主窗口不播时用：下发会经 runner 凭空建 mpv 实例）。
   void loadSelection(UpscaleSelection selection) {
     _selection = UpscaleSelection(schemeId: selection.schemeId, preset: selection.preset);
-    _savedMpvProps.clear();
   }
 
   /// 兼容旧调用：只记 Anime4K 档位。
@@ -128,16 +126,13 @@ class Anime4kController {
     return anime4kScheme();
   }
 
-  /// 方案 → 当前要挂的文件链（mpvScaler 为空）。
+  /// 方案 → 当前要挂的文件链。
   List<String> _chainOf(UpscaleScheme scheme) {
     switch (scheme.kind) {
       case UpscaleSchemeKind.anime4kChain:
         return anime4kShaderChain(_selection.preset);
       case UpscaleSchemeKind.glslPack:
-        if (scheme.tiers.isEmpty) return const <String>[];
-        return scheme.tiers.first.files;
-      case UpscaleSchemeKind.mpvScaler:
-        return const <String>[];
+        return scheme.files;
     }
   }
 
@@ -158,30 +153,24 @@ class Anime4kController {
 
   Future<void> _activate(UpscaleScheme scheme) async {
     final String where = '${_selection.schemeId}/${_selection.preset.name}';
-    await diag.breadcrumbFlushed('anime4k:_apply $where');
+    await diag.breadcrumbFlushed('anime4k:_apply $where${await _playbackContext()}');
     try {
-      if (scheme.kind == UpscaleSchemeKind.mpvScaler) {
-        // 先摘 shader（避免与缩放器叠加），再下发 scale。
+      final List<String> chain = _chainOf(scheme);
+      final String? dir = scheme.dir ?? _shaderDir;
+      if (dir == null || chain.isEmpty) {
+        // 没有可用的 shader 文件：安全降级为关，绝不假装生效。
         await _clearShaders();
-        await _applyMpvScaler(scheme);
-      } else {
-        await _restoreMpvProps();
-        final List<String> chain = _chainOf(scheme);
-        final String? dir = scheme.dir ?? _shaderDir;
-        if (dir == null || chain.isEmpty) {
-          // 没有可用的 shader 文件：安全降级为关，绝不假装生效。
-          await _clearShaders();
-          diag.warn('anime4k', 'apply $where skipped: no shader dir/chain');
-          return;
-        }
-        // breadcrumb 的 await 间隙可能恰好进入新的换片窗口：改记账，绝不冒险。
-        if (_inSwitchWindow) {
-          _pendingApply = true;
-          return;
-        }
-        final String paths = chain.map((String f) => p.join(dir, f)).join(';');
-        await runner(['change-list', 'glsl-shaders', 'set', paths]);
+        diag.warn('anime4k', 'apply $where skipped: no shader dir/chain');
+        return;
       }
+      // breadcrumb 的 await 间隙可能恰好进入新的换片窗口：改记账，绝不冒险。
+      if (_inSwitchWindow) {
+        _pendingApply = true;
+        return;
+      }
+      final String paths = chain.map((String f) => p.join(dir, f)).join(';');
+      await runner(['change-list', 'glsl-shaders', 'set', paths]);
+      await _hintIfNotMagnified(scheme);
       await diag.breadcrumbFlushed('anime4k:_apply done $where');
     } catch (e, st) {
       diag.warn('anime4k', 'apply $where failed', e, st);
@@ -194,7 +183,6 @@ class Anime4kController {
     try {
       // clr 在任意 VO 状态下都安全；即使当前没挂 shader 也照发一条（历史行为，幂等）。
       await _clearShaders();
-      await _restoreMpvProps();
       await diag.breadcrumbFlushed('anime4k:_apply off done');
     } catch (e, st) {
       diag.warn('anime4k', 'apply off failed', e, st);
@@ -205,16 +193,66 @@ class Anime4kController {
     await runner(['change-list', 'glsl-shaders', 'clr', '']);
   }
 
-  Future<void> _applyMpvScaler(UpscaleScheme scheme) async {
-    if (scheme.properties.isEmpty) return;
-    // 第一次进入缩放器方案时记下原值（切到另一个缩放器方案也沿用最初那份）。
-    if (_savedMpvProps.isEmpty) {
-      for (final String key in scheme.properties.keys) {
-        _savedMpvProps[key] = await _readProp(key);
-      }
-    }
-    for (final MapEntry<String, String> e in scheme.properties.entries) {
-      await runner(['set', e.key, e.value]);
+  /// 诊断信息：硬解状态 + 像素格式 + 片源/输出尺寸。
+  ///
+  /// 随包方案里的 ACNet/ARNet 都 hook `LUMA` 且带 `//!WHEN` 放大比例门槛：
+  /// 画面没有放大时它们不会跑，用户观感就是「点了没效果」。这行日志 + 后面的
+  /// OSD 提示就是用来区分「没放大」和「真坏了」。
+  Future<String> _playbackContext() async {
+    final String hwdec = (await _readProp('hwdec-current')).trim();
+    final String pixfmt = (await _readProp('video-params/pixelformat')).trim();
+    final _FrameSize? src = await _frameSize();
+    final _FrameSize? out = await _outputSize();
+    final List<String> parts = <String>[
+      if (hwdec.isNotEmpty) 'hwdec=$hwdec',
+      if (pixfmt.isNotEmpty) 'pixfmt=$pixfmt',
+      if (src != null) 'src=${src.w}x${src.h}',
+      if (out != null) 'out=${out.w}x${out.h}',
+    ];
+    return parts.isEmpty ? '' : ' (${parts.join(', ')})';
+  }
+
+  /// 片源尺寸（mpv `width`/`height`，等于解码后显示尺寸）。
+  Future<_FrameSize?> _frameSize() async {
+    final int? w = int.tryParse((await _readProp('width')).trim());
+    final int? h = int.tryParse((await _readProp('height')).trim());
+    if (w == null || h == null || w <= 0 || h <= 0) return null;
+    return _FrameSize(w, h);
+  }
+
+  /// 输出尺寸（mpv `osd-dimensions`：渲染目标/窗口像素尺寸）。
+  /// 读不到返回 null：宁可不说，也不瞎猜一个比例去误导用户。
+  Future<_FrameSize?> _outputSize() async {
+    final int? w = int.tryParse((await _readProp('osd-dimensions/w')).trim());
+    final int? h = int.tryParse((await _readProp('osd-dimensions/h')).trim());
+    if (w == null || h == null || w <= 0 || h <= 0) return null;
+    return _FrameSize(w, h);
+  }
+
+  /// 只在放大时生效的方案（ACNet/ARNet），若当前没有放大就用 mpv OSD 说清楚。
+  ///
+  /// 这是 2026-10-17 用户真机反馈「ARNet 无效果 / FSR 没效果」的直接修复：
+  /// 日志显示 hwdec=d3d11va-copy、pixfmt=nv12（LUMA 钩子正常），所以不是坏了，
+  /// 而是播放尺寸没有放大、shader 自己的 `//!WHEN` 跳过了。
+  Future<void> _hintIfNotMagnified(UpscaleScheme scheme) async {
+    final double? threshold = scheme.upscaleOnlyAbove;
+    if (threshold == null) return;
+    final _FrameSize? src = await _frameSize();
+    final _FrameSize? out = await _outputSize();
+    if (src == null || out == null) return;
+    final double ratio = math.min(out.w / src.w, out.h / src.h);
+    diag.breadcrumb(
+        'anime4k:upscaleOnly ${scheme.id} ratio=${ratio.toStringAsFixed(2)} (<$threshold)');
+    if (ratio >= threshold) return;
+    try {
+      await runner([
+        'show-text',
+        '「${scheme.name}」只在放大画面时生效（当前 ${src.w}×${src.h} → '
+            '${out.w}×${out.h}）。想马上看到变化，选「锐化 · RCAS」。',
+        '5000',
+      ]);
+    } catch (e, st) {
+      diag.warn('anime4k', 'show-text hint failed', e, st);
     }
   }
 
@@ -227,15 +265,11 @@ class Anime4kController {
       return '';
     }
   }
+}
 
-  Future<void> _restoreMpvProps() async {
-    if (_savedMpvProps.isEmpty) return;
-    final List<MapEntry<String, String>> saved = _savedMpvProps.entries.toList(growable: false);
-    _savedMpvProps.clear();
-    for (final MapEntry<String, String> e in saved) {
-      final String value = e.value.trim();
-      if (value.isEmpty) continue; // 读不到原值：宁可不改，也不要写一个猜的默认值
-      await runner(['set', e.key, value]);
-    }
-  }
+/// 画面尺寸（像素）。
+class _FrameSize {
+  final int w;
+  final int h;
+  const _FrameSize(this.w, this.h);
 }

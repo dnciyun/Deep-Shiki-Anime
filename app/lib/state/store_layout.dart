@@ -13,7 +13,7 @@
 ///   player-store\shikiin_player.hive       播放窗口自己的存档（独立引擎，必须分开）
 ///   logs\shikiin-*.log                     诊断日志
 ///   engine\                                引擎状态（session.json / engine.log / dht.json）
-///   anime4k_v4.0\                          Anime4K shader 解包目录
+///   anime4k_v4.1\                          超分 shader 解包目录（Anime4K + 随包 GLSL）
 ///   dsanima\                              托盘图标 + 封面缓存
 /// ```
 /// 于是：**解压一份 = 一套独立设置**（新落地的副本没有 `store\dsanima.hive`

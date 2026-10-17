@@ -228,8 +228,8 @@ class PlayerController {
     }
   }
 
-  /// 读一个 mpv 属性（超分方案切到 mpv 缩放器时要存原值、离开时写回）。
-  /// 读不到返回空串：调用方据此决定**不恢复**，绝不写一个猜出来的默认值。
+  /// 读一个 mpv 属性（超分诊断：记录硬解状态/像素格式，判断 LUMA 钩子是否被旁路）。
+  /// 读不到返回空串：调用方按「未知」处理，绝不据此写任何 mpv 属性。
   Future<String> readMpvProperty(String name) async {
     try {
       return await _native.getProperty(name);

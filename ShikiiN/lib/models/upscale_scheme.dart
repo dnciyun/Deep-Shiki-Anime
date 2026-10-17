@@ -1,11 +1,21 @@
 /// 可切换的超分**方案**（scheme）。
 ///
-/// 用户 2026-10-17：「模型我想多试试其他的，只使用可以实时播放的，默认自带的是
-/// anime4k」—— 于是把「超分」从「Anime4K 三档」扩成「方案 + 档位」：
+/// 用户 2026-10-17 两句话定了这版边界：
+/// *「模型我想多试试其他的，只使用可以实时播放的，默认自带的是 anime4k」；
+///  *「去除内置的mpv这套，按1做，另一条渲染管线的就是扩展干的」。
 ///
-/// * [UpscaleSchemeKind.anime4kChain]：内置 Anime4K，档位 = 轻/标/极（默认内置）；
-/// * [UpscaleSchemeKind.mpvScaler]：mpv 自带缩放器，零下载、必实时（只改属性不挂 shader）；
-/// * [UpscaleSchemeKind.glslPack]：第三方 GLSL 包（由扩展框架安装，目录 + 文件链）。
+/// 于是内置只保留**当前渲染管线（media_kit `vo=libmpv` + ANGLE/GLES）里真能跑的
+/// fragment GLSL**：
+///
+/// * [UpscaleSchemeKind.anime4kChain]：内置 Anime4K，档位 = 轻/标/极（默认）；
+/// * [UpscaleSchemeKind.glslPack]：一组打包的 GLSL 文件，按顺序挂到
+///   `glsl-shaders`。随包内置 ACNet / ARNet / Anime4K-Ultra / FSR 1.0；
+///   将来扩展框架装的第三方包也是这个类型（目录由 [UpscaleScheme.dir] 指定）。
+///
+/// 明确**不做**的两件事：
+/// 1. mpv 自带缩放器（改 `scale` 属性那套）已按用户要求整套移除；
+/// 2. 需要另一条渲染管线的方案（gpu-next 的 compute 着色器 ArtCNN、ONNX 推理
+///    如 AnimeJaNai）不进内置 —— 归扩展（资源包）管，见 1.1.0 计划 M3。
 ///
 /// **只收实时方案**：VapourSynth / ONNX / Real-ESRGAN / waifu2x 这类逐帧神经网络
 /// 不在此列（包里没有那些运行时，也做不到实时播放）。
@@ -18,14 +28,11 @@ enum UpscaleSchemeKind {
   /// 内置 Anime4K 的 shader 链（12 个 .glsl，按档位组链）。
   anime4kChain,
 
-  /// mpv 内置缩放器：改 `scale` 等属性，不挂 shader、不下载任何文件。
-  mpvScaler,
-
-  /// 第三方 GLSL 包：目录 + 文件链（由扩展框架安装到 `models/`）。
+  /// 一组打包的 GLSL（内置 ACNet/ARNet/Anime4K-Ultra/FSR，或扩展装的包）。
   glslPack,
 }
 
-/// 方案里的一档。[files] 只有 shader 类方案用；mpvScaler 留空。
+/// 方案里的一档。只有 [UpscaleSchemeKind.anime4kChain] 用（轻/标/极）。
 class UpscaleTier {
   final String id;
   final String label;
@@ -39,25 +46,34 @@ class UpscaleScheme {
   /// 稳定 id（也用于设置持久化；扩展包 id 由扩展清单给）。
   final String id;
 
-  /// 菜单里的全名（如 `mpv · EWA Lanczos Sharp`）。
+  /// 菜单里的全名（如 `ACNet · 中性`）。
   final String name;
 
-  /// 控制栏胶囊里的短名（如 `EWA锐`）。
+  /// 控制栏胶囊里的短名（如 `ACNet`）。
   final String shortName;
 
   final UpscaleSchemeKind kind;
 
-  /// shader 类方案的档位；mpvScaler 只有一档 `on`。
+  /// Anime4K 的档位；glslPack 方案只有一档（用 [files]）。
   final List<UpscaleTier> tiers;
 
-  /// mpvScaler 要下发的属性（如 `{'scale': 'ewa_lanczossharp'}`）。
-  final Map<String, String> properties;
+  /// glslPack 要按顺序挂载的文件名（相对 [dir] 或启动注入的 shader 目录）。
+  final List<String> files;
 
-  /// shader 目录（glslPack 用；anime4k 由启动流程注入 shaderDir）。
+  /// shader 目录；null = 用启动流程注入的 Anime4K 解包目录（内置包都是这种）。
   final String? dir;
 
   /// 界面上的小字说明。
   final String? note;
+
+  /// 低于这个放大比例时方案会静默跳过（shader 自带 `//!WHEN` 门槛）。
+  ///
+  /// * ACNet/ARNet：1.2（上游 `//!WHEN` 要求 OUTPUT/LUMA > 1.2）；
+  /// * FSR 1.0：1.0（我们已放宽到 ≥1.0，所以只有降采样时才跳过）；
+  /// * null：任何尺寸都生效（Anime4K-Ultra、RCAS）。
+  ///
+  /// 控制器据此在「没放大」时弹一句 mpv OSD 说明，而不是让人以为坏了。
+  final double? upscaleOnlyAbove;
 
   const UpscaleScheme({
     required this.id,
@@ -65,15 +81,13 @@ class UpscaleScheme {
     required this.shortName,
     required this.kind,
     this.tiers = const [],
-    this.properties = const {},
+    this.files = const [],
     this.dir,
     this.note,
+    this.upscaleOnlyAbove,
   });
 
   bool get isAnime4k => kind == UpscaleSchemeKind.anime4kChain;
-
-  bool get usesShaders =>
-      kind == UpscaleSchemeKind.anime4kChain || kind == UpscaleSchemeKind.glslPack;
 
   UpscaleTier? tierOf(String id) {
     for (final tier in tiers) {
@@ -85,6 +99,25 @@ class UpscaleScheme {
 
 /// 内置 Anime4K 方案的 id（也是「关」所在的方案：preset=off 即关）。
 const String kAnime4kSchemeId = 'anime4k';
+
+// —— 随包内置的第三方 shader 文件名（必须与 assets/shaders/anime4k/ 下一致）——
+// 全部 MIT，来源与许可见 `THIRD_PARTY_NOTICES.txt`。
+const String kAcnetShader = 'acnet_f8b8.glsl';
+const String kAcnetHdnShader = 'acnet_f8b8_hdn.glsl';
+const String kArnetShader = 'arnet_f8b16.glsl';
+const String kAnime4kUltraShader = 'Anime4K-Ultra_DbL.glsl';
+const String kFsrShader = 'FSR.glsl';
+const String kRcasShader = 'RCAS.glsl';
+
+/// 随包内置的 GLSL 包文件清单（解包用；与 Anime4K 的 12 个一起落同一个目录）。
+const List<String> kBundledPackShaderFiles = [
+  kAcnetShader,
+  kAcnetHdnShader,
+  kArnetShader,
+  kAnime4kUltraShader,
+  kFsrShader,
+  kRcasShader,
+];
 
 /// 内置 Anime4K 方案：档位就是 [Anime4kPreset.simpleTiers]，链走 `anime4kShaderChain`。
 UpscaleScheme anime4kScheme() => UpscaleScheme(
@@ -99,47 +132,65 @@ UpscaleScheme anime4kScheme() => UpscaleScheme(
       note: '内置 · 实时（吃 GPU）',
     );
 
-/// 内置方案清单：Anime4K（默认）+ mpv 自带缩放器（零下载、必实时）。
+/// 内置方案清单：Anime4K（默认）+ 6 个随包 GLSL 方案（MIT，实时）。
 ///
-/// ⚠️ mpv 缩放器只改 `scale`（放大算法），不动 dscale/色彩管理；
-/// 离开该方案时会把原值（启动时读到的）写回去 —— 见 Anime4kController。
+/// 注：ACNet/ARNet/FSR 是**放大**用 shader，自身按 `//!WHEN` 只在放大比例足够时
+/// 生效（ACNet/ARNet >1.2x；FSR 我们放宽到 >=1.0x，1:1 也有 RCAS 锐化）；
+/// 窗口比片源小时它们会跳过 —— 控制器会弹一句 mpv OSD 说明。
+/// Anime4K-Ultra 在原画分辨率上做线条/去模糊、RCAS 是独立锐化，任何尺寸都有变化。
 List<UpscaleScheme> builtinUpscaleSchemes() => <UpscaleScheme>[
       anime4kScheme(),
       const UpscaleScheme(
-        id: 'mpv-ewa-lanczossharp',
-        name: 'mpv · EWA Lanczos Sharp',
-        shortName: 'EWA锐',
-        kind: UpscaleSchemeKind.mpvScaler,
-        tiers: [UpscaleTier(id: 'on', label: '开')],
-        properties: {'scale': 'ewa_lanczossharp'},
-        note: '实时 · 只改 mpv 放大算法（更锐）',
+        id: 'acnet',
+        name: 'ACNet · 中性',
+        shortName: 'ACNet',
+        kind: UpscaleSchemeKind.glslPack,
+        files: [kAcnetShader],
+        upscaleOnlyAbove: 1.2,
+        note: 'MIT · 实时 · 中性放大（更接近原画，放大 >1.2x 才生效）',
       ),
       const UpscaleScheme(
-        id: 'mpv-ewa-lanczos',
-        name: 'mpv · EWA Lanczos',
-        shortName: 'EWA',
-        kind: UpscaleSchemeKind.mpvScaler,
-        tiers: [UpscaleTier(id: 'on', label: '开')],
-        properties: {'scale': 'ewa_lanczos'},
-        note: '实时 · 只改 mpv 放大算法（均衡）',
+        id: 'acnet-hdn',
+        name: 'ACNet · 去噪',
+        shortName: 'ACNet去噪',
+        kind: UpscaleSchemeKind.glslPack,
+        files: [kAcnetHdnShader],
+        upscaleOnlyAbove: 1.2,
+        note: 'MIT · 实时 · 去噪放大（低码率 WEB 源更干净，放大 >1.2x 才生效）',
       ),
       const UpscaleScheme(
-        id: 'mpv-spline36',
-        name: 'mpv · Spline36',
-        shortName: 'Spline36',
-        kind: UpscaleSchemeKind.mpvScaler,
-        tiers: [UpscaleTier(id: 'on', label: '开')],
-        properties: {'scale': 'spline36'},
-        note: '实时 · 只改 mpv 放大算法（省性能）',
+        id: 'arnet',
+        name: 'ARNet · 线条',
+        shortName: 'ARNet',
+        kind: UpscaleSchemeKind.glslPack,
+        files: [kArnetShader],
+        upscaleOnlyAbove: 1.2,
+        note: 'MIT · 实时 · 线条/细节最强，计算量也最大（放大 >1.2x 才生效）',
       ),
       const UpscaleScheme(
-        id: 'mpv-bicubic',
-        name: 'mpv · Bicubic',
-        shortName: 'Bicubic',
-        kind: UpscaleSchemeKind.mpvScaler,
-        tiers: [UpscaleTier(id: 'on', label: '开')],
-        properties: {'scale': 'bicubic'},
-        note: '实时 · 只改 mpv 放大算法（最轻）',
+        id: 'anime4k-ultra',
+        name: 'Anime4K-Ultra · 保颗粒',
+        shortName: 'A4K-U',
+        kind: UpscaleSchemeKind.glslPack,
+        files: [kAnime4kUltraShader],
+        note: 'MIT · 实时 · 保留颗粒/纹理，线条更利，比原版 Anime4K 轻',
+      ),
+      const UpscaleScheme(
+        id: 'fsr',
+        name: 'FSR 1.0 · EASU+RCAS',
+        shortName: 'FSR',
+        kind: UpscaleSchemeKind.glslPack,
+        files: [kFsrShader],
+        upscaleOnlyAbove: 1.0,
+        note: 'MIT · 实时 · AMD FSR 1.0：EASU 放大 + RCAS 锐化（1:1 或放大时都有锐化，最省）',
+      ),
+      const UpscaleScheme(
+        id: 'rcas',
+        name: '锐化 · RCAS',
+        shortName: 'RCAS',
+        kind: UpscaleSchemeKind.glslPack,
+        files: [kRcasShader],
+        note: 'MIT · 实时 · 只锐化不放大：窗口比片源小/1:1 都有变化（看不到变化时先用它）',
       ),
     ];
 
@@ -188,7 +239,7 @@ class UpscaleSelection {
     return anime4kScheme();
   }
 
-  /// 控制栏胶囊文案：`超分 关 / 超分 标 / 超分 EWA锐`。
+  /// 控制栏胶囊文案：`超分 关 / 超分 标 / 超分 ACNet`。
   String label(List<UpscaleScheme> schemes) {
     if (isOff) return '超分 关';
     final UpscaleScheme scheme = resolve(schemes);
@@ -204,7 +255,7 @@ class UpscaleSelection {
     return '超分 ${scheme.shortName}';
   }
 
-  /// 胶囊点击的循环顺序：关 → Anime4K 轻/标/极 → 各 mpv 方案 → 关。
+  /// 胶囊点击的循环顺序：关 → Anime4K 轻/标/极 → 各随包方案 → 关。
   static List<UpscaleSelection> cycleOrder(List<UpscaleScheme> schemes) => <UpscaleSelection>[
         off,
         for (final Anime4kPreset p in Anime4kPreset.simpleTiers) UpscaleSelection(preset: p),

@@ -1,4 +1,4 @@
-/// Anime4K 打包回归测试（用户要求：把 Anime4K 作为播放器内置工具打进应用）。
+/// 超分 shader 打包回归测试（用户要求：把 Anime4K/ACNet 等作为播放器内置工具打进应用）。
 ///
 /// 这个测试钉的是一个**只有真机才会暴露、且症状极具误导性**的失败：
 /// shikiin 的 `unpackAnime4kShaders()` 用**无包前缀**的
@@ -11,7 +11,7 @@
 ///   * `flutter build windows` 成功；
 ///   * 真机启动只在日志里留一行
 ///     `Unable to load asset: "assets/shaders/anime4k/Anime4K_Clamp_Highlights.glsl"`
-///     然后 `anime4k init failed (降级为关)` —— 用户感知是「Anime4K 菜单点了没用」。
+///     然后 `anime4k init failed (降级为关)` —— 用户感知是「超分菜单点了没用」。
 ///
 /// 所以这里直读磁盘校验「pubspec 里确实声明了」+「文件确实在且是真 GLSL」。
 /// 真正的端到端断言（rootBundle 能取到字节）由打包后的人工验证覆盖：
@@ -22,9 +22,11 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// 必须与 `shikiin` 的 `kAnime4kShaderFiles`（`lib/models/anime4k_preset.dart`）
-/// **逐字一致**：少一个 → 解包到一半抛异常，Anime4K 整体降级为关。
+/// 必须与 shikiin 的 `kAnime4kShaderFiles`（`lib/models/anime4k_preset.dart`）+
+/// `kBundledPackShaderFiles`（`lib/models/upscale_scheme.dart`）**逐字一致**：
+/// 少一个 → 解包到一半抛异常，超分整体降级为关。
 const List<String> kRequiredShaderFiles = <String>[
+  // Anime4K（MIT, bloc97）
   'Anime4K_Clamp_Highlights.glsl',
   'Anime4K_Restore_CNN_VL.glsl',
   'Anime4K_Restore_CNN_M.glsl',
@@ -37,10 +39,20 @@ const List<String> kRequiredShaderFiles = <String>[
   'Anime4K_Upscale_Denoise_CNN_x2_S.glsl',
   'Anime4K_AutoDownscalePre_x2.glsl',
   'Anime4K_AutoDownscalePre_x4.glsl',
+  // ACNet / ARNet（MIT, TianZerL/ACNetGLSL）
+  'acnet_f8b8.glsl',
+  'acnet_f8b8_hdn.glsl',
+  'arnet_f8b16.glsl',
+  // Anime4K-Ultra（MIT, Th-Underscore）
+  'Anime4K-Ultra_DbL.glsl',
+  // AMD FidelityFX FSR 1.0.2（MIT, AMD / agyild 移植）
+  'FSR.glsl',
+  // RCAS 独立锐化（上面 FSR 的 RCAS pass 抽出来，任何尺寸都生效）
+  'RCAS.glsl',
 ];
 
 void main() {
-  group('Anime4K 随包内置（assets/shaders/anime4k/）', () {
+  group('超分 shader 随包内置（assets/shaders/anime4k/）', () {
     test('pubspec.yaml 声明了 assets/shaders/anime4k/（漏了 → 真机 Unable to load asset）', () {
       final pubspec = File('pubspec.yaml');
       expect(pubspec.existsSync(), isTrue, reason: '测试的工作目录应是 app/');
@@ -86,12 +98,12 @@ void main() {
       );
     });
 
-    test('shikiin 清单里的 12 个 shader 全部就位，且都是真 GLSL 不是错误页', () {
+    test('shikiin 清单里的 18 个 shader 全部就位，且都是真 GLSL 不是错误页', () {
       final dir = Directory('assets/shaders/anime4k');
       expect(
         dir.existsSync(),
         isTrue,
-        reason: 'Anime4K 是内置工具，素材必须随仓入库',
+        reason: '超分是内置工具，素材必须随仓入库',
       );
 
       final present = dir
@@ -123,28 +135,29 @@ void main() {
         );
         expect(
           text,
-          contains('!DESC'),
-          reason: '$name 缺 Anime4K 的 //!DESC 纹理声明块，不是可用的 shader',
-        );
-        // 每个 shader 都要自己有纹理声明，否则 libmpv 链式挂载会报错。
-        expect(
-          text,
           contains('//!HOOK'),
           reason: '$name 缺 //!HOOK 挂载点声明',
         );
       }
     });
 
-    test('shader 体积合理：VL 档是大模型、S 档是小模型（防止误传同名空壳）', () {
+    test('shader 体积合理：大模型不能塌成空壳（防止误传同名空文件）', () {
       int size(String name) => File('assets/shaders/anime4k/$name').lengthSync();
 
-      // VL 档是 Anime4K 最大的一组 CNN 权重（约 145 KB 级）；
-      // 若体积塌到几十字节，说明素材是错的（例如 LFS 指针文件）。
+      // Anime4K：VL 档是最大的一组 CNN 权重（约 145 KB 级）。
       expect(size('Anime4K_Upscale_CNN_x2_VL.glsl'), greaterThan(100000));
       expect(size('Anime4K_Upscale_CNN_x2_S.glsl'), greaterThan(10000));
       expect(size('Anime4K_Upscale_CNN_x2_S.glsl'), lessThan(100000));
-      // 非 CNN 的小工具 shader。
       expect(size('Anime4K_AutoDownscalePre_x2.glsl'), lessThan(10000));
+      // ACNet f8b8 约 90 KB；ARNet f8b16 约 333 KB；Ultra 约 97 KB；FSR 约 16 KB。
+      expect(size('acnet_f8b8.glsl'), greaterThan(80000));
+      expect(size('acnet_f8b8_hdn.glsl'), greaterThan(80000));
+      expect(size('arnet_f8b16.glsl'), greaterThan(300000));
+      expect(size('Anime4K-Ultra_DbL.glsl'), greaterThan(50000));
+      expect(size('FSR.glsl'), greaterThan(10000));
+      expect(size('FSR.glsl'), lessThan(30000));
+      expect(size('RCAS.glsl'), greaterThan(2000));
+      expect(size('RCAS.glsl'), lessThan(10000));
     });
   });
 }

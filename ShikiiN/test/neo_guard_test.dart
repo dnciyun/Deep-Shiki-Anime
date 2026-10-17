@@ -177,7 +177,8 @@ void main() {
       Anime4kPreset.standard,
       Anime4kPreset.ultra,
     ]);
-    // 解包逻辑与 app/test/anime4k_assets_test.dart 依赖这份清单。
+    // 解包逻辑（kBundledShaderFiles = 这份 12 个 + 随包 5 个）与
+    // app/test/anime4k_assets_test.dart 依赖这份清单。
     expect(kAnime4kShaderFiles.length, 12);
     expect(anime4kShaderChain(Anime4kPreset.off), isEmpty);
     for (final p in Anime4kPreset.simpleTiers) {

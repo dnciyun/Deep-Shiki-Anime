@@ -5,12 +5,32 @@ import 'package:shikiin/models/upscale_scheme.dart';
 void main() {
   final List<UpscaleScheme> schemes = builtinUpscaleSchemes();
 
-  test('内置方案：Anime4K 默认 + 至少 2 个 mpv 缩放器（零下载、实时）', () {
-    final ids = schemes.map((s) => s.id).toList();
-    expect(ids.first, kAnime4kSchemeId);
+  test('内置方案：Anime4K 默认在前 + 6 个随包 GLSL 方案，且不再有 mpv 缩放器', () {
+    expect(schemes.first.id, kAnime4kSchemeId);
     expect(schemes.first.isAnime4k, isTrue);
-    expect(schemes.where((s) => s.kind == UpscaleSchemeKind.mpvScaler).length,
-        greaterThanOrEqualTo(2));
+    expect(schemes.map((s) => s.id).toList(), [
+      kAnime4kSchemeId,
+      'acnet',
+      'acnet-hdn',
+      'arnet',
+      'anime4k-ultra',
+      'fsr',
+      'rcas',
+    ]);
+    // 用户 2026-10-17：「去除内置的mpv这套」—— 方案 id 里不能再出现 mpv-*。
+    expect(schemes.where((s) => s.id.startsWith('mpv-')), isEmpty);
+  });
+
+  test('每个随包方案的文件都在随包清单里（写错文件名 → 真机 shader 目录缺文件）', () {
+    for (final s in schemes.where((s) => !s.isAnime4k)) {
+      expect(s.kind, UpscaleSchemeKind.glslPack);
+      expect(s.files, isNotEmpty, reason: '${s.id} 没文件链');
+      for (final f in s.files) {
+        expect(kBundledPackShaderFiles, contains(f), reason: '${s.id} 引用了未打包的 $f');
+      }
+      expect(s.tiers, isEmpty, reason: 'glslPack 方案不分档');
+      expect(s.dir, isNull, reason: '内置包用启动注入的 shader 目录');
+    }
   });
 
   test('Anime4K 方案 = 三档（轻/标/极），链与 anime4kShaderChain 一致', () {
@@ -22,25 +42,18 @@ void main() {
     }
   });
 
-  test('mpv 缩放器方案只带 scale 属性（不挂 shader，故 hasShaders 为 false）', () {
-    for (final s in schemes.where((s) => s.kind == UpscaleSchemeKind.mpvScaler)) {
-      expect(s.properties.keys, ['scale'], reason: '${s.id} 只该改放大算法');
-      expect(s.tiers, isNotEmpty);
-      expect(s.usesShaders, isFalse);
-    }
-  });
-
-  test('胶囊循环顺序：关 → Anime4K 轻/标/极 → 各 mpv 方案 → 关', () {
+  test('胶囊循环顺序：关 → Anime4K 轻/标/极 → 各随包方案 → 关', () {
     final order = UpscaleSelection.cycleOrder(schemes);
     expect(order.first, UpscaleSelection.off);
     expect(order[1], const UpscaleSelection(preset: Anime4kPreset.light));
     expect(order[2], const UpscaleSelection(preset: Anime4kPreset.standard));
     expect(order[3], const UpscaleSelection(preset: Anime4kPreset.ultra));
-    expect(order[4].schemeId, 'mpv-ewa-lanczossharp');
-    expect(order[order.length - 1].cycle(schemes), UpscaleSelection.off);
+    expect(order[4].schemeId, 'acnet');
+    expect(order.last.cycle(schemes), UpscaleSelection.off);
+    expect(order.length, 4 + schemes.where((s) => !s.isAnime4k).length);
   });
 
-  test('cycle 走完 mpv 方案回到关，且不会卡在同一项', () {
+  test('cycle 走完所有方案回到关，且不会卡在同一项', () {
     var s = UpscaleSelection.off;
     final seen = <UpscaleSelection>{s};
     for (var i = 0; i < schemes.length + 3; i++) {
@@ -51,14 +64,14 @@ void main() {
     expect(seen.length, UpscaleSelection.cycleOrder(schemes).length);
   });
 
-  test('胶囊文案：关 / Anime4K 档 / mpv 短名', () {
+  test('胶囊文案：关 / Anime4K 档 / 随包方案短名', () {
     expect(UpscaleSelection.off.label(schemes), '超分 关');
     expect(const UpscaleSelection(preset: Anime4kPreset.standard).label(schemes), '超分 标');
     expect(const UpscaleSelection(preset: Anime4kPreset.ultra).label(schemes), '超分 极');
-    expect(
-      const UpscaleSelection(schemeId: 'mpv-ewa-lanczossharp').label(schemes),
-      '超分 EWA锐',
-    );
+    expect(const UpscaleSelection(schemeId: 'acnet').label(schemes), '超分 ACNet');
+    expect(const UpscaleSelection(schemeId: 'fsr').label(schemes), '超分 FSR');
+    expect(const UpscaleSelection(schemeId: 'anime4k-ultra').label(schemes), '超分 A4K-U');
+    expect(const UpscaleSelection(schemeId: 'rcas').label(schemes), '超分 RCAS');
   });
 
   test('设置还原：缺字段=关；未知方案回退 Anime4K', () {
@@ -74,12 +87,30 @@ void main() {
 
   test('设置还原：已安装方案保留，未知 preset 名回退 off', () {
     final s = UpscaleSelection.fromSettings(
-      schemeId: 'mpv-spline36',
+      schemeId: 'fsr',
       presetName: '没这个档',
       schemes: schemes,
     );
-    expect(s.schemeId, 'mpv-spline36');
+    expect(s.schemeId, 'fsr');
     expect(s.preset, Anime4kPreset.off);
-    expect(s.resolve(schemes).name, 'mpv · Spline36');
+    expect(s.resolve(schemes).name, 'FSR 1.0 · EASU+RCAS');
+  });
+
+  test('放大门槛：ACNet/ARNet=1.2，FSR=1.0，Ultra/RCAS 无门槛', () {
+    for (final s in schemes.where((s) =>
+        s.id == 'acnet' || s.id == 'acnet-hdn' || s.id == 'arnet')) {
+      expect(s.upscaleOnlyAbove, 1.2, reason: s.id);
+    }
+    expect(const UpscaleSelection(schemeId: 'fsr').resolve(schemes).upscaleOnlyAbove, 1.0);
+    for (final s in schemes.where((s) =>
+        s.id == 'anime4k-ultra' || s.id == 'rcas' || s.isAnime4k)) {
+      expect(s.upscaleOnlyAbove, isNull, reason: s.id);
+    }
+  });
+
+  test('关 = anime4k + off，任何方案 + off 都算「开」', () {
+    expect(const UpscaleSelection(schemeId: 'acnet').isOff, isFalse);
+    expect(const UpscaleSelection(schemeId: kAnime4kSchemeId).isOff, isTrue);
+    expect(UpscaleSelection.off.isOff, isTrue);
   });
 }

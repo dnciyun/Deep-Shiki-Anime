@@ -264,14 +264,15 @@ Future<AppRuntime> bootstrapPlayer({
     diag.info('bootstrap', 'window ok');
   }
 
-  // Anime4K：解包 shader、构造控制器、载入持久化档位。失败绝不阻断启动。
+  // 超分：解包 shader（Anime4K + 随包 GLSL 方案）、构造控制器、载入持久化档位。
+  // 失败绝不阻断启动。
   //
   // runner 绑到 runtime.player：**懒创建**（先建 runtime 再装 shader 目录，
   // 否则 eager 分支的 setPreset 会在 runtime 赋值前碰到 `late` 变量）。
   late final AppRuntime runtime;
   final anime4k = Anime4kController(
     runner: (List<String> args) => runtime.player.runMpvCommand(args),
-    // mpv 缩放器方案要存原值、离开时写回（media_kit 默认把 scale 钉成 bilinear）。
+    // 仅诊断用：apply 时把硬解状态/像素格式记进日志（LUMA 钩子是否会被旁路）。
     readProperty: (String name) => runtime.player.readMpvProperty(name),
   );
   try {
@@ -282,7 +283,8 @@ Future<AppRuntime> bootstrapPlayer({
     anime4k.setShaderDir(shaderDir);
     diag.info('bootstrap', 'anime4k shaders ok');
     final savedSettings = AppSettings.fromMap(store.get('app_settings') as Map?);
-    // 方案清单：内置 Anime4K + mpv 缩放器（扩展安装的 GLSL 包在后续版本接进来）。
+    // 方案清单：内置 Anime4K + 随包 ACNet/ARNet/Anime4K-Ultra/FSR。
+    // 扩展安装的 GLSL 包在 M3 接进来；mpv 缩放器方案已按用户要求移除。
     anime4k.setSchemes(builtinUpscaleSchemes());
     final UpscaleSelection savedSelection = UpscaleSelection.fromSettings(
       schemeId: savedSettings.upscaleSchemeId,
