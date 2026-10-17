@@ -120,4 +120,26 @@ void main() {
       reason: '两次 start 绝不并发：CoreEngineBootstrap 一进来就 detach，会掐掉对方的进程',
     );
   });
+
+  test('限速热更新的 client 访问器：接上才给 client，摘掉后是 null', () {
+    final EngineRuntimeHolder holder = EngineRuntimeHolder();
+    final CoreEngineBootstrap bootstrap = CoreEngineBootstrap(holder);
+    expect(
+      bootstrap.client,
+      isNull,
+      reason: '还没接上运行期 → EngineLifecyclePort 只能回退重启，不能假装热更新成功',
+    );
+
+    final core.EngineClient client = core.EngineClient(
+      baseUrl: Uri.parse('http://127.0.0.1:9'),
+      token: 'test-token',
+    );
+    addTearDown(client.close);
+    holder.attachAdopted(client);
+    expect(
+      bootstrap.client,
+      same(client),
+      reason: '接上之后 applySettings 才能对边车发 PATCH /limits 热改限速',
+    );
+  });
 }

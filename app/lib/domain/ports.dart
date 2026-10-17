@@ -271,9 +271,16 @@ abstract interface class PlayerPort {
 
 /// 运行时生命周期端口：让新设置真正生效。
 ///
-/// 设置页保存后调用 [applySettings]：重启边车（下载目录/限速/做种比/tracker）
-/// 并重建源客户端（代理/限速/缓存 TTL）。未接通时抛
-/// [PortUnavailableException]，设置页会显示「已保存但未生效」而不是假装成功。
+/// 设置页保存后调用 [applySettings]：
+/// * **只改了上下行限速** → 走边车的 `PATCH /limits` **热更新**，不重启进程
+///   （1.1.0 M1/T4：省一次 ~3.5s、不打断正在下载的连接）；
+/// * 下载目录/引擎路径/做种比/tracker 变了 → 重启边车；
+/// * 两种情况都会重建源客户端（代理/缓存 TTL）。
+///
+/// 「这次到底重启没重启、为什么」由 `state/providers.dart` 的 `engineApplyNoteProvider`
+/// 带给设置页的成功文案（**不**用抛异常来表示"回退重启了"——那会把一次成功的保存
+/// 画成红色失败横幅）。未接通时抛 [PortUnavailableException]，
+/// 设置页会显示「已保存但未生效」而不是假装成功。
 abstract interface class LifecyclePort {
   Future<void> applySettings(AppSettings settings);
 }

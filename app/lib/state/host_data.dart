@@ -21,6 +21,7 @@ import 'package:flutter/foundation.dart' show ValueNotifier;
 
 import '../domain/models.dart' as domain;
 import '../domain/ports.dart';
+import 'in_flight.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 模型互转（纯函数，可单测）
@@ -244,11 +245,28 @@ class HostDataRuntime {
 
   /// 「仅订阅」按钮的候选（手动加入订阅过滤的条目，持久化）。
   static const String _manualKey = 'dsanima.subs_candidates';
-
   /// 自动下载策略版本（见 [_migrateAutoDownloadPolicy]）。
   static const String _autoDownloadPolicyKey = 'dsanima.subs_autodownload_policy';
   static const int _autoDownloadPolicyVersion = 2;
   List<core.SourceItem> _manualCandidates = <core.SourceItem>[];
+
+  /// 同一个源实例上**正在飞**的 `latest()`（1.1.0 M1/T3；合并规则见 `InFlightCoalescer`）。
+  ///
+  /// 为什么需要：`latest()` 一次就是一次 RSS/HTML 抓取，而「正在追」一页里
+  /// * 卡片要算「看过几集」→ 每个订阅各 `latest()` 一次（`subscriptionItemsProvider`）；
+  /// * 点开层的「命中预览」「全季入队」又是各一次（`previewMatches` / `enqueueSeason`）；
+  /// * 订阅自动刷新/手动刷新是再一次（`refreshSubscription`）。
+  /// 这些请求**常常同时发生**（一屏 N 张卡一起挂载就是 N 个并发），落在同一个
+  /// `sourceId` 上就是同一个 URL、同一份响应。旧实现各抓一遍。
+  ///
+  /// 只合并"同时在飞"的那些，不做 TTL 缓存：TTL 是 core 源缓存的事，
+  /// 这里再造一层会让用户点「刷新」看起来没反应。
+  final InFlightCoalescer<String, core.SourcePage> _latestInFlight =
+      InFlightCoalescer<String, core.SourcePage>();
+
+  /// 取这个订阅的源的最新一页，同一个 `sourceId` 上的并发调用合并成一次抓取。
+  Future<core.SourcePage> _latestOf(core.Subscription sub, core.SourceClient client) =>
+      _latestInFlight.run(sub.sourceId, () => client.latest());
 
   core.SourceRegistry get registry => _registry;
 
@@ -526,7 +544,7 @@ class HostDataRuntime {
             '自定义 RSS 需要 http(s) 地址',
       );
     }
-    final core.SourcePage page = await client.latest();
+    final core.SourcePage page = await _latestOf(sub, client);
     sub.lastRefreshAt = DateTime.now();
 
     // 首次抓取：只做已读标记，不倒灌历史剧集（spec §4.3）。
@@ -583,7 +601,7 @@ class HostDataRuntime {
         hint: '检查订阅类型与地址；自定义 RSS 需要 http(s) 地址',
       );
     }
-    final core.SourcePage page = await client.latest();
+    final core.SourcePage page = await _latestOf(sub!, client);
     return page.items.map(toItemView).toList(growable: false);
   }
 
@@ -597,8 +615,9 @@ class HostDataRuntime {
         hint: '检查订阅类型与地址；自定义 RSS 需要 http(s) 地址',
       );
     }
-    final core.SourcePage page = await client.latest();
-    final List<core.SourceItem> hits = sub == null ? page.items : sub.matchAll(page.items);
+    // `sub` 走到这里一定非 null：上面 `client == null` 就抛了，而 client 正是由 sub 取的。
+    final core.SourcePage page = await _latestOf(sub!, client);
+    final List<core.SourceItem> hits = sub.matchAll(page.items);
     return hits.map(toItemView).toList(growable: false);
   }
 
@@ -612,7 +631,7 @@ class HostDataRuntime {
     if (client == null) {
       throw PortUnavailableException('这个订阅对应的源没注册成功（${sub.sourceId}）', hint: '检查订阅类型与地址');
     }
-    final core.SourcePage page = await client.latest();
+    final core.SourcePage page = await _latestOf(sub, client);
     final List<core.SourceItem> hits = sub.matchAll(page.items);
     queue.addCandidates(sub.id, hits);
     int queued = 0;

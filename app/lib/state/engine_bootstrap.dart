@@ -1,8 +1,9 @@
 /// **core 引擎适配层**：把 `dsanima_core` 的 `EngineRuntime`（进程 + HTTP/SSE）
 /// 接到宿主的 `EnginePort` / `EngineBootstrapPort` 上。
 ///
-/// ⚠️ 只有 `main.dart`（装配根）可以 import 本文件。
-/// UI / state 层一律只依赖 `domain/ports.dart` 的抽象：
+/// ⚠️ 只有 `main.dart`（装配根）和 `state/providers.dart` 的
+/// `EngineLifecyclePort`（限速热更新要拿运行期 client，见 [CoreEngineBootstrap.client]）
+/// 可以 import 本文件。UI / 其它 state 层一律只依赖 `domain/ports.dart` 的抽象：
 /// 这样上游 `core/lib/engine/` 正在重构时，宿主的 `flutter analyze`、
 /// widget 测试仍然能独立跑绿（并行开发的硬要求）。
 library;
@@ -512,6 +513,15 @@ class CoreEngineBootstrap implements EngineBootstrapPort {
   CoreEngineBootstrap(this._holder);
 
   final EngineRuntimeHolder _holder;
+
+  /// 当前边车的 HTTP 客户端；没连上（自建/接管都没有）时为 `null`。
+  ///
+  /// 为什么从端口实现里伸手（1.1.0 M1/T4 限速热更新）：`EngineBootstrapPort`
+  /// （`domain/ports.dart`）只承诺 start/stop，故意不暴露 core 的客户端；而上下行限速是
+  /// **唯一**能不重启进程就改的启动参数，只能直接对边车发 `PATCH /limits`。
+  /// `state/providers.dart` 的 `EngineLifecyclePort.applySettings` 会先试着用它热更新，
+  /// 拿不到（测试替身/未接通/引擎已死）就回退到重启 —— 不许静默当成功。
+  core.EngineClient? get client => _holder.client;
 
   @override
   bool get isRunning => _holder.isAttached;

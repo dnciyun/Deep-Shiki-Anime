@@ -226,79 +226,104 @@ class HomePage extends ConsumerWidget {
         ),
       ];
     }
-    return _grid(ref, view, cols: cols, cardWidth: cardWidth, rightPad: rightPad);
+    return <Widget>[_UpdateGrid(view: view, cols: cols, cardWidth: cardWidth, rightPad: rightPad)];
   }
+}
 
-  /// 当天的大图封面网格（一个 [SliverGrid]，接在推荐区与更新区头下面）。
-  List<Widget> _grid(
-    WidgetRef ref,
-    ScheduleView view, {
-    required int cols,
-    required double cardWidth,
-    required double rightPad,
-  }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// ③ 当天的大图封面网格（1.1.0 M1/T2：从 HomePage.build 里抽成独立 ConsumerWidget）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 「今日更新」的封面网格（一个 [SliverGrid]，接在推荐区与更新区头下面）。
+///
+/// **为什么抽成独立 widget**（1.1.0 M1/T2）：它 watch 的都是**会单独变化**的数据源 ——
+/// 引擎快照（2Hz）、订阅表、追番表。以前这堆 watch 写在 `HomePage.build` 调用的
+/// `_grid()` 方法里，等于每次引擎一帧就重建**整页**（推荐轮播 + 区头 + 八张卡）。
+/// 抽出来之后，引擎帧最多只惊动这一块（而且名字集合没变时连这一块都不重建，
+/// 见 `cachedNormalizedTorrentNamesProvider`）。
+class _UpdateGrid extends ConsumerWidget {
+  const _UpdateGrid({
+    required this.view,
+    required this.cols,
+    required this.cardWidth,
+    required this.rightPad,
+  });
+
+  final ScheduleView view;
+  final int cols;
+  final double cardWidth;
+  final double rightPad;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final int selected = ref.watch(selectedDayProvider);
     final int today = ref.watch(todayDowProvider);
     final DateTime now = ref.watch(todayProvider);
     final List<ScheduleEntryView> items = view.day(selected);
     if (items.isEmpty) {
       // 第五十二轮：空态带主页身份色（橙）—— 图标圆盘 + 色相图标，不再是全灰一句话。
-      return <Widget>[
-        SliverToBoxAdapter(
-          child: DsEmpty(
-            title: '这一档没有更新',
-            icon: Icons.event_busy_outlined,
-            hue: DsHue.orange,
-            message: homeEmptyText(selected, today),
-          ),
+      return SliverToBoxAdapter(
+        child: DsEmpty(
+          title: '这一档没有更新',
+          icon: Icons.event_busy_outlined,
+          hue: DsHue.orange,
+          message: homeEmptyText(selected, today),
         ),
-      ];
+      );
     }
 
     // 「已缓存」/「已订阅」角标的真实依据：引擎里已下完的 torrent 名 + 本机订阅名。
-    final List<String> cachedNames = <String>[
-      for (final EngineTorrentView torrent in ref.watch(cachedTorrentsProvider)) torrent.name,
-    ];
+    // 缓存名走**归一化集合**（M1/T2）：引擎帧不会把它抖成新值，归一化也只做一次。
+    final List<String> cachedNames = ref.watch(cachedNormalizedTorrentNamesProvider);
     final List<SubscriptionView> subs =
         ref.watch(subscriptionsProvider).value ?? const <SubscriptionView>[];
+    // 追番状态在这一层算成 id 集合，卡片只收一个 bool —— 以前是**每张卡**各 watch 一遍
+    // `followingProvider`，追番一次变更就有 N 个订阅者各重建一次。
+    final Set<String> followedIds = <String>{
+      for (final FollowingEntry e in ref.watch(followingProvider)) e.id,
+    };
 
-    return <Widget>[
-      SliverPadding(
-        padding: EdgeInsets.fromLTRB(kHomeGridPadding, 14, rightPad, 16),
-        sliver: SliverGrid(
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: cols,
-            crossAxisSpacing: kHomeGridGap,
-            mainAxisSpacing: kHomeGridGap,
-            // 绝对高度：封面按**真海报比例**（决策 F22：0.705，高 = 宽 ÷ 0.705），
-            // 不再是正方框（正方会把竖版海报裁掉约 30%）。
-            mainAxisExtent: cardWidth / kPosterAspect + kHomeCardTextHeight,
-          ),
-          delegate: SliverChildBuilderDelegate(
-            (BuildContext context, int index) {
-              final ScheduleEntryView entry = items[index];
-              // 首屏逐次淡入（决策 F12：20ms 错峰、最多 6 项，其余直接显示）。
-              return DsStaggerFade(
-                index: index,
-                child: _PosterCard(
+    return SliverPadding(
+      padding: EdgeInsets.fromLTRB(kHomeGridPadding, 14, rightPad, 16),
+      sliver: SliverGrid(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: cols,
+          crossAxisSpacing: kHomeGridGap,
+          mainAxisSpacing: kHomeGridGap,
+          // 绝对高度：封面按**真海报比例**（决策 F22：0.705，高 = 宽 ÷ 0.705），
+          // 不再是正方框（正方会把竖版海报裁掉约 30%）。
+          mainAxisExtent: cardWidth / kPosterAspect + kHomeCardTextHeight,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (BuildContext context, int index) {
+            final ScheduleEntryView entry = items[index];
+            // 首屏逐次淡入（决策 F12：20ms 错峰、最多 6 项，其余直接显示）。
+            return DsStaggerFade(
+              index: index,
+              child: _PosterCard(
                 entry: entry,
                 badge: scheduleBadgeFor(
                   entry: entry,
                   // 「今日更新」= mikan 给的更新日期就是今天（真的更了新一集），
                   // 而不是「当前这个 tab 是今天」——否则当天每张卡都挂同一个角标。
                   updatedToday: isSameCalendarDay(entry.updatedAt, now),
-                  cached: anyTitleContains(cachedNames, entry.title),
+                  cached: anyNormalizedTitleContains(cachedNames, entry.title),
                   subscribed: isSubscribedScheduleEntry(entry, subs),
                 ),
-                  onTap: () => openBangumiDetail(context, entry),
+                followed: followedIds.contains(
+                  followingIdFor(
+                    mikanBangumiId: entry.bangumiId,
+                    title: entry.title,
+                  ),
                 ),
-              );
-            },
-            childCount: items.length,
-          ),
+                onTap: () => openBangumiDetail(context, entry),
+              ),
+            );
+          },
+          childCount: items.length,
         ),
       ),
-    ];
+    );
   }
 }
 
@@ -1083,18 +1108,29 @@ ScheduleBadge? scheduleBadgeFor({
 ///
 /// 第五十轮：番名区按两行给足高度（[kHomeCardTitleHeight]），**不再切掉第二行**；
 /// 悬停番名会弹 tooltip 显示完整名字（名字超过两行时截成省略号）。
-class _PosterCard extends ConsumerStatefulWidget {
-  const _PosterCard({required this.entry, required this.badge, required this.onTap});
+class _PosterCard extends StatefulWidget {
+  const _PosterCard({
+    required this.entry,
+    required this.badge,
+    required this.followed,
+    required this.onTap,
+  });
 
   final ScheduleEntryView entry;
   final ScheduleBadge? badge;
+
+  /// 这部番是不是已经在追了（由 [_UpdateGrid] 统一算好传进来）。
+  ///
+  /// 1.1.0 M1/T2：以前这里每张卡各 `ref.watch(followingProvider)` 再 `any()` 一遍 ——
+  /// 八张卡 = 八个订阅者，追番表一变就八个按钮各自重建。现在只有一个 watch。
+  final bool followed;
   final VoidCallback onTap;
 
   @override
-  ConsumerState<_PosterCard> createState() => _PosterCardState();
+  State<_PosterCard> createState() => _PosterCardState();
 }
 
-class _PosterCardState extends ConsumerState<_PosterCard> {
+class _PosterCardState extends State<_PosterCard> {
   bool _hovered = false;
 
   @override
@@ -1147,7 +1183,7 @@ class _PosterCardState extends ConsumerState<_PosterCard> {
                       Positioned(left: 6, top: 6, child: _BadgeDot(badge: badge)),
                     // 追番按钮：悬停出现，已追的常驻（spec §7.6 要求海报卡能追番，
                     // 但 8 张卡都常驻一个按钮会把基线图的封面角挤满）。
-                    if (_hovered || _isFollowed())
+                    if (_hovered || widget.followed)
                       Positioned(
                         right: 5,
                         top: 5,
@@ -1181,14 +1217,6 @@ class _PosterCardState extends ConsumerState<_PosterCard> {
         ),
       ),
     );
-  }
-
-  bool _isFollowed() {
-    final String id = followingIdFor(
-      mikanBangumiId: widget.entry.bangumiId,
-      title: widget.entry.title,
-    );
-    return ref.watch(followingProvider).any((FollowingEntry e) => e.id == id);
   }
 }
 

@@ -11,6 +11,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dsanima_core/dsanima_core.dart' show EngineClient, EngineException;
 import 'package:dsanima_core/sources/models.dart' show SourceNoResultsException;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,9 +31,11 @@ import '../domain/seed_language.dart';
 import '../domain/seed_version.dart';
 import '../domain/settings_effect.dart';
 import '../domain/subtitle_groups.dart';
+import '../domain/title_match.dart' show normalizeTitleForMatch;
 import '../domain/unavailable.dart';
 import '../theme/tokens.dart';
 import 'completed_covers.dart';
+import 'engine_bootstrap.dart' show CoreEngineBootstrap;
 import 'infra.dart';
 // ⚠️ `export` 不会把名字带进**本文件**的作用域：下面这段用到的 `schedulePortProvider`
 // 与 `librarySeedServiceProvider` 都要显式 import（虽然同一批文件也被 export 出去）。
@@ -162,14 +165,46 @@ final Provider<DsCarouselSize> carouselSizeProvider = Provider<DsCarouselSize>(
   (Ref ref) => DsCarouselSize.fromCode(ref.watch(settingsProvider).carouselSize),
 );
 
-/// 让设置真正生效：重启边车（下载目录/限速/做种比/tracker 都是进程启动参数）。
+/// 上一次「保存并生效」时**关于边车的那句话**（null = 没什么可说的）。
+///
+/// 为什么要有它（1.1.0 M1/T4）：边车现在有三种结局 —— 没重启（只改了不需要重启的项）、
+/// **热更新**（只改限速，`PATCH /limits`）、真重启（下载目录/引擎路径/做种比/tracker）。
+/// 这三种对用户的含义不同（"要不要等 3.5 秒""以后还会不会重启"），但设置页原本只有
+/// 一句固定成功文案。旧做法是让 `applySettings` **抛异常**来传达"回退重启了" ——
+/// 那会把一次成功的保存画成红色失败横幅，是**骗人**的。所以改成：结果放这里，
+/// 设置页成功文案把它接在后面（见 `ui/settings_page.dart` 的 `_applySuccess`）。
+class EngineApplyNoteController extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void set(String? note) => state = note;
+
+  void clear() => state = null;
+}
+
+final NotifierProvider<EngineApplyNoteController, String?> engineApplyNoteProvider =
+    NotifierProvider<EngineApplyNoteController, String?>(EngineApplyNoteController.new);
+
+/// 让设置真正生效：重启边车 + 重建源客户端。
+///
+/// 进程参数里**只有下载目录/引擎路径/做种比/tracker 必须重启**；上下行限速优先走
+/// `PATCH /limits` 热更新（1.1.0 M1/T4：只改限速不再付 ~3.5s、不打断正在下载的连接），
+/// 边车不支持或引擎没连上才回退重启，并且明确告诉用户（不许静默当成功 —— 通过
+/// [engineApplyNoteProvider] 说，而不是伪造一个失败）。
 class EngineLifecyclePort implements LifecyclePort {
   EngineLifecyclePort(this._ref);
 
   final Ref _ref;
 
+  /// 热更新失败、回退重启时的「怎么办」文案。
+  static const String _hotPatchHint =
+      '想改限速免重启：把边车更新到支持 PATCH /limits 的版本（engine/README.md §10 第 9 条）；'
+      '旧版边车只能靠重启生效，一次约 3.5 秒，正在下载的连接会短暂中断';
+
   @override
   Future<void> applySettings(AppSettings settings) async {
+    final EngineApplyNoteController note = _ref.read(engineApplyNoteProvider.notifier);
+    note.clear();
     final Directory? supportDir = _ref.read(supportDirProvider);
     if (supportDir == null) {
       throw const PortUnavailableException(
@@ -183,17 +218,51 @@ class EngineLifecyclePort implements LifecyclePort {
     if (effectiveDownloadDir(settings.downloadDir).isEmpty) {
       throw const PortUnavailableException('设置已保存，但引擎未启动：还没有下载目录', hint: '先在「设置 → 引擎」选择下载目录');
     }
-    // 引擎**只在进程参数真的变了**时才重启（用户 2026-10-11 第二阶段清单第 6 项，
+    // 引擎**只在真的需要时**才重启（用户 2026-10-11 第二阶段清单第 6 项，
     // 第十六轮改成手动保存之后这条判断照旧：一次「保存并生效」可能同时动了
     // 下载目录与 TTL，只有真的动了进程参数才付那 3.5 秒）。
+    // 上下行限速**不再**算"必须重启"（1.1.0 M1/T4）：只改限速时先试 `PATCH /limits`
+    // 热更新，省一次 ~3.5s、也不打断正在下载的连接；不行才回退重启。
     final AppSettings? launched = _ref.read(engineBootstrapProvider).launchedWith;
-    if (launched == null || engineRestartRequired(launched, settings)) {
+    final bool restartRequired = launched == null || engineRestartRequired(launched, settings);
+    // 非 null = 热更新没成、值是「为什么没成」：下面据此回退重启，并把原因说出来。
+    String? hotPatchFallback;
+    if (launched != null && engineLimitsOnlyChanged(launched, settings)) {
+      hotPatchFallback = await _hotPatchLimits(launched, settings);
+      if (hotPatchFallback == null) {
+        // 热更新成功后必须让「已生效设置」对齐（否则下一次保存又会误判需要重启）：
+        // 边车进程实际跑的限速已经等于 settings，但 `launchedWith` 还记着旧值。
+        // 不对齐的话，下一次保存只改外观时 `engineLimitsChanged(旧, 新)` 仍为 true，
+        // 于是又白发一次 `PATCH /limits`；而任何按 `launchedWith` 判"进程参数变没变"
+        // 的地方都会误判 → 白重启一次、打断下载。
+        _ref.read(engineBootstrapProvider.notifier).adoptHotPatchedSettings(settings);
+        note.set('限速已热更新，边车没有重启（正在下载的连接没被打断）');
+      }
+    }
+    if (restartRequired || hotPatchFallback != null) {
+      // 重启原因：首次启动/引擎没跑过 = 不是"重启"，不说原因。
+      final List<String> reasons =
+          launched == null ? const <String>[] : engineRestartReasons(launched, settings);
       final bool ok = await _ref
           .read(engineBootstrapProvider.notifier)
           .start(settings: settings, supportDir: supportDir);
       if (!ok) {
         final EngineBootstrapState state = _ref.read(engineBootstrapProvider);
-        throw PortUnavailableException(state.error ?? '引擎重启失败', hint: state.errorHint);
+        final String reason = state.error ?? '引擎重启失败';
+        throw PortUnavailableException(
+          hotPatchFallback == null ? reason : '$hotPatchFallback；重启边车也没能成功：$reason',
+          hint: hotPatchFallback == null ? state.errorHint : _hotPatchHint,
+        );
+      }
+      if (hotPatchFallback != null) {
+        // **不许静默当成功**（1.1.0 M1/T4 硬要求）：这次限速是靠**重启**生效的，
+        // 用户得知道"以后每次改限速还会重启"（旧边车没有 PATCH /limits 端点）。
+        // 但重启本身是成功的 —— 绝不用异常把它画成失败（见 [engineApplyNoteProvider]）。
+        note.set('$hotPatchFallback；已重启边车让新限速生效（约 3.5 秒），以后每次改限速仍会重启');
+      } else if (reasons.isNotEmpty) {
+        // `engineRestartReasons` 到这一轮才真正有了调用方：以前它只有定义和测试，
+        // 用户看不到"这次为什么重启"。
+        note.set('边车已重启（需要重启的改动：${reasons.join('、')}）');
       }
     }
     // 让设置真正生效的第二半（便宜、每次都做）：重建源注册表（代理/限速/TTL）
@@ -202,6 +271,36 @@ class EngineLifecyclePort implements LifecyclePort {
       await _ref.read(hostDataPortProvider).applySettings(settings);
     } catch (error) {
       if (error is! PortUnavailableException) rethrow;
+    }
+  }
+
+  /// 试着用 `PATCH /limits` 热更新限速。返回 `null` = 已生效；否则返回「为什么没成」，
+  /// 调用方必须**回退到重启**并把它告诉用户（不许静默当成功）。
+  ///
+  /// 为什么从 `EngineBootstrapPort` 伸手拿 client：端口抽象（`domain/ports.dart`）
+  /// 只承诺 start/stop，故意不暴露 core 的 HTTP 客户端；限速是唯一能在**不重启**的
+  /// 前提下改的进程参数，而装配根注入的真实实现就是 [CoreEngineBootstrap]（它持有
+  /// 运行期 client）。其它实现（测试替身 / 未接通）一律按「引擎没连上」处理 → 回退重启。
+  Future<String?> _hotPatchLimits(AppSettings from, AppSettings to) async {
+    final EngineBootstrapPort port = _ref.read(engineBootstrapPortProvider);
+    final EngineClient? client = port is CoreEngineBootstrap ? port.client : null;
+    if (client == null) {
+      return '引擎没连上，限速没法热更新，需要重启边车才能改';
+    }
+    final ({int? downloadBps, int? uploadBps}) patch = engineLimitsPatch(from, to);
+    try {
+      await client.setLimits(
+        downloadBps: patch.downloadBps,
+        uploadBps: patch.uploadBps,
+      );
+      return null;
+    } on EngineException catch (error) {
+      final int? status = error.statusCode;
+      // 404 = 老边车根本没这个路由；405 = 路由在但方法不对（同样等于"不支持热改"）。
+      if (status == 404 || status == 405) {
+        return '这个引擎版本不支持热改限速（PATCH /limits → HTTP $status），需要重启边车才能改';
+      }
+      return '限速热更新失败：${error.message}';
     }
   }
 }
@@ -279,7 +378,10 @@ class EngineBootstrapController extends Notifier<EngineBootstrapState> {
   /// 正在跑的那一次 `start()`（重入保护，见 [start]）。
   Future<bool>? _starting;
 
-  /// 按当前设置启动边车（已在跑则先停，改下载目录/限速必须重启进程才生效）。
+  /// 按当前设置启动边车（已在跑则先停；下载目录/引擎路径/做种比/tracker 变了必须重启）。
+  ///
+  /// 限速**不**常走这里：只改限速时 `applySettings` 先试 `PATCH /limits` 热更新，
+  /// 只有边车不支持/没连上才回退到本方法（见 `EngineLifecyclePort`）。
   ///
   /// ⚠️ **串行，不并发**：`CoreEngineBootstrap.start()` 一进来就 `detach()`（真的停掉
   /// 正在跑的边车），两次并发 start 会互相掐掉对方刚拉起来的进程 —— 设置页
@@ -336,6 +438,20 @@ class EngineBootstrapController extends Notifier<EngineBootstrapState> {
       errorHint: outcome.hint,
     );
     return false;
+  }
+
+  /// 限速热更新成功后，把「进程是用哪份设置拉起来的」推进到最新那份。
+  ///
+  /// 为什么必须做（1.1.0 M1/T4）：`launchedWith` 是 `applySettings` 判断"要不要重启"
+  /// 的基线。热更新**没有**重启进程，但 `launchedWith` 还停在旧限速上 —— 不推进的话，
+  /// 下一次保存哪怕只改外观/只改限速，`engineLimitsChanged(旧, 新)` 仍为 true，
+  /// 于是又白热更一次；将来任何按 `launchedWith` 比较进程参数的地方也会误判。
+  /// 基线必须与边车**实际**参数一致，而不是与"上次重启时那份"一致。
+  void adoptHotPatchedSettings(AppSettings settings) {
+    final EngineBootstrapState current = state;
+    // 没在跑 / 没有基线时不动：避免造出"这个进程是用 settings 拉起来的"这种假事实。
+    if (!current.running || current.launchedWith == null) return;
+    state = current.copyWith(launchedWith: settings);
   }
 
   Future<void> stop() async {
@@ -656,19 +772,62 @@ final NotifierProvider<QueueSortController, QueueSortOrder> queueSortProvider =
 final StreamProvider<List<SubscriptionView>> subscriptionsProvider =
     StreamProvider<List<SubscriptionView>>((Ref ref) => ref.watch(subsPortProvider).watch());
 
+/// 「这个订阅抓出来的东西会变吗」的比较键（1.1.0 M1/T3）。
+///
+/// 只放**会影响抓到什么**的字段（源种类 + 地址 + 参数）。**不放**
+/// `lastError` / `lastRefreshAt` / `name` / `rules` —— 订阅流每次自动刷新后这些都会变，
+/// 旧写法 `ref.watch(subscriptionsProvider)` 一挂就是整个列表，于是列表每推一次
+/// （哪怕只是 `lastCheckedAt` 动了一下）**所有订阅的条目缓存一起失效**：
+/// 「正在追」一页有 N 个字幕组就重抓 N 个 RSS。
+String _subscriptionFeedIdentity(SubscriptionView sub) =>
+    '${sub.sourceKind}\u0001${sub.feedUrl}\u0001'
+    '${(sub.sourceParams.entries.toList()..sort((MapEntry<String, String> a, MapEntry<String, String> b) => a.key.compareTo(b.key))).map((MapEntry<String, String> e) => '${e.key}=${e.value}').join('&')}';
+
+/// 列表还没加载完（不知道这个订阅在不在）。
+const String _kSubsNotLoaded = '\u0000not-loaded';
+
+/// 列表已加载，但没有这个 id。
+const String _kSubsGone = '\u0000gone';
+
+/// 订阅列表里某个订阅的比较键（见 [_subscriptionFeedIdentity]）。
+String _subscriptionKeyOf(List<SubscriptionView>? subs, String subscriptionId) {
+  if (subs == null) return _kSubsNotLoaded;
+  for (final SubscriptionView s in subs) {
+    if (s.id == subscriptionId) return _subscriptionFeedIdentity(s);
+  }
+  return _kSubsGone;
+}
+
+/// 从**当前**订阅列表里取那个订阅（不建立依赖：依赖已经挂在 [subscriptionItemsProvider]
+/// 的 `select` 键上了，这里只是把 `items()` 需要的那份 view 取出来）。
+SubscriptionView? _findSubscription(List<SubscriptionView>? subs, String id) {
+  if (subs == null) return null;
+  for (final SubscriptionView s in subs) {
+    if (s.id == id) return s;
+  }
+  return null;
+}
+
 /// 命中预览：「这条规则会下哪些」。
 final subsPreviewProvider = FutureProvider.family<List<SourceItemView>, String>((
   Ref ref,
   String subscriptionId,
 ) async {
-  final List<SubscriptionView>? subs = ref.watch(subscriptionsProvider).value;
-  if (subs == null) {
+  // 依赖**只挂在比较键上**（1.1.0 M1/T3）：同 [_subscriptionItemsOf] 的理由。
+  final String key = ref.watch<String>(
+    subscriptionsProvider.select(
+      (AsyncValue<List<SubscriptionView>> value) =>
+          _subscriptionKeyOf(value.value, subscriptionId),
+    ),
+  );
+  if (key == _kSubsNotLoaded) {
     throw const PortUnavailableException('订阅列表尚未加载完成，无法预览', hint: '等列表出现后再点「命中预览」');
   }
-  SubscriptionView? target;
-  for (final SubscriptionView s in subs) {
-    if (s.id == subscriptionId) target = s;
+  if (key == _kSubsGone) {
+    throw const PortUnavailableException('订阅不存在（可能已被删除）', hint: '刷新订阅列表后重试');
   }
+  final SubscriptionView? target =
+      _findSubscription(ref.read(subscriptionsProvider).value, subscriptionId);
   if (target == null) {
     throw const PortUnavailableException('订阅不存在（可能已被删除）', hint: '刷新订阅列表后重试');
   }
@@ -681,16 +840,28 @@ final subsPreviewProvider = FutureProvider.family<List<SourceItemView>, String>(
 /// 按订阅 id 分家并**常驻**（`keepAlive`）：卡片要读 `.value` 判断总勾，
 /// 若用 autoDispose，卡片一重建就丢缓存、每帧都重新抓。抓取本身由 core 的源缓存兜着
 ///（TTL 见「设置 → 缓存」），刷新按钮走 `ref.invalidate`。
+///
+/// ⚠️ **1.1.0 M1/T3**：依赖从「整个订阅列表」收窄成「这个订阅的抓取身份」。
+/// 旧写法 `ref.watch(subscriptionsProvider)` 在订阅流每推一次（自动刷新后
+/// `lastError` / `lastRefreshAt` 变了也是新 List）就让 **所有** family 一起失效 ——
+/// 「正在追」一页 N 个字幕组 = 每推一次重抓 N 个 RSS。现在只有这个订阅的
+/// **源地址真的变了**（改 feed / 换源种类）才会重抓。
 final subscriptionItemsProvider =
     FutureProvider.family<List<SourceItemView>, String>((Ref ref, String subscriptionId) async {
-  final List<SubscriptionView>? subs = ref.watch(subscriptionsProvider).value;
-  if (subs == null) {
+  final String key = ref.watch<String>(
+    subscriptionsProvider.select(
+      (AsyncValue<List<SubscriptionView>> value) =>
+          _subscriptionKeyOf(value.value, subscriptionId),
+    ),
+  );
+  if (key == _kSubsNotLoaded) {
     throw const PortUnavailableException('订阅列表尚未加载完成', hint: '等列表出现后重试');
   }
-  SubscriptionView? target;
-  for (final SubscriptionView s in subs) {
-    if (s.id == subscriptionId) target = s;
+  if (key == _kSubsGone) {
+    throw const PortUnavailableException('订阅不存在（可能已被删除）', hint: '刷新订阅列表后重试');
   }
+  final SubscriptionView? target =
+      _findSubscription(ref.read(subscriptionsProvider).value, subscriptionId);
   if (target == null) {
     throw const PortUnavailableException('订阅不存在（可能已被删除）', hint: '刷新订阅列表后重试');
   }
@@ -1682,6 +1853,35 @@ final Provider<int> cachedBytesProvider = Provider<int>((Ref ref) {
     total += t.totalBytes;
   }
   return total;
+});
+
+/// 「已缓存」角标用的**归一化名字上下文**（1.1.0 M1/T2）。
+///
+/// 为什么不能直接 watch [cachedTorrentsProvider]（旧写法）：引擎快照是**每 2Hz 一帧**的，
+/// 每一帧都是新的 `List` 身份，Riverpod 因此**无条件**通知下游 —— 主页整页（推荐轮播 +
+/// 区头 + 网格 + 每张卡）跟着 2Hz 重建，而且每张卡还会把「已下完的全部 torrent 名」
+/// 各归一化一遍做包含匹配（逐字符扫描）。滑动时那点掉帧就出在这条链上。
+///
+/// 做法：用 `select` 把整个 `List` 先压成**名字指纹**（名字排序后拼接，`\u0000` 分隔）。
+/// 进度/速度每帧都在动，但"哪几个 torrent 已经下完"这一步平时不变 → 指纹相等 →
+/// 下游**不通知**。归一化也挪到这里做一次（名字集合变了才做），卡片侧只剩 `contains`。
+///
+/// ⚠️ 不要把它换成 `Provider<List<String>>` 直接 watch `cachedTorrentsProvider`：
+/// `List` 的 `==` 是身份比较，新列表永远"不相等"，2Hz 重建会原样回来。
+final Provider<List<String>> cachedNormalizedTorrentNamesProvider =
+    Provider<List<String>>((Ref ref) {
+  final String namesKey = ref.watch<String>(
+    cachedTorrentsProvider.select((List<EngineTorrentView> torrents) {
+      final List<String> names = <String>[
+        for (final EngineTorrentView t in torrents) t.name,
+      ]..sort();
+      return names.join('\u0000');
+    }),
+  );
+  if (namesKey.isEmpty) return const <String>[];
+  return <String>[
+    for (final String name in namesKey.split('\u0000')) normalizeTitleForMatch(name),
+  ];
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

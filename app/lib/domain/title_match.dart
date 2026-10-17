@@ -56,6 +56,22 @@ bool anyTitleContains(Iterable<String> haystacks, String? title) {
   return false;
 }
 
+/// 同 [anyTitleContains]，但 haystack 一侧**已经归一化过**（1.1.0 M1/T2）。
+///
+/// 归一化是逐字符扫一遍字符串：主页一次要拿「已下完的全部 torrent 名」对**每一张卡**
+/// 跑一遍，引擎快照又是 2Hz 一帧 —— 那就是每帧 N×M 次逐字符扫描。改成把 haystack
+/// 的归一化提前到 `cachedNormalizedTorrentNamesProvider` 里做一次（名字集合变了才做），
+/// 卡片侧只剩 `contains`。语义与 [anyTitleContains] 完全一致（同一条
+/// [minMatchableTitleLength] 门槛、同一向包含）。
+bool anyNormalizedTitleContains(Iterable<String> normalizedHaystacks, String? title) {
+  final String needle = normalizeTitleForMatch(title);
+  if (needle.length < minMatchableTitleLength) return false;
+  for (final String haystack in normalizedHaystacks) {
+    if (haystack.contains(needle)) return true;
+  }
+  return false;
+}
+
 /// **双向**包含：两个名字任一方向包含即算同一部番。
 ///
 /// 用在「正在追」页把追番记录对上三个数据源：

@@ -17,6 +17,7 @@
 ///    请求 —— 每次请求按 [kLibraryServerPageCap] 要，凑满一页靠循环（[libraryMaxFetches]）。
 library;
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:dsanima_core/sources/kv.dart' show KeyValueStore;
@@ -27,6 +28,28 @@ import '../domain/ports.dart';
 
 /// 进程内缓存一条的存活时间（同一次浏览里来回翻页不再打 Bangumi）。
 const Duration _pageTtl = Duration(minutes: 10);
+
+/// 详情**落盘**的保鲜期（1.1.0 M1/T7）。
+///
+/// 为什么现在要有它：旧实现 `_readDetail` 把 `cachedAt` 读出来**从来不比较** ——
+/// 盘上那份数据永远有效，于是用户看到的评分/集数/名字是"第一次打开那天"的，
+/// 一年后还是那份（详情页的东西变得慢，但不是不变）。
+///
+/// 取 3 天：评分/集数是天级更新的信息，3 天足够新；又不会让每次冷启都去打网络。
+const Duration kBangumiDetailTtl = Duration(days: 3);
+
+/// 详情落盘的**主键**（结构 `{cachedAt, subject}` 一个字都没改，见 [bangumiSubjectFreshKey]）。
+String bangumiSubjectCacheKey(int id) => 'dsanima.bangumi.subject.$id';
+
+/// 详情「存回时间」兄弟键（1.1.0 M1/T7 新增的**独立**键）。
+///
+/// 为什么不往主键结构里加字段：**回滚**。1.1.0 的红线是"旧版能继续读旧数据"，
+/// 主键形状一旦变了，退回 1.0.3 就读不懂；所以主键保持原样，旁边多写一个键，
+/// 旧版本不认识它就当不存在（无害）。
+///
+/// 反过来，旧版本写下的数据**没有**这个兄弟键 —— 那种情况按「刚存过」处理
+/// （否则升完级第一次打开每一部番都要重新拉一遍），并顺手补上键，让保鲜期从今天算起。
+String bangumiSubjectFreshKey(int id) => '${bangumiSubjectCacheKey(id)}.fresh';
 
 class BangumiLibraryService implements BangumiLibraryPort {
   BangumiLibraryService({
@@ -137,15 +160,26 @@ class BangumiLibraryService implements BangumiLibraryPort {
 
   /// 详情落盘。**带上原始 URL 一起存**，读回来照样能按显示尺寸抬档
   /// （[BangumiSubject.coverUrlAt] 靠 `/pic/cover/` 的形状改宽度，不需要额外字段）。
+  ///
+  /// 1.1.0 M1/T7：主键**结构不变**，在旁边补一个「存回时间」兄弟键（见
+  /// [bangumiSubjectFreshKey]）；读的时候用它判保鲜期。
   BangumiSubject? _readDetail(int id) {
     final KeyValueStore? store = this.store;
     if (store == null) return null;
-    final Object? raw = store.get('dsanima.bangumi.subject.$id');
+    final DateTime? fresh = _parseTime(store.get(bangumiSubjectFreshKey(id)));
+    if (fresh != null && _clock().difference(fresh) > kBangumiDetailTtl) {
+      // 过期：当没有缓存，让 `detail()` 重新打一次网络（写盘时把两个键一起覆盖）。
+      return null;
+    }
+    final Object? raw = store.get(bangumiSubjectCacheKey(id));
     if (raw is! Map) return null;
     final Object? subject = raw.cast<Object?, Object?>()['subject'];
     if (subject is! Map) return null;
     try {
-      return BangumiSubject.fromJson(subject.cast<String, Object?>());
+      final BangumiSubject parsed = BangumiSubject.fromJson(subject.cast<String, Object?>());
+      // 旧版本写的数据没有兄弟键：按「刚存过」处理，并从今天开始计保鲜期。
+      if (fresh == null) unawaited(_writeFreshStamp(id));
+      return parsed;
     } catch (_) {
       // 盘上一条脏数据不许把详情页打崩（同 `BangumiMetaService._readCache` 的教训）。
       return null;
@@ -156,12 +190,25 @@ class BangumiLibraryService implements BangumiLibraryPort {
     final KeyValueStore? store = this.store;
     if (store == null) return;
     try {
-      await store.put('dsanima.bangumi.subject.${subject.id}', <String, Object?>{
+      await store.put(bangumiSubjectCacheKey(subject.id), <String, Object?>{
         'cachedAt': _clock().toIso8601String(),
         'subject': subject.toJson(),
       });
     } catch (_) {
       // 缓存写失败不影响这次详情。
+    }
+    await _writeFreshStamp(subject.id);
+  }
+
+  /// 写「存回时间」兄弟键。失败**不回滚主键**：没有兄弟键的旧数据照样能读
+  /// （只是下次按「刚存过」处理），比"主键写成功、兄弟键失败就整条作废"稳。
+  Future<void> _writeFreshStamp(int id) async {
+    final KeyValueStore? store = this.store;
+    if (store == null) return;
+    try {
+      await store.put(bangumiSubjectFreshKey(id), _clock().toIso8601String());
+    } catch (_) {
+      // 同上：静默。
     }
   }
 
@@ -265,4 +312,15 @@ class BangumiLibraryService implements BangumiLibraryPort {
   }
 
   void dispose() => client.dispose();
+}
+
+/// 把盘上存的时间戳读成 [DateTime]：Hive 可能存成真 `DateTime`，也可能是 ISO 字符串。
+///
+/// 读不出来（旧格式 / 损坏 / 根本没有这个键）一律返回 null —— 调用方按
+/// 「旧数据，按刚存过处理」走，而不是推断出一个假时间然后误删缓存。
+DateTime? _parseTime(Object? raw) {
+  if (raw is DateTime) return raw;
+  if (raw is String) return DateTime.tryParse(raw);
+  if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+  return null;
 }

@@ -495,4 +495,98 @@ void main() {
       expect(back.related.single.relation, '续集');
     });
   });
+
+  // ── 1.1.0 M1/T7：详情落盘的保鲜期 ────────────────────────────────────────────
+  //
+  // 旧实现 `_readDetail` 把 `cachedAt` 读出来**从来不比较**：盘上那份永远有效，
+  // 用户看到的评分/集数/名字永远是"第一次打开那天"的。现在主键结构不动，旁边加一个
+  // `dsanima.bangumi.subject.<id>.fresh` 兄弟键存时间，读的时候按 3 天判过期。
+  group('详情落盘保鲜期（1.1.0 M1/T7）', () {
+    final DateTime now = DateTime.utc(2026, 10, 17, 20);
+
+    InMemoryKeyValueStore storeWith({
+      required DateTime cachedAt,
+      DateTime? freshAt,
+    }) => InMemoryKeyValueStore(<String, Object?>{
+      'dsanima.bangumi.subject.7': <String, Object?>{
+        'cachedAt': cachedAt.toIso8601String(),
+        'subject': _subject(7, '旧名字', platform: 'TV', score: 6.5),
+      },
+      if (freshAt != null) 'dsanima.bangumi.subject.7.fresh': freshAt.toIso8601String(),
+    });
+
+    BangumiLibraryService svc(InMemoryKeyValueStore store, _Recorder rec) =>
+        BangumiLibraryService(
+          store: store,
+          clock: () => now,
+          client: BangumiClient(
+            client: MockClient((http.Request request) async {
+              rec.requests.add(request);
+              return http.Response(
+                jsonEncode(_subject(7, '新名字', platform: 'TV', score: 8.9)),
+                200,
+                headers: <String, String>{'content-type': 'application/json; charset=utf-8'},
+              );
+            }),
+            minInterval: Duration.zero,
+            retries: 0,
+          ),
+        );
+
+    test('旧数据（没有 .fresh 兄弟键）：照常命中、不重拉，并补上键从今天算保鲜期', () async {
+      final InMemoryKeyValueStore store = storeWith(
+        cachedAt: now.subtract(const Duration(days: 400)),
+      );
+      final _Recorder rec = _Recorder();
+      final BangumiSubject back = await svc(store, rec).detail(7);
+
+      expect(rec.requests, isEmpty, reason: '老数据不许被一次性判过期（否则升完级每部番都重拉）');
+      expect(back.displayTitle, '旧名字');
+      await pumpEventQueue();
+      expect(store.get('dsanima.bangumi.subject.7.fresh'), isNotNull,
+          reason: '要补一个时间戳，让保鲜期从今天算起');
+    });
+
+    test('有 .fresh 且在 3 天内：命中，不打网络', () async {
+      final InMemoryKeyValueStore store = storeWith(
+        cachedAt: now.subtract(const Duration(days: 2)),
+        freshAt: now.subtract(const Duration(days: 2)),
+      );
+      final _Recorder rec = _Recorder();
+      final BangumiSubject back = await svc(store, rec).detail(7);
+
+      expect(rec.requests, isEmpty);
+      expect(back.displayTitle, '旧名字');
+    });
+
+    test('有 .fresh 但超过 3 天：重新拉，并把主键与兄弟键一起覆盖', () async {
+      final InMemoryKeyValueStore store = storeWith(
+        cachedAt: now.subtract(const Duration(days: 30)),
+        freshAt: now.subtract(const Duration(days: 4)),
+      );
+      final _Recorder rec = _Recorder();
+      final BangumiSubject back = await svc(store, rec).detail(7);
+
+      expect(rec.requests, hasLength(1), reason: '过期要真的去拉一次');
+      expect(back.displayTitle, '新名字');
+      final Map<Object?, Object?> main =
+          (store.get('dsanima.bangumi.subject.7')! as Map).cast<Object?, Object?>();
+      expect((main['subject']! as Map<Object?, Object?>)['name_cn'], '新名字',
+          reason: '主键要被新数据覆盖');
+      expect(store.get('dsanima.bangumi.subject.7.fresh'), now.toIso8601String(),
+          reason: '存回时间要跟着更新');
+    });
+
+    test('主键结构不变：盘上还是 {cachedAt, subject} 两个字段（回滚到旧版能读）', () async {
+      final InMemoryKeyValueStore store = storeWith(
+        cachedAt: now.subtract(const Duration(days: 30)),
+        freshAt: now.subtract(const Duration(days: 4)),
+      );
+      await svc(store, _Recorder()).detail(7);
+      final Map<Object?, Object?> main =
+          (store.get('dsanima.bangumi.subject.7')! as Map).cast<Object?, Object?>();
+      expect(main.keys.toSet(), <Object?>{'cachedAt', 'subject'},
+          reason: '1.1.0 往主键里加字段 = 旧版读不懂 = 破坏回滚红线');
+    });
+  });
 }

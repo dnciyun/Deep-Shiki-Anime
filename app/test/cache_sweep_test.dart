@@ -134,4 +134,84 @@ void main() {
     expect(store.get('queue.jobs'), isNotNull);
     expect(store.get('queue.removed'), isNotNull);
   });
+
+  // ── 1.1.0 M1/T7：条目详情（主键 + .fresh/.extra 兄弟键）纳入清扫与用量 ──────────
+
+  test('详情缓存：过期的整组清掉（主键 + .fresh + .extra），新的留着', () async {
+    final store = _store(<String, Object?>{
+      // 旧的一部：.fresh 说它是 9 天前存的
+      'dsanima.bangumi.subject.1': <String, Object?>{'cachedAt': _now},
+      'dsanima.bangumi.subject.1.fresh': _now.subtract(const Duration(days: 9)).toIso8601String(),
+      'dsanima.bangumi.subject.1.extra': <String, Object?>{'cachedAt': _now},
+      // 新的一部：今天存的
+      'dsanima.bangumi.subject.2': <String, Object?>{'cachedAt': _now},
+      'dsanima.bangumi.subject.2.fresh': _now.toIso8601String(),
+    });
+
+    final HostCacheSweep sweep = await sweepHostCache(store, now: _now);
+
+    expect(store.get('dsanima.bangumi.subject.1'), isNull);
+    expect(store.get('dsanima.bangumi.subject.1.fresh'), isNull);
+    expect(store.get('dsanima.bangumi.subject.1.extra'), isNull,
+        reason: '兄弟键必须跟着主键一起走，不然盘上全是扫不掉的碎键');
+    expect(store.get('dsanima.bangumi.subject.2'), isNotNull);
+    expect(store.get('dsanima.bangumi.subject.2.fresh'), isNotNull);
+    expect(sweep.removed, 3);
+  });
+
+  test('详情缓存：旧版本写的（只有 .cachedAt、没有 .fresh）按主键里的时间算龄', () async {
+    final store = _store(<String, Object?>{
+      'dsanima.bangumi.subject.1': <String, Object?>{
+        'cachedAt': _now.subtract(const Duration(days: 20)),
+      },
+      'dsanima.bangumi.subject.2': <String, Object?>{'cachedAt': _now},
+    });
+
+    await sweepHostCache(store, now: _now);
+
+    expect(store.get('dsanima.bangumi.subject.1'), isNull);
+    expect(store.get('dsanima.bangumi.subject.2'), isNotNull);
+  });
+
+  test('详情缓存：主键没了的孤儿兄弟键清掉（别永远占着地方）', () async {
+    final store = _store(<String, Object?>{
+      'dsanima.bangumi.subject.9.extra': <String, Object?>{'cachedAt': _now},
+    });
+
+    final HostCacheSweep sweep = await sweepHostCache(store, now: _now);
+
+    expect(store.get('dsanima.bangumi.subject.9.extra'), isNull);
+    expect(sweep.removed, 1);
+  });
+
+  test('用量统计：详情只数主键（兄弟键不重复计数）', () async {
+    final store = _store(<String, Object?>{
+      'dsanima.bangumi.subject.1': <String, Object?>{'cachedAt': _now},
+      'dsanima.bangumi.subject.1.fresh': _now.toIso8601String(),
+      'dsanima.bangumi.subject.1.extra': <String, Object?>{'cachedAt': _now},
+      'dsanima.bangumi.subject.2': <String, Object?>{'cachedAt': _now},
+    });
+
+    final HostCacheUsage usage = hostCacheUsage(store);
+
+    expect(usage.detailEntries, 2);
+    expect(usage.entries, 2);
+  });
+
+  test('一键清空：详情缓存（含兄弟键）也一起清掉，设置/队列不受影响', () async {
+    final store = _store(<String, Object?>{
+      'dsanima.bangumi.subject.1': <String, Object?>{'cachedAt': _now},
+      'dsanima.bangumi.subject.1.fresh': _now.toIso8601String(),
+      'dsanima.bangumi.subject.1.extra': <String, Object?>{'cachedAt': _now},
+      'dsanima.app_settings': <String, Object?>{'themeId': 'light'},
+      'queue.jobs': <Object?>[],
+    });
+
+    final int removed = await clearHostCache(store);
+
+    expect(removed, 3);
+    expect(hostCacheUsage(store).entries, 0);
+    expect(store.get('dsanima.app_settings'), isNotNull);
+    expect(store.get('queue.jobs'), isNotNull);
+  });
 }

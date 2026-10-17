@@ -605,8 +605,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           _saving = false;
           _applyFailure = failure;
           // 成功文案的前提是**真的落盘了**且一切顺利：落盘失败却说"已保存"就是静默假成功。
+          //
+          // 1.1.0 M1/T4：边车的结局有三种（没重启 / 限速热更新 / 真重启），含义不同，
+          // 所以接一句 `engineApplyNoteProvider` 的话（见 `state/providers.dart`）：
+          // 「限速已热更新，边车没有重启」或「边车已重启（需要重启的改动：下载目录）」。
+          // 以前这条信息只能靠**抛异常**传达，一次成功的保存会画成红色失败横幅。
+          final String? note = ref.read(engineApplyNoteProvider);
           _applySuccess = (persisted && failure == null)
-              ? '设置已保存并已生效（边车/源客户端已按新参数重建）'
+              ? (note == null
+                  ? '设置已保存并已生效（边车/源客户端已按新参数重建）'
+                  : '设置已保存并已生效 · $note')
               : null;
         });
       }

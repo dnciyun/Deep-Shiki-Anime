@@ -33,6 +33,7 @@ import '../domain/following_store.dart';
 import '../domain/following_subscription.dart';
 import '../domain/following_view.dart';
 import '../domain/models.dart';
+import '../state/following_snapshot.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
 import 'following_detail.dart';
@@ -73,16 +74,18 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
     final List<FollowingEntry> entries = ref.watch(followingProvider);
     final AsyncValue<ScheduleView> scheduleValue = ref.watch(scheduleProvider);
     final ScheduleView? schedule = scheduleValue.value;
-    final AsyncValue<List<QueueJobView>> jobsValue = ref.watch(queueJobsProvider);
-    final List<QueueJobView> jobs = jobsValue.value ?? const <QueueJobView>[];
-    final AsyncValue<List<EngineTorrentView>> torrentsValue =
-        ref.watch(engineTorrentsProvider);
-    final List<EngineTorrentView> torrents =
-        torrentsValue.value ?? const <EngineTorrentView>[];
     final AsyncValue<List<SubscriptionView>> subsValue =
         ref.watch(subscriptionsProvider);
     final List<SubscriptionView> subs =
         subsValue.value ?? const <SubscriptionView>[];
+    // 1.1.0 M1/T3：引擎种子流（2Hz）与队列流（每帧）**不再直接 watch** ——
+    // 直接 watch 会把这整页（页头 + 网格 + 每张卡）拽成 2Hz 重建。
+    // 这里订阅的是「卡片真正会读的字段」组成的稳定快照：签名没变就不通知。
+    // 失败态单独用一个 bool（不然为了读 hasError 又要把高频流挂回来）。
+    final List<QueueJobView> jobs = ref.watch(followingJobsProvider);
+    final List<EngineTorrentView> torrents = ref.watch(followingTorrentsProvider);
+    final bool jobsFailed = ref.watch(queueJobsFailedProvider);
+    final bool torrentsFailed = ref.watch(engineTorrentsFailedProvider);
     final DateTime now = ref.watch(todayProvider);
     final int todayDow = ref.watch(todayDowProvider);
 
@@ -92,8 +95,8 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
     final List<String> staleSources = <String>[
       if (scheduleValue.error != null && !scheduleValue.isLoading) '更新表（mikan）',
       if (subsValue.error != null && !subsValue.isLoading) '订阅列表',
-      if (jobsValue.error != null && !jobsValue.isLoading) '下载队列',
-      if (torrentsValue.error != null && !torrentsValue.isLoading) '引擎进度',
+      if (jobsFailed) '下载队列',
+      if (torrentsFailed) '引擎进度',
     ];
 
     final List<FollowingCard> all = buildFollowingCards(
@@ -187,10 +190,10 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
                   if (subsValue.error != null) {
                     ref.invalidate(subscriptionsProvider);
                   }
-                  if (jobsValue.error != null) {
+                  if (jobsFailed) {
                     ref.invalidate(queueJobsProvider);
                   }
-                  if (torrentsValue.error != null) {
+                  if (torrentsFailed) {
                     ref.invalidate(engineTorrentsProvider);
                   }
                 },
