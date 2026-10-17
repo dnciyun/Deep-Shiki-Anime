@@ -111,8 +111,8 @@ void main() {
     await _pump(tester, _bar());
     expect(find.text('超分 关'), findsOneWidget);
 
-    await _pump(tester, _bar(upscale: const UpscaleSelection(schemeId: 'acnet')));
-    expect(find.text('超分 ACNet'), findsOneWidget);
+    await _pump(tester, _bar(upscale: const UpscaleSelection(schemeId: 'anime4k-ultra')));
+    expect(find.text('超分 A4K-U'), findsOneWidget);
   });
 
   testWidgets('全屏按钮存在；时间文字在控制栏里', (tester) async {

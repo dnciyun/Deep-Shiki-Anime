@@ -5,9 +5,9 @@ import '../models/upscale_scheme.dart';
 
 /// shader 包版本：升级打包的 shader 时改这个值，触发重新解包。
 ///
-/// v4.2：在 v4.1（Anime4K 12 + ACNet/ARNet/Anime4K-Ultra/FSR）之上再加
-/// RCAS 独立锐化（MIT，见 `THIRD_PARTY_NOTICES.txt`）。旧安装目录不动，回滚旧版本还能用。
-const String kAnime4kVersion = 'v4.2';
+/// v4.3：用户真机否掉 ACNet/ARNet/FSR/RCAS 后，只留 Anime4K 12 + Anime4K-Ultra
+///（MIT，见 `THIRD_PARTY_NOTICES.txt`）。旧安装目录不动，回滚旧版本还能用。
+const String kAnime4kVersion = 'v4.3';
 
 const String _assetPrefix = 'assets/shaders/anime4k';
 

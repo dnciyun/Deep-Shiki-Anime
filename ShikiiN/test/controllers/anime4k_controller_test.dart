@@ -87,51 +87,47 @@ void main() {
     await expectLater(throwing.reapply(), completes);
   });
 
-  group('随包 GLSL 方案（2026-10-17：ACNet/ARNet/Anime4K-Ultra/FSR）', () {
-    test('切到 FSR 方案：按方案文件 set，路径在注入的 shader 目录里', () async {
-      await c.setSelection(const UpscaleSelection(schemeId: 'fsr'));
+  group('Anime4K-Ultra 方案（用户「仅保留anime4k包括u」）', () {
+    test('切到 Anime4K-Ultra：按方案文件 set，路径在注入的 shader 目录里', () async {
+      await c.setSelection(const UpscaleSelection(schemeId: kAnime4kUltraSchemeId));
       final args = sent.single;
       expect(args.sublist(0, 3), ['change-list', 'glsl-shaders', 'set']);
-      expect(args[3], r'C:\sh\FSR.glsl');
+      expect(args[3], r'C:\sh\Anime4K-Ultra_DbL.glsl');
       expect(c.isOff, isFalse);
       expect(c.hasShaders, isTrue);
+      expect(c.schemeId, kAnime4kUltraSchemeId);
     });
 
-    test('ARNet 方案只有一条 set，不再附带任何 mpv 属性（缩放器已移除）', () async {
-      await c.setSelection(const UpscaleSelection(schemeId: 'arnet'));
+    test('Anime4K-Ultra 只有一条 set，不带任何 mpv 属性（缩放器已删）', () async {
+      await c.setSelection(const UpscaleSelection(schemeId: kAnime4kUltraSchemeId));
       expect(sent, hasLength(1));
+      expect(sent.where((a) => a.first == 'set'), isEmpty);
       expect(sent.single[1], 'glsl-shaders');
-      expect(sent.where((a) => a.first == 'set'), isEmpty, reason: '不能再改 scale 等属性');
-      expect(sent.single[3].split(';').length, 1);
-      expect(sent.single[3], endsWith('arnet_f8b16.glsl'));
     });
 
-    test('随包方案 → 关：只 clr，且不回写任何属性', () async {
-      await c.setSelection(const UpscaleSelection(schemeId: 'acnet'));
+    test('Anime4K-Ultra → 关：只 clr', () async {
+      await c.setSelection(const UpscaleSelection(schemeId: kAnime4kUltraSchemeId));
       sent.clear();
       await c.setSelection(UpscaleSelection.off);
       expect(sent.single.sublist(0, 3), ['change-list', 'glsl-shaders', 'clr']);
-      expect(sent.where((a) => a.isNotEmpty && a.first == 'set'), isEmpty);
       expect(c.isOff, isTrue);
     });
 
-    test('随包方案 → Anime4K：直接 set，中间不插属性命令', () async {
-      await c.setSelection(const UpscaleSelection(schemeId: 'anime4k-ultra'));
+    test('Anime4K-Ultra → Anime4K：直接换成 Anime4K 链', () async {
+      await c.setSelection(const UpscaleSelection(schemeId: kAnime4kUltraSchemeId));
       sent.clear();
       await c.setSelection(const UpscaleSelection(preset: Anime4kPreset.standard));
       expect(sent, hasLength(1));
-      expect(sent.single.sublist(0, 3), ['change-list', 'glsl-shaders', 'set']);
-      expect(sent.single[3].split(';').length, anime4kShaderChain(Anime4kPreset.standard).length);
+      expect(sent.single[3].split(';').length,
+          anime4kShaderChain(Anime4kPreset.standard).length);
       expect(c.selection.schemeId, kAnime4kSchemeId);
     });
 
-    test('换片窗口内切随包方案被押下，exit 按最新选择补发', () async {
-      final token = c.enterSwitchWindow();
-      await c.setSelection(const UpscaleSelection(schemeId: 'acnet-hdn'));
-      expect(sent, isEmpty, reason: '窗口内不碰渲染上下文');
-      await c.exitSwitchWindow(token);
-      expect(sent, hasLength(1));
-      expect(sent.single[3], endsWith('acnet_f8b8_hdn.glsl'));
+    test('已被否掉的方案 id 不再存在：选它回退 Anime4K（不会假装生效）', () async {
+      await c.setSelection(const UpscaleSelection(schemeId: 'acnet'));
+      expect(c.schemeId, 'acnet');
+      expect(c.hasShaders, isFalse, reason: '未知方案解析成 Anime4K/off → 没有链');
+      expect(sent.single.sublist(0, 3), ['change-list', 'glsl-shaders', 'clr']);
     });
 
     test('扩展方案（带 dir）用方案自己的目录，不用注入的 anime4k 目录', () async {
@@ -148,87 +144,6 @@ void main() {
       ]);
       await c.setSelection(const UpscaleSelection(schemeId: 'ext-demo'));
       expect(sent.single[3], r'C:\ext\demo.glsl');
-    });
-  });
-
-  group('「没放大所以没效果」的说明（2026-10-17 用户反馈 ARNet/FSR 无效果）', () {
-    Anime4kController build(Map<String, String> props, List<List<String>> sink) =>
-        Anime4kController(
-          runner: (args) async => sink.add(args),
-          readProperty: (name) async => props[name] ?? '',
-        )..setShaderDir(r'C:\sh');
-
-    test('arnet：窗口比片源小 → 发 show-text 说明，并指向「锐化 · RCAS」', () async {
-      final sink = <List<String>>[];
-      final c2 = build({
-        'width': '1920',
-        'height': '1080',
-        'osd-dimensions/w': '1600',
-        'osd-dimensions/h': '900',
-      }, sink);
-      await c2.setSelection(const UpscaleSelection(schemeId: 'arnet'));
-      expect(sink.first.sublist(0, 3), ['change-list', 'glsl-shaders', 'set']);
-      final hints = sink.where((a) => a.isNotEmpty && a.first == 'show-text').toList();
-      expect(hints, hasLength(1), reason: '没放大必须说清楚（实际：$sink）');
-      expect(hints.single[1], contains('锐化 · RCAS'));
-      expect(hints.single[1], contains('1920×1080'));
-    });
-
-    test('arnet：放大 >1.2x → 只发一条 set，不打扰', () async {
-      final sink = <List<String>>[];
-      final c2 = build({
-        'width': '1280',
-        'height': '720',
-        'osd-dimensions/w': '1920',
-        'osd-dimensions/h': '1080',
-      }, sink);
-      await c2.setSelection(const UpscaleSelection(schemeId: 'arnet'));
-      expect(sink, hasLength(1));
-      expect(sink.single.sublist(0, 3), ['change-list', 'glsl-shaders', 'set']);
-    });
-
-    test('读不到尺寸就不瞎猜：静默只下发 set', () async {
-      final sink = <List<String>>[];
-      final c2 = build({}, sink);
-      await c2.setSelection(const UpscaleSelection(schemeId: 'acnet'));
-      expect(sink, hasLength(1));
-    });
-
-    test('fsr：降采样（输出比片源小）→ 也弹说明（门槛 1.0）', () async {
-      final sink = <List<String>>[];
-      final c2 = build({
-        'width': '1920',
-        'height': '1080',
-        'osd-dimensions/w': '1280',
-        'osd-dimensions/h': '720',
-      }, sink);
-      await c2.setSelection(const UpscaleSelection(schemeId: 'fsr'));
-      expect(sink.where((a) => a.isNotEmpty && a.first == 'show-text'), hasLength(1));
-    });
-
-    test('fsr：1:1（闸门放宽后已生效）→ 不弹说明', () async {
-      final sink = <List<String>>[];
-      final c2 = build({
-        'width': '1920',
-        'height': '1080',
-        'osd-dimensions/w': '1920',
-        'osd-dimensions/h': '1080',
-      }, sink);
-      await c2.setSelection(const UpscaleSelection(schemeId: 'fsr'));
-      expect(sink, hasLength(1));
-    });
-
-    test('rcas 任何尺寸都挂链，且从不弹「没放大」提示', () async {
-      final sink = <List<String>>[];
-      final c2 = build({
-        'width': '1920',
-        'height': '1080',
-        'osd-dimensions/w': '1280',
-        'osd-dimensions/h': '720',
-      }, sink);
-      await c2.setSelection(const UpscaleSelection(schemeId: 'rcas'));
-      expect(sink.single[3], endsWith('RCAS.glsl'));
-      expect(sink.where((a) => a.isNotEmpty && a.first == 'show-text'), isEmpty);
     });
   });
 

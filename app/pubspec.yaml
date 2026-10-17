@@ -124,8 +124,7 @@ flutter:
     # **必须由宿主自己声明**：shikiin 的 `unpackAnime4kShaders()` 是按无包前缀的
     # `assets/shaders/anime4k/<f>` 去 `rootBundle.load` 的（依赖包的 assets 不会
     # 自动进宿主 bundle），漏了这行启动就会报 `Unable to load asset` 并降级为关。
-    # 目录形式：整目录 17 个 .glsl 一起进包（Anime4K 12 + ACNet/ARNet/
-    # Anime4K-Ultra/FSR 5，约 1.34 MB）。
+    # 目录形式：整目录 13 个 .glsl 一起进包（Anime4K 12 + Anime4K-Ultra 1，约 820 KB）。
     # 改 shader 内容/清单时：ShikiiN 侧改 `kAnime4kVersion` 触发重新解包，
     # 并把 ShikiiN/assets/shaders/anime4k/ 与这里同步（两处必须一致）。
     - assets/shaders/anime4k/

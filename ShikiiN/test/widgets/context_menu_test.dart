@@ -43,7 +43,7 @@ void main() {
     expect(find.text('取消置顶'), findsOneWidget);
   });
 
-  testWidgets('超分子菜单：关 + Anime4K 三档 + 随包 GLSL 方案，勾选当前项', (tester) async {
+  testWidgets('超分子菜单：关 + Anime4K 三档 + Anime4K-Ultra，勾选当前项', (tester) async {
     await tester.pumpWidget(_host(defaultContextEntries(
       upscale: const UpscaleSelection(preset: Anime4kPreset.ultra),
     )));
@@ -57,8 +57,7 @@ void main() {
     expect(find.text('Anime4K · 轻量'), findsOneWidget);
     expect(find.text('Anime4K · 标准'), findsOneWidget);
     expect(find.text('Anime4K · 极致'), findsOneWidget);
-    expect(find.text('ACNet · 中性'), findsOneWidget);
-    expect(find.text('FSR 1.0 · EASU+RCAS'), findsOneWidget);
+    expect(find.text('Anime4K-Ultra · 保颗粒'), findsOneWidget);
     // 当前是「极致」：Anime4K 三档里只有它被勾选，随包方案不带勾。
     final items = defaultContextEntries(
       upscale: const UpscaleSelection(preset: Anime4kPreset.ultra),

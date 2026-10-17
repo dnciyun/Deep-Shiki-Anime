@@ -1,21 +1,21 @@
 # 第三方组件与许可（Third-Party Notices）
 
-本仓库随包内置的**超分 shader** 全部为 MIT 许可，原样分发、未修改权重数值：
+本仓库随包内置的**超分 shader** 只剩两组，均为 MIT 许可，原样分发：
 
 | 组件 | 文件（`app/assets/shaders/anime4k/`） | 许可 | 来源 |
 | --- | --- | --- | --- |
 | Anime4K v4.0.1 | `Anime4K_*.glsl`（12 个） | MIT | https://github.com/bloc97/Anime4K |
-| ACNet / ARNet（Anime4KCPP 模型） | `acnet_f8b8.glsl`、`acnet_f8b8_hdn.glsl`、`arnet_f8b16.glsl` | MIT | https://github.com/TianZerL/ACNetGLSL |
-| Anime4K-Ultra（FSR EASU + Anime4K Thin 衍生） | `Anime4K-Ultra_DbL.glsl` | MIT | https://github.com/Th-Underscore/Anime4K-Ultra |
-| AMD FidelityFX FSR v1.0.2（mpv 移植：agyild） | `FSR.glsl`（本仓库**改过 1 行**：`//!WHEN` 从「仅放大 >1.0x」放宽到「≥1.0x」，让 1:1 播放也有 RCAS 锐化） | MIT | https://gist.github.com/agyild/82219c545228d70c5604f865ce0b0ce5 |
-| RCAS 独立锐化（从上表 FSR 的 RCAS pass 抽出，DSAnima 提取） | `RCAS.glsl` | MIT | 同上（AMD FidelityFX FSR 1.0.2 的 RCAS 段） |
+| Anime4K-Ultra（内含 FSR 1.0.2 EASU 与 Anime4K Thin 代码） | `Anime4K-Ultra_DbL.glsl` | MIT | https://github.com/Th-Underscore/Anime4K-Ultra |
+
+> 2026-10-17 用户真机试过后判定「效果微乎其微，去除掉吧，仅保留anime4k包括u」：
+> ACNet / ARNet / FSR / RCAS 四组 shader 及其许可条目已从仓库与安装包中删除，
+> 不再随包分发（历史提交里可查：`0d8c311` 及更早）。
 
 ## MIT License（上述组件通用）
 
 Copyright (c) 2019-2021 bloc97（Anime4K）
-Copyright (c) 2020 TianZer（ACNetGLSL / Anime4KCPP 模型）
 Copyright (c) 2026 Th-Underscore（Anime4K-Ultra）
-Copyright (c) 2021 Advanced Micro Devices, Inc.（FidelityFX FSR / CAS）
+Copyright (c) 2021 Advanced Micro Devices, Inc.（FidelityFX FSR，代码包含在 Anime4K-Ultra 内）
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -38,11 +38,11 @@ THE SOFTWARE.
 ## 说明
 
 * 这些文件是**运行时数据**（mpv 的 `glsl-shaders`），不是链接进进程的代码；
-  它们由 `unpackAnime4kShaders()` 解包到 `DSAnima-data/anime4k_v4.1/`。
+  它们由 `unpackAnime4kShaders()` 解包到 `DSAnima-data/anime4k_v4.3/`
+  （13 个文件 = Anime4K 12 + Anime4K-Ultra 1）。
 * 发布打 zip 时本文件必须一起进包（`1.1.0` 打包清单要检查这一条）。
-* 若改动上游 shader（例如上面 FSR 的 `//!WHEN` 放宽），必须在本表标注改了什么，别让它看起来像原样分发。
-* 新增随包 shader 时：把文件放进 `app/assets/shaders/anime4k/` 与
-  `ShikiiN/assets/shaders/anime4k/` 两处、登记到
-  `kBundledPackShaderFiles`、升 `kAnime4kVersion`、并更新本表。
+* 新增随包 shader 时：放进 `app/assets/shaders/anime4k/` 与
+  `ShikiiN/assets/shaders/anime4k/` 两处、登记到 `kBundledPackShaderFiles`、
+  升 `kAnime4kVersion`、更新本表；改动上游文件必须注明改了哪一行。
 * 需要 gpu-next/compute（ArtCNN）或 ONNX 推理（AnimeJaNai、Real-ESRGAN）的
   方案**不进包**：它们是扩展（资源包）的事，许可另算。

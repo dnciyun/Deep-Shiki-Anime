@@ -283,8 +283,8 @@ Future<AppRuntime> bootstrapPlayer({
     anime4k.setShaderDir(shaderDir);
     diag.info('bootstrap', 'anime4k shaders ok');
     final savedSettings = AppSettings.fromMap(store.get('app_settings') as Map?);
-    // 方案清单：内置 Anime4K + 随包 ACNet/ARNet/Anime4K-Ultra/FSR。
-    // 扩展安装的 GLSL 包在 M3 接进来；mpv 缩放器方案已按用户要求移除。
+    // 方案清单：内置 Anime4K 三档 + Anime4K-Ultra（用户「仅保留anime4k包括u」）。
+    // 扩展安装的 GLSL 包在 M3 接进来；mpv 缩放器/ACNet/ARNet/FSR/RCAS 都已按用户要求移除。
     anime4k.setSchemes(builtinUpscaleSchemes());
     final UpscaleSelection savedSelection = UpscaleSelection.fromSettings(
       schemeId: savedSettings.upscaleSchemeId,

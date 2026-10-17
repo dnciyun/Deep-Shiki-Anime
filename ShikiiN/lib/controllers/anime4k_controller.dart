@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:path/path.dart' as p;
 import '../models/anime4k_preset.dart';
 import '../models/upscale_scheme.dart';
@@ -13,8 +11,8 @@ import '../infra/diagnostics/diag.dart';
 /// **一串 GLSL 文件 → `change-list glsl-shaders set <paths>`**。
 ///
 /// [runner] 注入「下发一条 mpv 命令」（生产接 PlayerController.runMpvCommand）；
-/// [readProperty] 注入「读一个 mpv 属性」—— 只用于诊断：记录当前硬解状态与
-/// 像素格式，判断 LUMA 钩子的 shader 有没有可能被硬件解码旁路（真机排查用）。
+/// [readProperty] 注入「读一个 mpv 属性」—— 只用于诊断：apply 时把硬解状态、
+/// 像素格式、片源/输出尺寸写进日志（真机排查用，不做任何自动降级动作）。
 class Anime4kController {
   final Future<void> Function(List<String> args) runner;
 
@@ -170,7 +168,6 @@ class Anime4kController {
       }
       final String paths = chain.map((String f) => p.join(dir, f)).join(';');
       await runner(['change-list', 'glsl-shaders', 'set', paths]);
-      await _hintIfNotMagnified(scheme);
       await diag.breadcrumbFlushed('anime4k:_apply done $where');
     } catch (e, st) {
       diag.warn('anime4k', 'apply $where failed', e, st);
@@ -227,33 +224,6 @@ class Anime4kController {
     final int? h = int.tryParse((await _readProp('osd-dimensions/h')).trim());
     if (w == null || h == null || w <= 0 || h <= 0) return null;
     return _FrameSize(w, h);
-  }
-
-  /// 只在放大时生效的方案（ACNet/ARNet），若当前没有放大就用 mpv OSD 说清楚。
-  ///
-  /// 这是 2026-10-17 用户真机反馈「ARNet 无效果 / FSR 没效果」的直接修复：
-  /// 日志显示 hwdec=d3d11va-copy、pixfmt=nv12（LUMA 钩子正常），所以不是坏了，
-  /// 而是播放尺寸没有放大、shader 自己的 `//!WHEN` 跳过了。
-  Future<void> _hintIfNotMagnified(UpscaleScheme scheme) async {
-    final double? threshold = scheme.upscaleOnlyAbove;
-    if (threshold == null) return;
-    final _FrameSize? src = await _frameSize();
-    final _FrameSize? out = await _outputSize();
-    if (src == null || out == null) return;
-    final double ratio = math.min(out.w / src.w, out.h / src.h);
-    diag.breadcrumb(
-        'anime4k:upscaleOnly ${scheme.id} ratio=${ratio.toStringAsFixed(2)} (<$threshold)');
-    if (ratio >= threshold) return;
-    try {
-      await runner([
-        'show-text',
-        '「${scheme.name}」只在放大画面时生效（当前 ${src.w}×${src.h} → '
-            '${out.w}×${out.h}）。想马上看到变化，选「锐化 · RCAS」。',
-        '5000',
-      ]);
-    } catch (e, st) {
-      diag.warn('anime4k', 'show-text hint failed', e, st);
-    }
   }
 
   Future<String> _readProp(String name) async {

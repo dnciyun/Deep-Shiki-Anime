@@ -39,16 +39,8 @@ const List<String> kRequiredShaderFiles = <String>[
   'Anime4K_Upscale_Denoise_CNN_x2_S.glsl',
   'Anime4K_AutoDownscalePre_x2.glsl',
   'Anime4K_AutoDownscalePre_x4.glsl',
-  // ACNet / ARNet（MIT, TianZerL/ACNetGLSL）
-  'acnet_f8b8.glsl',
-  'acnet_f8b8_hdn.glsl',
-  'arnet_f8b16.glsl',
-  // Anime4K-Ultra（MIT, Th-Underscore）
+  // Anime4K-Ultra（MIT, Th-Underscore）—— 用户「仅保留anime4k包括u」
   'Anime4K-Ultra_DbL.glsl',
-  // AMD FidelityFX FSR 1.0.2（MIT, AMD / agyild 移植）
-  'FSR.glsl',
-  // RCAS 独立锐化（上面 FSR 的 RCAS pass 抽出来，任何尺寸都生效）
-  'RCAS.glsl',
 ];
 
 void main() {
@@ -98,7 +90,7 @@ void main() {
       );
     });
 
-    test('shikiin 清单里的 18 个 shader 全部就位，且都是真 GLSL 不是错误页', () {
+    test('shikiin 清单里的 13 个 shader 全部就位，且都是真 GLSL 不是错误页', () {
       final dir = Directory('assets/shaders/anime4k');
       expect(
         dir.existsSync(),
@@ -149,15 +141,8 @@ void main() {
       expect(size('Anime4K_Upscale_CNN_x2_S.glsl'), greaterThan(10000));
       expect(size('Anime4K_Upscale_CNN_x2_S.glsl'), lessThan(100000));
       expect(size('Anime4K_AutoDownscalePre_x2.glsl'), lessThan(10000));
-      // ACNet f8b8 约 90 KB；ARNet f8b16 约 333 KB；Ultra 约 97 KB；FSR 约 16 KB。
-      expect(size('acnet_f8b8.glsl'), greaterThan(80000));
-      expect(size('acnet_f8b8_hdn.glsl'), greaterThan(80000));
-      expect(size('arnet_f8b16.glsl'), greaterThan(300000));
+      // Anime4K-Ultra 约 97 KB（FSR EASU + Anime4K Thin 的合成 shader）。
       expect(size('Anime4K-Ultra_DbL.glsl'), greaterThan(50000));
-      expect(size('FSR.glsl'), greaterThan(10000));
-      expect(size('FSR.glsl'), lessThan(30000));
-      expect(size('RCAS.glsl'), greaterThan(2000));
-      expect(size('RCAS.glsl'), lessThan(10000));
     });
   });
 }

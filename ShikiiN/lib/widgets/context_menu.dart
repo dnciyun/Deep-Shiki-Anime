@@ -69,9 +69,8 @@ class ContextEntry {
 ///
 /// 不再读主题显隐配置：所有项恒显示，`elementId` 仅作稳定标识。
 ///
-/// 2026-10-17（用户「模型我想多试试其他的」「去除内置的mpv这套」）：「超分」
-/// 子菜单从固定四档扩成 **方案 + 档位**：关 / Anime4K 三档 / 随包 GLSL 方案
-/// （ACNet/ARNet/Anime4K-Ultra/FSR），mpv 自带缩放器那套已移除。
+/// 2026-10-17：「超分」子菜单从固定四档扩成 **方案 + 档位**；经用户真机筛选后
+/// 只剩 关 / Anime4K 三档 / Anime4K-Ultra（mpv 缩放器、ACNet、ARNet、FSR、RCAS 已删）。
 List<ContextEntry> defaultContextEntries({
   List<SubmenuItem> audioItems = const [],
   List<SubmenuItem> subtitleItems = const [],
@@ -136,7 +135,7 @@ List<ContextEntry> defaultContextEntries({
   ];
 }
 
-/// 「超分」子菜单项：关 + Anime4K 三档 + 其他 GLSL 方案。
+/// 「超分」子菜单项：关 + Anime4K 三档 + Anime4K-Ultra。
 List<SubmenuItem> upscaleSubmenuItems(
   UpscaleSelection current,
   List<UpscaleScheme> schemes,

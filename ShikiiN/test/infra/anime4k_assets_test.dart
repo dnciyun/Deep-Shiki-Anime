@@ -9,7 +9,7 @@ void main() {
   setUp(() => tmp = Directory.systemTemp.createTempSync('a4k_test'));
   tearDown(() => tmp.deleteSync(recursive: true));
 
-  test('解包写出全部 shader 文件（Anime4K 12 + 随包 6），返回版本子目录', () async {
+  test('解包写出全部 shader 文件（Anime4K 12 + Anime4K-Ultra 1），返回版本子目录', () async {
     var loads = 0;
     final dir = await unpackAnime4kShaders(
       loadAsset: (path) async { loads++; return utf8Bytes('// $path'); },
@@ -41,8 +41,8 @@ void main() {
     expect(File(p.join(dir, kBundledShaderFiles.first)).existsSync(), isTrue);
   });
 
-  test('默认版本号是 v4.2（升 shader 集合时没改 → 老用户永远缺新文件）', () {
-    expect(kAnime4kVersion, 'v4.2');
+  test('默认版本号是 v4.3（升 shader 集合时没改 → 老用户永远缺新文件）', () {
+    expect(kAnime4kVersion, 'v4.3');
   });
 }
 

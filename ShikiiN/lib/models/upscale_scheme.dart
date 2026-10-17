@@ -1,24 +1,21 @@
 /// 可切换的超分**方案**（scheme）。
 ///
-/// 用户 2026-10-17 两句话定了这版边界：
-/// *「模型我想多试试其他的，只使用可以实时播放的，默认自带的是 anime4k」；
-///  *「去除内置的mpv这套，按1做，另一条渲染管线的就是扩展干的」。
+/// 用户 2026-10-17 的最终结论（三轮真机反馈后）：
+/// 「效果微乎其微，去除掉吧，仅保留anime4k包括u」——内置只留
+/// **Anime4K 三档**（默认）与 **Anime4K-Ultra**。
 ///
-/// 于是内置只保留**当前渲染管线（media_kit `vo=libmpv` + ANGLE/GLES）里真能跑的
-/// fragment GLSL**：
+/// 被用户真机否掉、已整套删除的：
+/// * mpv 自带缩放器（改 `scale` 属性那套）；
+/// * ACNet 中性 / 去噪、ARNet 线条、FSR 1.0、RCAS 锐化（放大闸门 + 效果不达预期）。
 ///
-/// * [UpscaleSchemeKind.anime4kChain]：内置 Anime4K，档位 = 轻/标/极（默认）；
-/// * [UpscaleSchemeKind.glslPack]：一组打包的 GLSL 文件，按顺序挂到
-///   `glsl-shaders`。随包内置 ACNet / ARNet / Anime4K-Ultra / FSR 1.0；
-///   将来扩展框架装的第三方包也是这个类型（目录由 [UpscaleScheme.dir] 指定）。
+/// 仍保留的两条实现通路：
+/// * [UpscaleSchemeKind.anime4kChain]：内置 Anime4K 三档（轻/标/极）；
+/// * [UpscaleSchemeKind.glslPack]：一组 GLSL 文件按顺序挂到 `glsl-shaders`
+///   （内置 Anime4K-Ultra；将来扩展框架装的第三方包也走这条，目录由
+///   [UpscaleScheme.dir] 指定）。
 ///
-/// 明确**不做**的两件事：
-/// 1. mpv 自带缩放器（改 `scale` 属性那套）已按用户要求整套移除；
-/// 2. 需要另一条渲染管线的方案（gpu-next 的 compute 着色器 ArtCNN、ONNX 推理
-///    如 AnimeJaNai）不进内置 —— 归扩展（资源包）管，见 1.1.0 计划 M3。
-///
-/// **只收实时方案**：VapourSynth / ONNX / Real-ESRGAN / waifu2x 这类逐帧神经网络
-/// 不在此列（包里没有那些运行时，也做不到实时播放）。
+/// **另一条渲染管线**（gpu-next 的 compute 着色器 ArtCNN、ONNX 推理如
+/// AnimeJaNai）不进内置 —— 归扩展（资源包）管，见 1.1.0 计划 M3。
 library;
 
 import 'anime4k_preset.dart';
@@ -28,7 +25,7 @@ enum UpscaleSchemeKind {
   /// 内置 Anime4K 的 shader 链（12 个 .glsl，按档位组链）。
   anime4kChain,
 
-  /// 一组打包的 GLSL（内置 ACNet/ARNet/Anime4K-Ultra/FSR，或扩展装的包）。
+  /// 一组打包的 GLSL（内置 Anime4K-Ultra，或扩展装的包）。
   glslPack,
 }
 
@@ -46,10 +43,10 @@ class UpscaleScheme {
   /// 稳定 id（也用于设置持久化；扩展包 id 由扩展清单给）。
   final String id;
 
-  /// 菜单里的全名（如 `ACNet · 中性`）。
+  /// 菜单里的全名（如 `Anime4K-Ultra · 保颗粒`）。
   final String name;
 
-  /// 控制栏胶囊里的短名（如 `ACNet`）。
+  /// 控制栏胶囊里的短名（如 `A4K-U`）。
   final String shortName;
 
   final UpscaleSchemeKind kind;
@@ -66,15 +63,6 @@ class UpscaleScheme {
   /// 界面上的小字说明。
   final String? note;
 
-  /// 低于这个放大比例时方案会静默跳过（shader 自带 `//!WHEN` 门槛）。
-  ///
-  /// * ACNet/ARNet：1.2（上游 `//!WHEN` 要求 OUTPUT/LUMA > 1.2）；
-  /// * FSR 1.0：1.0（我们已放宽到 ≥1.0，所以只有降采样时才跳过）；
-  /// * null：任何尺寸都生效（Anime4K-Ultra、RCAS）。
-  ///
-  /// 控制器据此在「没放大」时弹一句 mpv OSD 说明，而不是让人以为坏了。
-  final double? upscaleOnlyAbove;
-
   const UpscaleScheme({
     required this.id,
     required this.name,
@@ -84,7 +72,6 @@ class UpscaleScheme {
     this.files = const [],
     this.dir,
     this.note,
-    this.upscaleOnlyAbove,
   });
 
   bool get isAnime4k => kind == UpscaleSchemeKind.anime4kChain;
@@ -100,23 +87,16 @@ class UpscaleScheme {
 /// 内置 Anime4K 方案的 id（也是「关」所在的方案：preset=off 即关）。
 const String kAnime4kSchemeId = 'anime4k';
 
+/// 内置 Anime4K-Ultra 方案的 id。
+const String kAnime4kUltraSchemeId = 'anime4k-ultra';
+
 // —— 随包内置的第三方 shader 文件名（必须与 assets/shaders/anime4k/ 下一致）——
-// 全部 MIT，来源与许可见 `THIRD_PARTY_NOTICES.txt`。
-const String kAcnetShader = 'acnet_f8b8.glsl';
-const String kAcnetHdnShader = 'acnet_f8b8_hdn.glsl';
-const String kArnetShader = 'arnet_f8b16.glsl';
+// MIT，来源与许可见 `THIRD_PARTY_NOTICES.txt`。
 const String kAnime4kUltraShader = 'Anime4K-Ultra_DbL.glsl';
-const String kFsrShader = 'FSR.glsl';
-const String kRcasShader = 'RCAS.glsl';
 
 /// 随包内置的 GLSL 包文件清单（解包用；与 Anime4K 的 12 个一起落同一个目录）。
 const List<String> kBundledPackShaderFiles = [
-  kAcnetShader,
-  kAcnetHdnShader,
-  kArnetShader,
   kAnime4kUltraShader,
-  kFsrShader,
-  kRcasShader,
 ];
 
 /// 内置 Anime4K 方案：档位就是 [Anime4kPreset.simpleTiers]，链走 `anime4kShaderChain`。
@@ -132,66 +112,20 @@ UpscaleScheme anime4kScheme() => UpscaleScheme(
       note: '内置 · 实时（吃 GPU）',
     );
 
-/// 内置方案清单：Anime4K（默认）+ 6 个随包 GLSL 方案（MIT，实时）。
-///
-/// 注：ACNet/ARNet/FSR 是**放大**用 shader，自身按 `//!WHEN` 只在放大比例足够时
-/// 生效（ACNet/ARNet >1.2x；FSR 我们放宽到 >=1.0x，1:1 也有 RCAS 锐化）；
-/// 窗口比片源小时它们会跳过 —— 控制器会弹一句 mpv OSD 说明。
-/// Anime4K-Ultra 在原画分辨率上做线条/去模糊、RCAS 是独立锐化，任何尺寸都有变化。
+/// 内置 Anime4K-Ultra 方案：单文件，原画分辨率上做线条/去模糊，任何尺寸都有变化。
+UpscaleScheme anime4kUltraScheme() => const UpscaleScheme(
+      id: kAnime4kUltraSchemeId,
+      name: 'Anime4K-Ultra · 保颗粒',
+      shortName: 'A4K-U',
+      kind: UpscaleSchemeKind.glslPack,
+      files: [kAnime4kUltraShader],
+      note: 'MIT · 实时 · 保留颗粒/纹理，线条更利，比原版 Anime4K 轻',
+    );
+
+/// 内置方案清单：Anime4K（默认）+ Anime4K-Ultra。
 List<UpscaleScheme> builtinUpscaleSchemes() => <UpscaleScheme>[
       anime4kScheme(),
-      const UpscaleScheme(
-        id: 'acnet',
-        name: 'ACNet · 中性',
-        shortName: 'ACNet',
-        kind: UpscaleSchemeKind.glslPack,
-        files: [kAcnetShader],
-        upscaleOnlyAbove: 1.2,
-        note: 'MIT · 实时 · 中性放大（更接近原画，放大 >1.2x 才生效）',
-      ),
-      const UpscaleScheme(
-        id: 'acnet-hdn',
-        name: 'ACNet · 去噪',
-        shortName: 'ACNet去噪',
-        kind: UpscaleSchemeKind.glslPack,
-        files: [kAcnetHdnShader],
-        upscaleOnlyAbove: 1.2,
-        note: 'MIT · 实时 · 去噪放大（低码率 WEB 源更干净，放大 >1.2x 才生效）',
-      ),
-      const UpscaleScheme(
-        id: 'arnet',
-        name: 'ARNet · 线条',
-        shortName: 'ARNet',
-        kind: UpscaleSchemeKind.glslPack,
-        files: [kArnetShader],
-        upscaleOnlyAbove: 1.2,
-        note: 'MIT · 实时 · 线条/细节最强，计算量也最大（放大 >1.2x 才生效）',
-      ),
-      const UpscaleScheme(
-        id: 'anime4k-ultra',
-        name: 'Anime4K-Ultra · 保颗粒',
-        shortName: 'A4K-U',
-        kind: UpscaleSchemeKind.glslPack,
-        files: [kAnime4kUltraShader],
-        note: 'MIT · 实时 · 保留颗粒/纹理，线条更利，比原版 Anime4K 轻',
-      ),
-      const UpscaleScheme(
-        id: 'fsr',
-        name: 'FSR 1.0 · EASU+RCAS',
-        shortName: 'FSR',
-        kind: UpscaleSchemeKind.glslPack,
-        files: [kFsrShader],
-        upscaleOnlyAbove: 1.0,
-        note: 'MIT · 实时 · AMD FSR 1.0：EASU 放大 + RCAS 锐化（1:1 或放大时都有锐化，最省）',
-      ),
-      const UpscaleScheme(
-        id: 'rcas',
-        name: '锐化 · RCAS',
-        shortName: 'RCAS',
-        kind: UpscaleSchemeKind.glslPack,
-        files: [kRcasShader],
-        note: 'MIT · 实时 · 只锐化不放大：窗口比片源小/1:1 都有变化（看不到变化时先用它）',
-      ),
+      anime4kUltraScheme(),
     ];
 
 /// 当前选中的方案 + Anime4K 档位。
@@ -239,7 +173,7 @@ class UpscaleSelection {
     return anime4kScheme();
   }
 
-  /// 控制栏胶囊文案：`超分 关 / 超分 标 / 超分 ACNet`。
+  /// 控制栏胶囊文案：`超分 关 / 超分 标 / 超分 A4K-U`。
   String label(List<UpscaleScheme> schemes) {
     if (isOff) return '超分 关';
     final UpscaleScheme scheme = resolve(schemes);
@@ -255,7 +189,7 @@ class UpscaleSelection {
     return '超分 ${scheme.shortName}';
   }
 
-  /// 胶囊点击的循环顺序：关 → Anime4K 轻/标/极 → 各随包方案 → 关。
+  /// 胶囊点击的循环顺序：关 → Anime4K 轻/标/极 → 其他方案 → 关。
   static List<UpscaleSelection> cycleOrder(List<UpscaleScheme> schemes) => <UpscaleSelection>[
         off,
         for (final Anime4kPreset p in Anime4kPreset.simpleTiers) UpscaleSelection(preset: p),
