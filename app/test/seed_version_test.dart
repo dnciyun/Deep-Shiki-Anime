@@ -494,4 +494,170 @@ void main() {
       }
     });
   });
+
+  // 第五十四轮：用户「详细页的 CodeGeass 反叛的鲁路修，依旧会把第二季当第一季」。
+  //
+  // 真标题全部来自 `build/round54/titles.tsv`（DMHY `sort_id=2/31` + mikan 搜索页，
+  // 2026-10-17 本机真抓；抓取脚本 `build/round54/fetch_cg.py`，回放探针
+  // `test/round54_cg_probe.dart`）。Bangumi 两条目真数据：
+  // 793 = S1（TV，2006-10-05，25 话），8 = R2（TV，2008-04-06，25 话）。
+  group('Code Geass：`R2` = 第二季（真标题）', () {
+    final SeedSubjectSignature s1 = seedSignatureOf(
+      platform: 'TV',
+      names: <String>[
+        'Code Geass 反叛的鲁路修',
+        'コードギアス 反逆のルルーシュ',
+        '叛逆的鲁路修',
+        'Code Geass: Hangyaku no Lelouch',
+        'Code Geass: Lelouch of the Rebellion',
+      ],
+      date: '2006-10-05',
+      eps: 25,
+    );
+    final SeedSubjectSignature r2 = seedSignatureOf(
+      platform: 'TV',
+      names: <String>[
+        'Code Geass 反叛的鲁路修R2',
+        'コードギアス 反逆のルルーシュR2',
+        'Code Geass: Hangyaku no Lelouch R2',
+        'Code Geass: Lelouch of the Rebellion R2',
+      ],
+      date: '2008-04-06',
+      eps: 25,
+    );
+
+    test('`R2` 解成季 2；R2 页自己的签名也从「季 1」变成「季 2」', () {
+      expect(parseSeedVersion('Code Geass 反叛的鲁路修R2').season, 2);
+      expect(parseSeedVersion('コードギアス 反逆のルルーシュR2').season, 2);
+      expect(r2.version.season, 2, reason: 'R2 的名字里只有 R2，解不出来就会默认成季 1（旧 bug）');
+      expect(s1.version.season, 1);
+    });
+
+    test('真标题里 R2 的四种边界（`R2]` / `R2[` / ` R2 ` / `_R2]`）都解成季 2', () {
+      const List<String> realTitles = <String>[
+        // 67/160 条真标题带独立 R2；这 5 条是「本作」里被当第一季的那批。
+        '[WLGO][反叛的鲁路修][R2][12][TW繁體][TVRIP][MP4]',
+        '【X2字幕组&华盟字幕社】[4月新番][Code_Geass_反叛的鲁路修_R2][BIG5][18][RMVB]',
+        '[WLGO][Code Geass R2 反叛的鲁路修 R2][BIG5][RMVB]',
+        '【WOLF字幕组】[08年4月番]【Code Geass 反叛的鲁路修R2】【01-25完结全】【RMVB】',
+        '[Lilith-Raws] Code Geass 反叛的魯路修 / Code Geass - Lelouch of the Rebellion R2 '
+            '[01-25][Baha][WEB-DL][1080p][AVC AAC][CHT][MP4]',
+      ];
+      for (final String title in realTitles) {
+        expect(parseSeedVersion(title).season, 2, reason: title);
+      }
+    });
+
+    test('边界：`R2J` / `R2DVD` / `R2D2` / `R2-Raws` 不是季号', () {
+      for (final String title in <String>[
+        '[Group] Code Geass R2J DVD 1920x1080',
+        '[Group] Code Geass R2DVD 720p',
+        'R2D2 的动画 - 01',
+        '[R2-Raws] 反叛的鲁路修 - 12',
+      ]) {
+        expect(parseSeedVersion(title).season, isNull, reason: title);
+      }
+    });
+
+    test('S1 页面：R2 的单集与合集都进「第二季」（旧实现里它们是「本作」）', () {
+      for (final String title in <String>[
+        '【X2字幕组&华盟字幕社】[4月新番][Code_Geass_反叛的鲁路修_R2][BIG5][18][RMVB]',
+        '【X2字幕组&华盟字幕社】[4月新番][Code_Geass_反叛的鲁路修_R2][BIG5][15][RMVB]',
+        '【X2字幕组&华盟字幕社】[4月新番][Code_Geass_反叛的鲁路修_R2][BIG5][11][RMVB]',
+        '【WOLF字幕组】[08年4月番]【Code Geass 反叛的鲁路修R2】【01-25完结全】【RMVB】',
+        '【X2字幕组&华盟字幕社】[Code_Geass_反叛的鲁路修_R2][GB_BIG5][1-25][720P_MP4][完结合集]',
+      ]) {
+        expect(
+          _judge(s1, title, publishedAt: DateTime.utc(2008, 8, 11)),
+          '第二季',
+          reason: title,
+        );
+      }
+    });
+
+    test('S1 页面：标 1st Season / 没标季号的 S1 行照旧算本作', () {
+      expect(
+        _judge(
+          s1,
+          '[Code Geass 反叛的鲁路修][1st Season][TVB粤语][RMVB]',
+          publishedAt: DateTime.utc(2011, 10, 22),
+        ),
+        '本作',
+      );
+      expect(
+        _judge(
+          s1,
+          '[QYQ][Code Geass 反叛的鲁路修][BDRip][1st Season][1080P][外挂WLGO字幕]',
+          publishedAt: DateTime.utc(2011, 8, 22),
+        ),
+        '本作',
+      );
+      expect(
+        _judge(
+          s1,
+          '[WLGO][Code Geass 反叛的鲁路修][1-25全][RMVB]',
+          publishedAt: DateTime.utc(2008, 4, 4),
+        ),
+        '本作',
+        reason: 'S1 自己的合集（标题里没季号，靠时间窗算本作）',
+      );
+    });
+
+    test('R2 页面：R2 的行算本作，标 1st Season 的行是「第一季」', () {
+      expect(
+        _judge(
+          r2,
+          '【X2字幕组&华盟字幕社】[Code_Geass_反叛的鲁路修_R2][GB_BIG5][1-25][720P_MP4][完结合集]',
+          publishedAt: DateTime.utc(2009, 2, 24),
+        ),
+        '本作',
+      );
+      expect(
+        _judge(
+          r2,
+          '[QYQ][Code Geass 反叛的鲁路修][BDRip][2nd Season][01][1080P][外挂WLGO字幕]',
+          publishedAt: DateTime.utc(2011, 1, 18),
+        ),
+        '本作',
+      );
+      expect(
+        _judge(
+          r2,
+          '[Code Geass 反叛的鲁路修][1st Season][TVB粤语][RMVB]',
+          publishedAt: DateTime.utc(2011, 10, 22),
+        ),
+        '第一季',
+      );
+    });
+
+    test('split：R2 的合集不再落进 S1 的「本作合集」页', () {
+      final List<SourceItemView> pool = <SourceItemView>[
+        _item(
+          '【X2字幕组&华盟字幕社】[4月新番][Code_Geass_反叛的鲁路修_R2][BIG5][18][RMVB]',
+          DateTime.utc(2008, 8, 11),
+        ),
+        _item(
+          '【X2字幕组&华盟字幕社】[Code_Geass_反叛的鲁路修_R2][GB_BIG5][1-25][720P_MP4][完结合集]',
+          DateTime.utc(2009, 2, 24),
+        ),
+        _item(
+          '[Code Geass 反叛的鲁路修][1st Season][BIG5][RMVB]',
+          DateTime.utc(2011, 2, 11),
+        ),
+        _item(
+          '[QYQ][Code Geass 反叛的鲁路修][BDRip][1st Season][1080P][外挂WLGO字幕]',
+          DateTime.utc(2011, 8, 22),
+        ),
+      ];
+      final SeedVersionSplit split = splitSeedVersions(pool, s1);
+      expect(split.current.map((SourceItemView i) => i.title), <String>[
+        '[Code Geass 反叛的鲁路修][1st Season][BIG5][RMVB]',
+      ]);
+      expect(split.batch.map((SourceItemView i) => i.title), <String>[
+        '[QYQ][Code Geass 反叛的鲁路修][BDRip][1st Season][1080P][外挂WLGO字幕]',
+      ]);
+      expect(split.others.single.label, '第二季');
+      expect(split.others.single.count, 2, reason: 'R2 的单集与合集都在别的版本里，一条不丢');
+    });
+  });
 }

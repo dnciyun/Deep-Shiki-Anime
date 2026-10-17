@@ -42,6 +42,17 @@
 /// 当成了 Ⅴ = 第五季。现在罗马数字两侧都不许挨着数字；实测
 /// `build/round48c/sg_titles.txt` 的 841 条真标题里正好 6 条这种
 /// （修前 6 条落进「第五季」，修后 0 条）。
+///
+/// ── 第五十四轮：Code Geass 的 `R2` 就是第二季 ─────────────────────────────────
+/// 用户原话：「详细页的 CodeGeass 反叛的鲁路修，依旧会把第二季当第一季」。
+/// 根因：Code Geass 第二季在发布标题里几乎只写 `R2`（`[反叛的鲁路修][R2][12]`、
+/// `[Code_Geass_反叛的鲁路修_R2]`、`Lelouch of the Rebellion R2`），旧词表里没有这个
+/// 写法，于是第二季的单集/合集在 S1 页面上全部落进「本作」—— 直接当第一季显示。
+/// 真标题取证（`build/round54/titles.tsv`：DMHY 两个分区 + mikan 搜索页真抓，
+/// 回放探针 `test/round54_cg_probe.dart`）：S1 页面 45 条里有 **6 条 R2** 在「本作」
+/// （含 R2 的 11/15/16/18 话与两条 `01-25` 合集）。现在 [parseSeedVersion] 把 `R2`
+/// 解成季 2（见 `_kSeasonR2`）：S1 页面把它们收进「其他版本 / 第二季」；R2 页面
+/// **自己**的签名也从「季 1」变成「季 2」（否则它页面上的 2nd Season 会被判成别的版本）。
 library;
 
 import 'dart:math' as math;
@@ -459,7 +470,8 @@ SeedVersion parseSeedVersion(String title) {
       : SeedForm.unknown;
 
   // 季号：中文「第二季/第2期/3期」、英文「Season 2/2nd Season/S03」、
-  // 罗马数字「Ⅱ / III」（日文名常见：`無職転生Ⅲ ～…～`）。
+  // 罗马数字「Ⅱ / III」（日文名常见：`無職転生Ⅲ ～…～`）、
+  // Code Geass 系的「R2」（第五十四轮补，见 `_kSeasonR2`）。
   final Set<int> seasons = <int>{};
   for (final Match m in _kSeasonZh.allMatches(lower)) {
     _addNum(seasons, _num(m.group(1)));
@@ -473,6 +485,7 @@ SeedVersion parseSeedVersion(String title) {
   for (final Match m in _kSeasonOrdinal.allMatches(lower)) {
     _addNum(seasons, _num(m.group(1)));
   }
+  if (_kSeasonR2.hasMatch(lower)) _addNum(seasons, 2);
   for (final Match m in _kRoman.allMatches(text)) {
     _addNum(seasons, _romanValue(m.group(1)));
   }
@@ -519,6 +532,23 @@ final RegExp _kSeasonEn = RegExp(
   r'(?<![a-z])(?:season|s)\s*0?([0-9]{1,2})(?![0-9])',
 );
 final RegExp _kSeasonOrdinal = RegExp(r'([0-9]{1,2})\s*(?:st|nd|rd|th)\s+season');
+
+/// `R2` = 第二季（Code Geass 的专用季号写法，第五十四轮补）。
+///
+/// 为什么必须单列：Code Geass 第二季在真标题里几乎只写 `R2` ——
+/// `[WLGO][Code Geass R2 反叛的鲁路修 R2][BIG5][RMVB]`、
+/// `[WLGO][反叛的鲁路修][R2][12][TW繁體][TVRIP][MP4]`、
+/// `[Code_Geass_反叛的鲁路修_R2][BIG5][18][RMVB]`、
+/// `Lelouch of the Rebellion R2 [01-25][Baha][WEB-DL]` —— 一条「第二季 / 2nd Season / Ⅱ」
+/// 都没有，旧词表一条也解不出，于是它们全落进 S1 页面的「本作」（用户报障）。
+/// 实测 `build/round54/titles.tsv` 的 160 条真标题里 **67 条**带独立 `R2`，
+/// 全部是 `R2]` / `R2[` / ` R2 ` / `_R2]` 这几种边界。
+///
+/// 边界与 `[V2]` 同理：两侧都不许挨着字母/数字 —— `R2J`（R2 日版 DVD 源）/ `R2DVD` /
+/// `R2D2` 不是季号；**后面紧跟 `-` 的也不算**（留给 `R2-Raws` 这类组名；
+/// 真标题里 `R2` 后面只会是空格、`]`、`[`）。
+final RegExp _kSeasonR2 = RegExp(r'(?<![a-z0-9])r2(?![a-z0-9-])');
+
 final RegExp _kPartZh = RegExp(
   r'第\s*([0-9]{1,2}|[一二三四五六七八九十]+)\s*(?:部分|クール)',
 );
