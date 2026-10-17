@@ -6,7 +6,7 @@
 /// ┌───────────┬──────────────────────────────────────────────┐
 /// │ DSAnima   │ 工具条：页名 + 源切换 + 窗口按钮              │
 /// │ 主页       ├──────────────────────────────────────────────┤
-/// │ 搜索       │ 内容（IndexedStack：播放器常驻不丢请求）      │
+/// │ 搜索       │ 内容（懒挂载的 IndexedStack：进过的页常驻不丢状态）      │
 /// │ 正在追     │                                              │
 /// │ 队列       │                                              │
 /// │ 已完成     │                                              │
@@ -211,21 +211,7 @@ class _DsShellState extends ConsumerState<DsShell> {
                                 ),
                               ),
                             ),
-                            IndexedStack(
-                              key: dsShellContentKey,
-                              index: tab.index,
-                              // ⚠️ 顺序必须与 `ShellTab.values` 一一对应（`tab.index` 就是下标）。
-                              children: const <Widget>[
-                                HomePage(),
-                                LibraryPage(),
-                                SearchPage(),
-                                FollowingPage(),
-                                QueuePage(),
-                                CompletedPage(),
-                                HistoryPage(),
-                                SettingsPage(),
-                              ],
-                            ),
+                            _LazyTabStack(index: tab.index),
                           ],
                         ),
                       ),
@@ -237,6 +223,81 @@ class _DsShellState extends ConsumerState<DsShell> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 内容区：八个 tab 的**懒挂载**栈
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 八个内容页，**顺序必须与 `ShellTab.values` 一一对应**（`tab.index` 就是下标）。
+///
+/// 写成顶层 `const` 是为了懒挂载时反复取到**同一个实例**：`IndexedStack` 靠位置认
+/// element，实例不变才能保证"进过的页切走再切回来仍是原来那个 State"。
+const List<Widget> _tabPages = <Widget>[
+  HomePage(),
+  LibraryPage(),
+  SearchPage(),
+  FollowingPage(),
+  QueuePage(),
+  CompletedPage(),
+  HistoryPage(),
+  SettingsPage(),
+];
+
+/// 内容区栈：**首帧只建当前 tab，别的页第一次进去才建，建过就常驻**（1.1.0 M1/T1）。
+///
+/// 为什么不再一股脑全建：`IndexedStack` 会**把八个孩子全 build 一遍**（它只是不画），
+/// 于是启动即付出八个页面的挂载代价 ——
+/// * 设置页 `initState` 同步读一遍 10 MB 的设置 box + 数一遍 KV 缓存占用；
+/// * 「正在追」挂载即按订阅数发请求（N 条订阅 = 启动就 N 个出站请求）；
+/// * 每个页面的 provider 全常驻（首页推荐、轮播、种子块…）。
+/// 用户要的是"切页不丢状态"（`IndexedStack` 的意义），而不是"启动就把八页全跑一遍"：
+/// 懒挂载两样都保住 —— 没进过的页不花一分钱，进过的页切走也不销毁。
+///
+/// `SizedBox.shrink()` 占位而不是 `null`/跳过：`IndexedStack.index` 是**位置下标**，
+/// 长度必须恒为 8，否则下标会错位。
+class _LazyTabStack extends StatefulWidget {
+  const _LazyTabStack({required this.index});
+
+  /// 当前该显示哪一页（= `ShellTab.index`）。
+  final int index;
+
+  @override
+  State<_LazyTabStack> createState() => _LazyTabStackState();
+}
+
+class _LazyTabStackState extends State<_LazyTabStack> {
+  /// 已经挂载过（= 进过）的页。一旦 true 永不回退：切走的页留在树里保状态。
+  final List<bool> _visited = List<bool>.filled(_tabPages.length, false);
+
+  @override
+  void initState() {
+    super.initState();
+    // 首帧只有当前 tab（默认是主页）需要真挂。
+    _visited[widget.index] = true;
+  }
+
+  @override
+  void didUpdateWidget(covariant _LazyTabStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 切页 = 这一页第一次进 → 记下来，本次 build 就把它建出来。
+    // 不需要 setState：`didUpdateWidget` 之后必定紧跟一次 build。
+    _visited[widget.index] = true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Key 挂在里面的 `IndexedStack` 上（不是我）：测试用 `find.byKey(dsShellContentKey)`
+    // 拿它读 `index` 判断"当前在哪一页"，换成外层控件会让那批断言全部失效。
+    return IndexedStack(
+      key: dsShellContentKey,
+      index: widget.index,
+      children: <Widget>[
+        for (int i = 0; i < _tabPages.length; i++)
+          if (_visited[i]) _tabPages[i] else const SizedBox.shrink(),
+      ],
     );
   }
 }

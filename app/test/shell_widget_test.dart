@@ -17,6 +17,9 @@ import 'package:dsanima/theme/app_theme.dart';
 import 'package:dsanima/theme/tokens.dart';
 import 'package:dsanima/ui/queue_page.dart';
 import 'package:dsanima/ui/first_run.dart';
+import 'package:dsanima/ui/following_page.dart';
+import 'package:dsanima/ui/home_page.dart';
+import 'package:dsanima/ui/library_page.dart';
 import 'package:dsanima/ui/search_page.dart';
 import 'package:dsanima/ui/settings_page.dart';
 import 'package:dsanima/ui/shell.dart';
@@ -1586,6 +1589,90 @@ void main() {
       expect(container.read(navProvider), ShellTab.home);
       expect(container.read(settingsProvider).seedEnabled, isTrue, reason: '选了保存就要落盘');
       expect(lifecycle.applied, 1, reason: '而且生效恰好一次');
+    });
+  });
+
+  // ── 1.1.0 M1/T1：内容区**懒挂载**（启动只建当前 tab） ────────────────────────
+  //
+  // 为什么要改：`IndexedStack` 会把八个孩子**全 build 一遍**（只是不画），于是启动即付出
+  // 八页的挂载代价 —— 设置页 `initState` 同步读一遍设置 box + 数一遍 KV 缓存占用、
+  // 「正在追」挂载即订阅 mikan 排期、每个页面的 provider 全常驻。用户要的是"切页不丢状态"
+  // （`IndexedStack` 的意义），不是"启动把八页全跑一遍"；懒挂载两样都保住。
+  group('内容区懒挂载：首帧只建当前 tab，进过的页常驻保状态（1.1.0 M1/T1）', () {
+    testWidgets('启动后另外七页都不在树里，但下标语义不变（长度仍是 8）', (WidgetTester tester) async {
+      _sizeTo(tester, const Size(1600, 1000));
+      await tester.pumpWidget(harness(const DsShell()));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(HomePage), findsOneWidget, reason: '默认 tab 是主页，它必须真挂上');
+      // ⚠️ 这里必须 `skipOffstage: false`：`IndexedStack` 把非当前页套在 `Offstage` 里，
+      // 而 finder 默认**跳过 offstage**。用默认值的话"没挂载"和"挂载了但看不见"是同一种
+      // 结果，断言就白写了 —— 这两条要证明的正是"根本没建"。
+      // 设置页最贵（同步读设置 box + 数缓存占用）：没进过就不该在启动时挂载。
+      expect(find.byType(SettingsPage, skipOffstage: false), findsNothing,
+          reason: '没进过设置页，启动时不该建它');
+      expect(find.byType(FollowingPage, skipOffstage: false), findsNothing,
+          reason: '没进过正在追，启动时不该订阅排期');
+      expect(find.byType(LibraryPage, skipOffstage: false), findsNothing);
+      expect(find.byType(SearchPage, skipOffstage: false), findsNothing);
+
+      final IndexedStack stack = tester.widget<IndexedStack>(find.byKey(dsShellContentKey));
+      expect(stack.index, ShellTab.home.index, reason: '懒挂载不许改「当前在哪一页」的语义');
+      expect(stack.children.length, ShellTab.values.length,
+          reason: '占位也要占满 8 格：index 是位置下标，少了会错位');
+    });
+
+    testWidgets('进过就常驻：切走再切回来还是原来那一页（State 不被重建）', (WidgetTester tester) async {
+      _sizeTo(tester, const Size(1600, 1000));
+      await tester.pumpWidget(harness(const DsShell()));
+      await tester.pumpAndSettle();
+
+      // 先进搜索页，往关键字框里打字（这一页的 State 自己拿着 TextEditingController）。
+      await tester.tap(find.text(ShellTab.search.label).first);
+      await tester.pumpAndSettle();
+      expect(find.byType(SearchPage), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, 'frieren');
+      await tester.pumpAndSettle();
+
+      // 切到队列再切回搜索：框里的字还在 = 这一页的 State 一直被保着。
+      await tester.tap(find.text(ShellTab.queue.label).first);
+      await tester.pumpAndSettle();
+      // `skipOffstage: false`：切走的页还在树里、只是被 `IndexedStack` 套进 `Offstage`。
+      expect(find.byType(SearchPage, skipOffstage: false), findsOneWidget,
+          reason: '已挂载的页切走也不销毁（这正是 IndexedStack 要保住的东西）');
+      await tester.tap(find.text(ShellTab.search.label).first);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller?.text,
+        'frieren',
+        reason: '切回来输入内容必须还在（懒挂载不能变成"每次进页重建成空白"）',
+      );
+      // 主页从启动就挂着，此时依然在树里（只是看不见）。
+      expect(find.byType(HomePage, skipOffstage: false), findsOneWidget);
+    });
+
+    testWidgets('八个 tab 逐个点一遍：每一页第一次进都能挂载，且进过之后都在树里', (WidgetTester tester) async {
+      _sizeTo(tester, const Size(1600, 1400));
+      await tester.pumpWidget(harness(const DsShell()));
+      await tester.pumpAndSettle();
+
+      for (final ShellTab tab in ShellTab.values) {
+        // 侧栏在内容区之前，`.first` 命中的是导航项（设置是左下角齿轮旁那颗「设置」字）。
+        await tester.tap(find.text(tab.label).first);
+        await tester.pumpAndSettle();
+        final IndexedStack stack = tester.widget<IndexedStack>(find.byKey(dsShellContentKey));
+        expect(stack.index, tab.index, reason: '点「${tab.label}」后没切过去');
+        expect(tester.takeException(), isNull, reason: '「${tab.label}」首次挂载抛异常了');
+      }
+
+      // 八页都进过了 → 八页全在树里（懒挂载只在"第一次进"花一次钱）。
+      // 此刻可见的是设置页，其余七页在 `Offstage` 里，所以要 `skipOffstage: false`。
+      expect(find.byType(HomePage, skipOffstage: false), findsOneWidget);
+      expect(find.byType(LibraryPage, skipOffstage: false), findsOneWidget);
+      expect(find.byType(SearchPage, skipOffstage: false), findsOneWidget);
+      expect(find.byType(FollowingPage, skipOffstage: false), findsOneWidget);
+      expect(find.byType(QueuePage, skipOffstage: false), findsOneWidget);
+      expect(find.byType(SettingsPage), findsOneWidget, reason: '当前可见的就是它');
     });
   });
 }
