@@ -23,6 +23,7 @@ import '../domain/models.dart';
 import '../domain/playlist.dart';
 import '../domain/ports.dart';
 import '../domain/watch_history.dart';
+import 'last_playback.dart';
 import 'providers.dart';
 import 'series_loader.dart';
 
@@ -50,12 +51,22 @@ class PlayTarget {
 @immutable
 class PlaybackUiState {
   final NowPlaying? nowPlaying;
+
+  /// 「上次播放」的落盘快照（进程重启后从 KV 读回来）。
+  ///
+  /// ⚠️ **不是 `nowPlaying`**：没有有效的 `streamUrl`/`engineId` 时不许假装"正在播"
+  /// （侧栏那行据此显示「继续播放」而不是「正在播放」，点它才去引擎里找 torrent）。
+  /// 开播成功 / `stop()` 都会把它清掉；恢复失败时**故意保留**（不许无声吞掉，见
+  /// `resumeRestored`）。
+  final LastPlayback? restored;
+
   final bool busy;
   final bool playing;
   final DsFailure? failure;
 
   const PlaybackUiState({
     this.nowPlaying,
+    this.restored,
     this.busy = false,
     this.playing = false,
     this.failure,
@@ -63,14 +74,17 @@ class PlaybackUiState {
 
   PlaybackUiState copyWith({
     NowPlaying? nowPlaying,
+    LastPlayback? restored,
     bool? busy,
     bool? playing,
     DsFailure? failure,
     bool clearFailure = false,
     bool clearNowPlaying = false,
+    bool clearRestored = false,
   }) =>
       PlaybackUiState(
         nowPlaying: clearNowPlaying ? null : (nowPlaying ?? this.nowPlaying),
+        restored: clearRestored ? null : (restored ?? this.restored),
         busy: busy ?? this.busy,
         playing: playing ?? this.playing,
         failure: clearFailure ? null : (failure ?? this.failure),
@@ -90,13 +104,34 @@ class PlaybackController extends Notifier<PlaybackUiState> {
   /// 当前播放列表（UI/诊断只读）。null = 单集播放，没有列表。
   Playlist? get playlist => _playlist;
 
+  /// 当前这一集最近一次进度（毫秒）。快照写盘用它 —— 「收起/关窗」那一刻未必还有
+  /// `PlaybackPosition` 信号可等，手里得先有最近的位置。
+  int _positionMs = 0;
+
+  /// 上次**成功写盘**的时刻（快照节流用；只看写盘，不看内存里的更新）。
+  DateTime? _snapshotSavedAt;
+
+  /// 进度快照的写盘节流：进度 5 秒一条，每一条都落盘没必要（Hive 写是同步落盘）。
+  ///
+  /// 15 秒的取舍：最坏情况丢 15 秒进度（重启后从 15 秒前接着播，比"从头"好得多），
+  /// 写盘频率从 0.2 次/秒降到约 0.07 次/秒。**用户明确动作**（开播/收起窗口/停止）
+  /// 不受节流影响：开播、收起窗口强制写，停止则**清空**。
+  static const Duration kSnapshotWriteInterval = Duration(seconds: 15);
+
   @override
   PlaybackUiState build() {
     ref.onDispose(() {
       unawaited(_sub?.cancel());
       _sub = null;
     });
-    return const PlaybackUiState();
+    // 「上次播放」快照是**同步**读的（`KeyValueStore.get` 同步，Hive 也是），所以
+    // 启动第一帧侧栏就能拿到 `restored`，不需要等任何异步加载。
+    //
+    // ⚠️ 刻意用 `read` 而不是 `watch`：写快照会更新 `lastPlaybackProvider` 的状态，
+    // 若 watch 它，本控制器会整体重建、把 `nowPlaying/playing` 一起冲掉（正在播的
+    // 东西突然消失）—— 那是比"重启后没有继续播放"严重得多的回归。
+    final LastPlayback? restored = ref.read(lastPlaybackProvider);
+    return PlaybackUiState(restored: restored);
   }
 
   void _ensureSubscribed() {
@@ -205,6 +240,10 @@ class PlaybackController extends Notifier<PlaybackUiState> {
           watchByUrl: watchByUrl,
         ),
       );
+      // 「上次播放」快照：开播成功就落一次（位置 0 = 从头；之后进度节流更新）。
+      // 放在这里而不是等第一次进度：用户可能刚点开就关掉程序 —— 那时也得记得"在看哪一集"。
+      _positionMs = 0;
+      await _saveSnapshotNow();
       // 观看记录：开播就写一条（**不等它** —— 记不上账也不该挡着出画面）。
       unawaited(_recordWatchStart(
         watch,
@@ -460,6 +499,9 @@ class PlaybackController extends Notifier<PlaybackUiState> {
           ),
         ),
       );
+      // 快照位置 = 这次起播用的起点（从观看记录续播时就是上次看到的位置）。
+      _positionMs = (startPositionMs == null || startPositionMs <= 0) ? 0 : startPositionMs;
+      await _saveSnapshotNow();
       unawaited(_recordWatchStart(watch, engineId: torrent.id, fileIndex: file.index));
       await _recordRecent(
         title: torrent.name,
@@ -646,6 +688,84 @@ class PlaybackController extends Notifier<PlaybackUiState> {
     } catch (_) {
       // 子窗口每 5 秒报一条，一条失败不该往上抛（下一跳会补上）。
     }
+    // 「上次播放」快照：位置跟着进度走，但**节流写盘**（见 [kSnapshotWriteInterval]）。
+    // 放在 `recordWatchProgress` 开关之后：用户关掉"记录播放进度"就是不记，别绕过去。
+    _positionMs = progress.positionMs;
+    await _maybeSaveSnapshot(watch: watch, fileIndex: fileIndex);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 「上次播放」快照：关掉程序之后，侧栏那行「继续播放」还能回来
+  //
+  // 用户 2026-10-17：「关闭程序后继续观看就没了，会影响有时候的体验」。
+  // 旧实现 `nowPlaying` 只在内存 → 重启后那行整行不渲染。现在：
+  // 开播 / 进度（节流）/ 收起窗口时写快照，`stop()` 清空；重启时 `build()` 读回
+  // `state.restored`，点那一行走 [resumeRestored]（按 infoHash 回引擎找 torrent）。
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /// 从当前 `nowPlaying` 造一条快照。
+  ///
+  /// [watch] / [fileIndex] 给"子窗口自己换集"的情况（进度里带着真正在放的那一集）；
+  /// 不传就用 `nowPlaying` 自己的。**没有 infoHash 就不落盘**：重启后找不到 torrent 的
+  /// 快照只会让侧栏出现一条"点了必失败"的行 —— 宁可没有（那行保持现状不显示）。
+  LastPlayback? _snapshotOfCurrent({
+    WatchMeta? watch,
+    int? fileIndex,
+    int positionMs = 0,
+  }) {
+    final NowPlaying? current = state.nowPlaying;
+    if (current == null) return null;
+    final WatchMeta? meta = watch ?? current.watch;
+    final String hash = (meta?.infoHash ?? '').trim();
+    if (hash.isEmpty) return null;
+    // 子窗口自己换到同一 torrent 的其它文件时，mapped watch 与 `nowPlaying.watch`
+    // **不是同一个实例**，那一集的标题只存在于 `episodeLabel` 里；`nowPlaying.title`
+    // 还是最开始那一集 —— 拿它显示会让"继续播放"写着第 1 集、实际续的是第 2 集。
+    final bool switchedFile = watch != null && !identical(watch, current.watch);
+    final String mappedTitle = (watch?.episodeLabel ?? '').trim();
+    return LastPlayback(
+      title: switchedFile && mappedTitle.isNotEmpty ? mappedTitle : current.title,
+      showTitle: meta?.title,
+      titleEn: meta?.titleEn,
+      coverUrl: meta?.coverUrl,
+      coverReferer: meta?.coverReferer,
+      mikanBangumiId: meta?.mikanBangumiId,
+      infoHash: hash,
+      fileIndex: fileIndex ?? current.fileIndex,
+      startPositionMs: positionMs <= 0 ? 0 : positionMs,
+      savedAt: DateTime.now(),
+    );
+  }
+
+  /// 立即写快照（**不节流**）：给"用户明确动作"用（开播 / 收起窗口）。
+  ///
+  /// 写盘失败只吞掉：记不住"上次播放"不该影响正在进行的播放（与观看记录同一口径）。
+  Future<void> _saveSnapshotNow({
+    WatchMeta? watch,
+    int? fileIndex,
+    int? positionMs,
+  }) async {
+    final LastPlayback? snapshot = _snapshotOfCurrent(
+      watch: watch,
+      fileIndex: fileIndex,
+      positionMs: positionMs ?? _positionMs,
+    );
+    if (snapshot == null) return;
+    try {
+      await ref.read(lastPlaybackProvider.notifier).save(snapshot);
+      _snapshotSavedAt = DateTime.now();
+    } catch (_) {
+      // 写盘失败不影响播放；下一次进度/收起还会再试。
+    }
+  }
+
+  /// 进度上报里的节流写盘（[kSnapshotWriteInterval]）。
+  Future<void> _maybeSaveSnapshot({WatchMeta? watch, int? fileIndex}) async {
+    final DateTime? last = _snapshotSavedAt;
+    if (last != null && DateTime.now().difference(last) < kSnapshotWriteInterval) {
+      return;
+    }
+    await _saveSnapshotNow(watch: watch, fileIndex: fileIndex);
   }
 
   /// 播放完成 → 自动下一集（可关）。
@@ -674,6 +794,9 @@ class PlaybackController extends Notifier<PlaybackUiState> {
       // 队列没接通/引擎没起都不该影响关窗本身；下次播放会重新入队。
     }
     await _maybeStopSeeding(current.engineId);
+    // 收起/关窗 = 这一集先看到这儿：**强制**写一次快照（节流只约束 `onWatchProgress`，
+    // 这是用户明确动作）。不清 `nowPlaying`（还要能唤回），也不清快照（重启后要能继续）。
+    await _saveSnapshotNow(positionMs: _positionMs);
   }
 
   /// 停止播放（并按策略停止做种）。
@@ -686,6 +809,14 @@ class PlaybackController extends Notifier<PlaybackUiState> {
       // 播放器未接通时忽略：下面照样清状态、照样停做种。
     }
     if (current != null) await _maybeStopSeeding(current.engineId);
+    // 用户主动停止 = 这一集不再继续看：快照一起清掉（否则重启后侧栏又冒出来一行）。
+    _positionMs = 0;
+    _snapshotSavedAt = null;
+    try {
+      await ref.read(lastPlaybackProvider.notifier).clear();
+    } catch (_) {
+      // 清不掉也不阻塞停止；下次开播会覆盖它。
+    }
     state = const PlaybackUiState();
   }
 
@@ -774,6 +905,122 @@ class PlaybackController extends Notifier<PlaybackUiState> {
         failure: describeFailure(error, stackTrace: stackTrace),
       );
     }
+  }
+
+  /// 点侧栏「继续播放」那行（**重启后**：只有 `restored`、没有 `nowPlaying` 时）：
+  /// 拿快照里的 infoHash 回引擎找 torrent，找到就从快照的位置接着播。
+  ///
+  /// 为什么按 infoHash 找而不是 `engineId`：`engineId` 是引擎进程内的编号，
+  /// 重启边车/重启宿主都会变 —— 与「观看记录」页 `_play` 同一个教训、同一套做法。
+  ///
+  /// 不静默：找不到 torrent/文件时把原因写进 `state.failure`，并**保留** `restored`
+  /// （不许把用户的上次记录无声吞掉；行还在、失败横幅说清为什么）。
+  Future<void> resumeRestored() async {
+    final LastPlayback? snapshot = state.restored;
+    if (snapshot == null) return;
+    // 已经有在播的东西时，侧栏那行走的是"唤回"那条路；这里兜底一下，别把在播的顶掉。
+    if (state.nowPlaying != null) {
+      await reopenPlayerWindow();
+      return;
+    }
+    state = state.copyWith(busy: true, clearFailure: true);
+    try {
+      final List<EngineTorrentView> torrents = await _listForResume();
+      EngineTorrentView? torrent;
+      for (final EngineTorrentView candidate in torrents) {
+        if (candidate.infoHash == snapshot.infoHash) {
+          torrent = candidate;
+          break;
+        }
+      }
+      // 按 `file.index` 找，而不是拿 `files[fileIndex]` 当下标：串流地址里的序号是
+      // 引擎的 `index`（一般与下标一致，但这里不赌"一致"）。
+      EngineFileView? file;
+      for (final EngineFileView candidate in torrent?.files ?? const <EngineFileView>[]) {
+        if (candidate.index == snapshot.fileIndex) {
+          file = candidate;
+          break;
+        }
+      }
+      final EngineTorrentView? foundTorrent = torrent;
+      final EngineFileView? foundFile = file;
+      if (foundTorrent == null || foundFile == null) {
+        state = state.copyWith(
+          busy: false,
+          failure: const DsFailure(
+            '上次看的种子已经不在引擎里了，没法从上次的位置接着播',
+            hint: '可能被移除、换过种子，或边车这次是全新会话（重启前的任务没恢复）。'
+                '到「已完成」或「正在追」重新点一集；右键侧栏那行「继续播放」可以忘掉它',
+          ),
+        );
+        return;
+      }
+      // `playTorrentFile` 内部会先 `_ensureEngineRunning`（resume 那条 torrent）再取流，
+      // 所以这里不重复调；（它失败时会自己写 `state.failure`，并保留 `restored`）。
+      await playTorrentFile(
+        torrent: foundTorrent,
+        file: foundFile,
+        showTitle: snapshot.showTitle ?? snapshot.title,
+        showTitleEn: snapshot.titleEn,
+        coverUrl: snapshot.coverUrl,
+        coverReferer: snapshot.coverReferer,
+        mikanBangumiId: snapshot.mikanBangumiId,
+        startPositionMs: snapshot.startPositionMs,
+      );
+    } catch (error, stackTrace) {
+      // 重试窗口过了边车还没接上：给一条"等一下再点"的可行动文案，
+      // 而不是把 `_notConnected` 那条（面向"边车没运行"的）原样丢给用户。
+      if (error is PortUnavailableException && error.message.contains('未连接')) {
+        state = state.copyWith(
+          busy: false,
+          failure: const DsFailure(
+            '边车还没连上，暂时没法恢复上次的播放',
+            hint: '引擎可能还在启动（冷启动约 1–3 秒）：等一下就绪后再点一次「继续播放」；'
+                '一直连不上就到「设置 → 引擎」点「启动 / 重连引擎」',
+          ),
+        );
+        return;
+      }
+      state = state.copyWith(
+        busy: false,
+        failure: describeFailure(error, stackTrace: stackTrace),
+      );
+    }
+  }
+
+  /// 取引擎 torrent 列表；**重启后边车可能还在启动**，给一小段重试窗口。
+  ///
+  /// 为什么：`main.dart` 拉起边车是 `unawaited` 的（冷启动约 1–3.5s），而用户很可能
+  /// 一看到「继续播放」那行就点 —— 第一次就弹"引擎未连接"会让人以为这个功能坏了。
+  /// 只在「引擎还没接上」（`PortUnavailableException`）时重试，最多约 3 秒；
+  /// 其它错误（鉴权/超时/HTTP 5xx）立刻原样抛出，不拖时间。
+  Future<List<EngineTorrentView>> _listForResume() async {
+    const int attempts = 6;
+    const Duration interval = Duration(milliseconds: 500);
+    for (int attempt = 0; ; attempt++) {
+      try {
+        return await ref.read(enginePortProvider).list();
+      } on PortUnavailableException catch (error, stackTrace) {
+        if (attempt + 1 >= attempts || !ref.mounted) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+        await Future<void>.delayed(interval);
+      }
+    }
+  }
+
+  /// 忘掉「上次播放」快照（侧栏那行「继续播放」右键）。
+  ///
+  /// 为什么需要这个出口：恢复失败时 `restored` 是**故意保留**的（不许无声吞掉用户的上次
+  /// 记录），但那时用户也得有办法把这条"点了总失败"的行清掉 —— 否则每次启动都冒出来。
+  Future<void> forgetRestored() async {
+    if (state.restored == null) return;
+    try {
+      await ref.read(lastPlaybackProvider.notifier).clear();
+    } catch (_) {
+      // 清不掉也要让界面先别显示它（内存态是这次会话的真相；下次启动若还在，再清一次）。
+    }
+    state = state.copyWith(clearRestored: true, clearFailure: true);
   }
 
   /// 解析可播目标：先试 core 的队列（入队 + 预取），再退化到直接加种。

@@ -32,8 +32,10 @@ import 'package:path/path.dart' as p;
 import 'package:window_manager/window_manager.dart';
 
 import '../domain/error_text.dart';
+import '../domain/format.dart' show formatDuration;
 import '../domain/models.dart';
 import '../domain/ports.dart';
+import '../state/last_playback.dart';
 import '../state/playback.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
@@ -1120,14 +1122,21 @@ class _ResumePlayingRowState extends ConsumerState<_ResumePlayingRow> {
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
-    final NowPlaying? current = ref.watch(playbackProvider).nowPlaying;
+    final PlaybackUiState playback = ref.watch(playbackProvider);
+    final NowPlaying? current = playback.nowPlaying;
+    final LastPlayback? restored = playback.restored;
+    // 没在播、也没有「上次播放」快照 → 整行不渲染（不留空位，第十七轮的行为不变）。
+    if (current == null && restored == null) return const SizedBox.shrink();
+    // 重启后只有快照、没有在播的东西：显示成一行"继续播放"，点它才回引擎找 torrent。
+    // ⚠️ 这不是"正在播放"：不伪造 nowPlaying，也不读播放窗口那几个 provider（窗口没开过，
+    // 组件测试环境里 `playerWindowServiceProvider` 可能根本没装配）。
+    if (current == null) return _buildRestoredRow(t, restored!);
     // `windowOpen` = 这扇窗还在（含"被收起来"）；`visible` = 它在屏幕上（在播/暂停中）。
     // 用户 2026-10-11：关掉播放器 = 收起来（不拆引擎），所以这两件事必须分开看，
     // 否则收起之后侧栏还会显示"正在播放"。
     //
     // ⚠️ 两个窗口 provider 必须在 `current != null` **之后**才读：没有播放窗口时
     // `playerWindowServiceProvider` 可能根本没被装配（组件测试就是这种环境）。
-    if (current == null) return const SizedBox.shrink();
     final bool windowOpen = ref.watch(playerWindowIsOpenProvider);
     final bool visible = ref.watch(playerWindowVisibleProvider);
     final String title = ref.watch(playerWindowTitleProvider) ?? current.title;
@@ -1200,6 +1209,82 @@ class _ResumePlayingRowState extends ConsumerState<_ResumePlayingRow> {
         ),
       ),
     );
+  }
+
+  /// 「重启后恢复」态的一行：有上次播放的上下文，但**没在播**。
+  ///
+  /// 与在播那行刻意长得一样（图标 + 文字 + tooltip），区别只在于：文案固定「继续播放」、
+  /// 不用成功色（`visible` 为 false 时本来也是灰的），并且**不碰播放窗口 provider**。
+  Widget _buildRestoredRow(DsTokens t, LastPlayback restored) {
+    final String from = restored.startPositionMs > 0
+        ? '上次看到 ${formatDuration(Duration(milliseconds: restored.startPositionMs))}，'
+        : '';
+    final Color fg = _hover ? t.text : t.text2;
+    return Padding(
+      // 与导航项同一条左右内边距（侧栏固定 184px，回归测试盯着它）。
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Tooltip(
+        message: '继续播放：${restored.title}\n$from点一下让它接着上次的位置播\n'
+            '右键可以忘掉这条记录（之后不再显示「继续播放」）',
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hover = true),
+          onExit: (_) => setState(() => _hover = false),
+          child: GestureDetector(
+            key: dsResumePlayingKey,
+            behavior: HitTestBehavior.opaque,
+            onTap: () => unawaited(_resumeRestoredTap()),
+            // 恢复失败时快照是**故意留着**的（不许无声吞掉），所以必须给一个"忘掉它"的出口，
+            // 否则那条"点了总失败"的行每次启动都冒出来。
+            onSecondaryTap: () => unawaited(_forgetRestoredTap()),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              decoration: BoxDecoration(
+                color: _hover ? t.sunken : Colors.transparent,
+                borderRadius: BorderRadius.circular(t.radiusControl),
+              ),
+              child: Row(
+                children: <Widget>[
+                  Icon(Icons.play_circle_outline, size: 16, color: fg),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '继续播放',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: fg,
+                        fontSize: DsTypeScale.secondary,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 点「重启后恢复」那行：走 [PlaybackController.resumeRestored]，失败照常浮出。
+  ///
+  /// 与在播那行同一个口径（第四十二轮 UX #9）：`resumeRestored` 把失败写进
+  /// `playbackProvider.failure`，这里"读完就报"—— 主窗口唯一的播放入口失败了不能没声音。
+  Future<void> _resumeRestoredTap() async {
+    await ref.read(playbackProvider.notifier).resumeRestored();
+    if (!mounted) return;
+    final DsFailure? failure = ref.read(playbackProvider).failure;
+    if (failure != null) showFailure(context, failure);
+  }
+
+  /// 右键「忘掉这条继续播放」：清掉落盘快照 + 当前恢复态（不给二次确认：低摩擦，
+  /// 而且它只是一条"上次看到哪儿"的记录，不是用户数据）。
+  Future<void> _forgetRestoredTap() async {
+    await ref.read(playbackProvider.notifier).forgetRestored();
+    if (!mounted) return;
+    showSuccess(context, '已忘掉上次播放的记录');
   }
 
   /// 点这一行：在播 = 暂停，收起/关掉 = 唤回并继续。
