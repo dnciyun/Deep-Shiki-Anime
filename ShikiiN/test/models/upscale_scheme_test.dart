@@ -86,4 +86,72 @@ void main() {
     expect(const UpscaleSelection(schemeId: kAnime4kUltraSchemeId).isOff, isFalse);
     expect(const UpscaleSelection(schemeId: kAnime4kSchemeId).isOff, isTrue);
   });
+
+  group('扩展方案合并（1.1.0 M3/T17）', () {
+    UpscaleScheme external(String id, {List<String> files = const ['a.glsl']}) =>
+        UpscaleScheme(
+          id: id,
+          name: '扩展 $id',
+          shortName: id,
+          kind: UpscaleSchemeKind.glslPack,
+          files: files,
+          dir: r'C:\data\extensions\' + id,
+          note: '扩展',
+        );
+
+    test('没有扩展 = 就是内置那两张', () {
+      expect(mergedUpscaleSchemes().map((s) => s.id), schemes.map((s) => s.id));
+      expect(mergedUpscaleSchemes(extra: const []), hasLength(2));
+    });
+
+    test('扩展排在内置后面，且不吃掉内置', () {
+      final List<UpscaleScheme> merged = mergedUpscaleSchemes(
+        extra: <UpscaleScheme>[external('anime4k-modeb'), external('cunny-dp4a')],
+      );
+      expect(merged.map((s) => s.id), <String>[
+        kAnime4kSchemeId,
+        kAnime4kUltraSchemeId,
+        'anime4k-modeb',
+        'cunny-dp4a',
+      ]);
+      expect(merged.first.isAnime4k, isTrue, reason: '菜单里 Anime4K 永远在最上面');
+    });
+
+    test('id 撞内置的一律丢掉（安全底线）', () {
+      final List<UpscaleScheme> merged = mergedUpscaleSchemes(
+        extra: <UpscaleScheme>[
+          external(kAnime4kSchemeId),
+          external(kAnime4kUltraSchemeId),
+        ],
+      );
+      expect(merged, hasLength(2), reason: '装坏的扩展不能顶掉内置方案');
+      expect(merged[1].dir, isNull, reason: '还是内置那张（用启动注入的 shader 目录）');
+    });
+
+    test('files 为空的扩展不算方案（挂不上链只会静默不生效）', () {
+      final List<UpscaleScheme> merged = mergedUpscaleSchemes(
+        extra: <UpscaleScheme>[external('empty-pack', files: const <String>[])],
+      );
+      expect(merged.map((s) => s.id), isNot(contains('empty-pack')));
+    });
+
+    test('选中扩展方案后胶囊与还原都能认', () {
+      final List<UpscaleScheme> merged = mergedUpscaleSchemes(
+        extra: <UpscaleScheme>[external('anime4k-modeb')],
+      );
+      const UpscaleSelection selection = UpscaleSelection(schemeId: 'anime4k-modeb');
+      expect(selection.isOff, isFalse);
+      expect(selection.label(merged), '超分 anime4k-modeb');
+      expect(selection.resolve(merged).id, 'anime4k-modeb');
+      final UpscaleSelection restored = UpscaleSelection.fromSettings(
+        schemeId: 'anime4k-modeb',
+        schemes: merged,
+      );
+      expect(restored.schemeId, 'anime4k-modeb');
+      // 扩展被卸载之后：同一份设置回退内置 Anime4K，不崩。
+      final UpscaleSelection afterUninstall =
+          UpscaleSelection.fromSettings(schemeId: 'anime4k-modeb', schemes: schemes);
+      expect(afterUninstall.schemeId, kAnime4kSchemeId);
+    });
+  });
 }

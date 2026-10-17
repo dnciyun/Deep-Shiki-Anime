@@ -128,6 +128,29 @@ List<UpscaleScheme> builtinUpscaleSchemes() => <UpscaleScheme>[
       anime4kUltraScheme(),
     ];
 
+/// 内置方案 + 宿主从「扩展」目录扫出来的外部方案（1.1.0 M3/T17）。
+///
+/// 去重规则：**[extra] 里 id 与内置撞车的一律丢掉**（内置是安全底线：用户点一下「超分」
+/// 不能因为一个装坏的扩展变成不知道挂什么 shader 的状态）。正常路径下撞不了 ——
+/// 扩展清单的 id 白名单已经把 `anime4k` / `anime4k-ultra` 列为保留字（core 的
+/// `kReservedExtensionIds`），这里是第二道保险。
+///
+/// 顺序：内置在前（菜单里 Anime4K 永远在最上面），扩展按 [extra] 给的顺序排在后面。
+List<UpscaleScheme> mergedUpscaleSchemes({
+  List<UpscaleScheme> extra = const <UpscaleScheme>[],
+}) {
+  final List<UpscaleScheme> builtin = builtinUpscaleSchemes();
+  if (extra.isEmpty) return builtin;
+  final Set<String> builtinIds = <String>{
+    for (final UpscaleScheme scheme in builtin) scheme.id,
+  };
+  return <UpscaleScheme>[
+    ...builtin,
+    for (final UpscaleScheme scheme in extra)
+      if (!builtinIds.contains(scheme.id) && scheme.files.isNotEmpty) scheme,
+  ];
+}
+
 /// 当前选中的方案 + Anime4K 档位。
 ///
 /// 只有 Anime4K 用 [preset]；其他方案是「单档开/关」，`preset` 仅用于回切时恢复。

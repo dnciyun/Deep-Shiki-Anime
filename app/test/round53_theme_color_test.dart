@@ -91,8 +91,16 @@ void main() {
     final Set<DsHue> tabs = <DsHue>{
       for (final ShellTab tab in ShellTab.values) hueOfTab(tab),
     };
-    expect(tabs, hasLength(ShellTab.values.length), reason: '每个目的地必须有自己的标识');
+    expect(tabs, hasLength(ShellTab.values.length),
+        reason: '每个目的地必须有自己的标识（M3/T15 之后是 9 个）');
     expect(hueOfTab(ShellTab.home), DsHue.orange);
+    // M3/T15：「扩展」插在「已完成」之后，挑一个与相邻的绿/金都不撞的玫红
+    //（紫色系留给「动漫库」，不抢）。
+    expect(hueOfTab(ShellTab.extensions), DsHue.rose);
+    expect(hueOfTab(ShellTab.extensions), isNot(hueOfTab(ShellTab.completed)),
+        reason: '不能和上面的「已完成」同色（emerald）');
+    expect(hueOfTab(ShellTab.extensions), isNot(hueOfTab(ShellTab.history)),
+        reason: '不能和左下角的「观看记录」同色（gold）');
     expect(hueOfSource('dmhy'), hueOfSource('dmhy-batch'));
     expect(hueOfSource('mikan'), DsHue.orange);
     expect(hueOfSource(null), DsHue.slate);

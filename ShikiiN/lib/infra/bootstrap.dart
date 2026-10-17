@@ -179,6 +179,16 @@ Future<AppRuntime> bootstrapPlayer({
   Size? windowSize,
   Size? windowMinSize,
 
+  /// 宿主从「扩展」目录里扫出来的**外部超分方案**（1.1.0 M3/T17）。
+  ///
+  /// 为什么由宿主传：shikiin 不认识 `dsanima_core` 的扩展清单格式，也不该认识 ——
+  /// 它只认 [UpscaleScheme]；扫描目录、读 `state.json` 的启用状态、版本兼容全都是宿主的事
+  /// （见 `app/lib/state/extension_schemes.dart`）。
+  ///
+  /// 与内置方案**去重**：id 撞内置的一律丢掉（见 [mergedUpscaleSchemes]），
+  /// 且 `files` 为空的方案也不算数（没有 shader 文件挂上去只会静默不生效）。
+  List<UpscaleScheme> extraSchemes = const <UpscaleScheme>[],
+
   /// 窗口初始位置（逻辑像素，桌面坐标）。多窗口宿主用它把播放窗口放到主窗口旁边，
   /// 而不是居中把主窗口整个盖住（见 [setupWindow]）。
   Offset? windowPosition,
@@ -284,8 +294,9 @@ Future<AppRuntime> bootstrapPlayer({
     diag.info('bootstrap', 'anime4k shaders ok');
     final savedSettings = AppSettings.fromMap(store.get('app_settings') as Map?);
     // 方案清单：内置 Anime4K 三档 + Anime4K-Ultra（用户「仅保留anime4k包括u」）。
-    // 扩展安装的 GLSL 包在 M3 接进来；mpv 缩放器/ACNet/ARNet/FSR/RCAS 都已按用户要求移除。
-    anime4k.setSchemes(builtinUpscaleSchemes());
+    // 扩展装的 GLSL 包由宿主扫描后从 `extraSchemes` 传进来（1.1.0 M3/T17）；
+    // mpv 缩放器/ACNet/ARNet/FSR/RCAS 都已按用户要求移除。
+    anime4k.setSchemes(mergedUpscaleSchemes(extra: extraSchemes));
     final UpscaleSelection savedSelection = UpscaleSelection.fromSettings(
       schemeId: savedSettings.upscaleSchemeId,
       presetName: savedSettings.anime4kPreset.name,

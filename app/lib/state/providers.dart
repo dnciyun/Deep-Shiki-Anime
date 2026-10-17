@@ -514,9 +514,10 @@ final Provider<bool> needsFirstRunProvider = Provider<bool>(
 
 /// 左侧栏目的地（spec §7.5/§7.6）。
 ///
-/// 第二十七轮补记之后的侧栏形状：顶部导航 = **主页 / 搜索 / 正在追 / 队列 / 已完成**
-///（`shellNavTabs`），左下角那一块 = **观看记录**（`shellFooterTabs`）+ 在播时的
-/// 「继续播放 / 正在播放」+ **设置**（最底下那一整行，`_SettingsGear`）。
+/// 第二十七轮补记之后的侧栏形状：顶部导航 = **主页 / 动漫库 / 搜索 / 正在追 / 队列 / 已完成**
+///（`shellNavTabs`；1.1.0 M3/T15 又在「已完成」后面加了第 7 项**扩展**），
+/// 左下角那一块 = **观看记录**（`shellFooterTabs`）+ 在播时的「继续播放 / 正在播放」+
+/// **设置**（最底下那一整行，`_SettingsGear`）。
 ///
 /// **没有「正在播放」**（用户 2026-10-10 的硬要求）：播放只在**弹出窗口**里发生，
 /// 主窗口不挂任何播放面，所以这一项连同 `ui/player_page.dart` 一起删掉了。
@@ -547,6 +548,13 @@ final Provider<bool> needsFirstRunProvider = Provider<bool>(
 /// ⚠️ `settings` 仍然在枚举里（设置页还在 [IndexedStack] 里、引擎点等入口还要
 /// `select(ShellTab.settings)`），但它**不再出现在侧栏列表**：用户第 14 轮
 /// 「主窗口的设置改为左下角」（后来更正为**左下角**）⇒ 侧栏最底下一整行入口。
+///
+/// **「扩展」**（1.1.0 M3/T15，用户 2026-10-17：「扩展就是插件一样的东西可能会加很多东西」）：
+/// 侧栏顶部导航的最后一项（在「已完成」之后）；它是**资源型插件**的安装/管理页
+/// （1.1.0 只把 `shader-pack` 接进**播放器的「超分」菜单**（重开播放窗口生效，
+/// 见 `state/extension_schemes.dart`），别的内容类型装得上但暂不生效）。
+/// ⚠️ 位置刻意在 `completed` 之后、`history` 之前：`history` 属于左下角那一块
+/// （[shellFooterTabs]），而扩展是**常驻目的地**，所以跟顶部导航排在一起。
 enum ShellTab {
   home('主页', 'mikan 追番更新表 · 今日推荐'),
   library('动漫库', 'Bangumi 全库 · 筛选浏览'),
@@ -554,6 +562,7 @@ enum ShellTab {
   following('正在追', '追番 · 字幕组订阅 · 打勾与下载'),
   queue('队列', '下载进度与优先级'),
   completed('已完成', '下完的剧集 · 按番名分类'),
+  extensions('扩展', '资源包 · 着色器包 · 在线目录'),
   history('观看记录', '看过的番与集 · 可导出'),
   settings('设置', '目录、代理、限速、省流量');
 

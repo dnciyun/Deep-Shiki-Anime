@@ -14,6 +14,9 @@
 ///   logs\shikiin-*.log                     诊断日志
 ///   engine\                                引擎状态（session.json / engine.log / dht.json）
 ///   anime4k_v4.3\                          超分 shader 解包目录（Anime4K 12 + Anime4K-Ultra）
+///   extensions\                            扩展目录（1.1.0 M3）：state.json + <扩展 id>\<文件>
+///                                          （删掉这个目录 = 卸载所有扩展；卸载单个走「扩展」页，
+///                                           文件进回收站）
 ///   dsanima\                              托盘图标 + 封面缓存
 /// ```
 /// 于是：**解压一份 = 一套独立设置**（新落地的副本没有 `store\dsanima.hive`

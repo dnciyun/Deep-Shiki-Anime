@@ -43,6 +43,9 @@ import 'state/cache_sweep.dart';
 import 'state/cover_cache.dart';
 import 'state/desktop_integration.dart';
 import 'state/engine_bootstrap.dart';
+import 'state/extension_schemes.dart';
+import 'state/extensions.dart';
+import 'state/extensions_adapter.dart';
 import 'state/global_failure.dart';
 import 'state/hive_store.dart';
 import 'state/host_data.dart';
@@ -157,6 +160,9 @@ Future<void> main(List<String> args) async {
     lazyPlayer: true,
     dataDir: storeDirOf(supportDir).path,
     supportDirPath: supportDir.path,
+    // 主窗口**不传** `extraSchemes`：它 `lazyPlayer: true`、不建 mpv，超分方案只对
+    // 「播放子窗口」有意义（子窗口自己扫，见 `_runPlayerWindow`）。这里传只会让启动
+    // 多一次目录扫描（1.1.0 M4/T18 正在砍启动路径，不在这上面花时间）。
   );
   // 启动面包屑**写进日志文件**（不只是 stdout）：启动期偶发 `0xC0000005` 时
   // 进程直接没了，stdout 也一起没 —— 只有已经落盘的那几行能说明"死在哪一步"。
@@ -375,6 +381,18 @@ Future<void> main(List<String> args) async {
         GitHubUpdatePort(
           workDir: Directory(p.join(runtime.supportDir.path, 'update')),
           installDir: File(Platform.resolvedExecutable).parent,
+          clientFactory: () => core.IoHttpClientFactory(
+            proxy: coreProxyConfig(liveContainer!.read(settingsProvider)),
+          ).create(),
+        ),
+      ),
+      // 扩展（1.1.0 M3）：装到 `<数据根>/extensions`（便携式：删数据根 = 干净卸载）。
+      // 下载走与「检查更新」**同一条代理设置**（每次请求现读，改代理当场生效）；
+      // 安装的语义（staging/校验/原子替换/卸载进回收站）全在适配器里，见
+      // `domain/extensions_port.dart` 文件头的 6 条契约。
+      extensionsPortProvider.overrideWithValue(
+        ExtensionsAdapter(
+          root: Directory(p.join(runtime.supportDir.path, 'extensions')),
           clientFactory: () => core.IoHttpClientFactory(
             proxy: coreProxyConfig(liveContainer!.read(settingsProvider)),
           ).create(),
@@ -773,6 +791,10 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
     // `player_window_app.dart` 的 `_undoMaximize` 两层兜底（都不碰窗口尺寸）。
     windowMaximizable: false,
     windowPosition: box?.topLeft,
+    // 1.1.0 M3/T17：把「扩展」里装好的 GLSL 包变成超分方案（挂进播放器的「超分」菜单）。
+    // 子窗口是独立引擎，所以**每次开播放窗口都重新扫一遍** —— 装完扩展重开播放就生效，
+    // 不需要重启整个应用。扫不出来（没装/被禁用/文件缺）就只上内置那两张，绝不影响开播。
+    extraSchemes: await loadExtensionUpscaleSchemes(Directory(dataRoot.path)),
   );
   trace('player window: bootstrapPlayer ok');
   // 任务栏 / Alt-Tab 的图标与标题（第十七轮），见 [_applyPlayerWindowChrome]。

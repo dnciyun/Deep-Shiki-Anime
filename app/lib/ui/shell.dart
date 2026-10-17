@@ -1,6 +1,6 @@
 /// 宿主主外壳（按 spec §7.4 渲染图定稿的形态；§7.5/§7.6 追加主页与正在追；第二十一轮去掉「已缓存」；
 /// **第二十七轮**：「订阅」页整页删掉、新增「观看记录」页；**第二十七轮补记**：「观看记录」
-/// 从顶部导航列表搬到左下角 = 设置那一行的上面）：
+/// 从顶部导航列表搬到左下角 = 设置那一行的上面；**1.1.0 M3/T15**：顶部导航最后加「扩展」页）：
 ///
 /// ```
 /// ┌───────────┬──────────────────────────────────────────────┐
@@ -10,6 +10,7 @@
 /// │ 正在追     │                                              │
 /// │ 队列       │                                              │
 /// │ 已完成     │                                              │
+/// │ 扩展       │                                              │
 /// │           │                                              │
 /// │ 观看记录   ├──────────────────────────────────────────────┤
 /// │ 设置（左下角，整行）│ 底部状态条：引擎/速率/对等/磁盘        │
@@ -37,6 +38,7 @@ import '../state/playback.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
 import 'completed_page.dart';
+import 'extensions_page.dart';
 import 'following_page.dart';
 import 'history_page.dart';
 import 'home_page.dart';
@@ -81,6 +83,15 @@ const ValueKey<String> dsSettingsGearKey = ValueKey<String>('ds-settings-gear');
 /// 免得测试里再抄一遍字符串。
 ValueKey<String> dsSidebarFooterRowKey(ShellTab tab) =>
     ValueKey<String>('ds-sidebar-footer-${tab.name}');
+
+/// 侧栏**顶部导航区**里某一项那一行的 key（1.1.0 M3/T15）。
+///
+/// 为什么现在要给它：加了第 9 项「扩展」之后，侧栏与内容区里的同名文字变多
+///（工具条页名、页面正文里的「扩展」二字），按文字定位 `.first` 虽然还能用，
+/// 但一旦有人把页面标题排到侧栏前面就会静默抓错。测试按这个 key 拿行，
+/// 与左下角的 [dsSidebarFooterRowKey] 同一套命名。
+ValueKey<String> dsSidebarNavRowKey(ShellTab tab) =>
+    ValueKey<String>('ds-sidebar-nav-${tab.name}');
 
 class _DsShellState extends ConsumerState<DsShell> {
   /// 已通知过的任务 id（本轮会话；避免同一集反复弹通知）。
@@ -228,13 +239,17 @@ class _DsShellState extends ConsumerState<DsShell> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 内容区：八个 tab 的**懒挂载**栈
+// 内容区：九个 tab 的**懒挂载**栈
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 八个内容页，**顺序必须与 `ShellTab.values` 一一对应**（`tab.index` 就是下标）。
+/// 九个内容页，**顺序必须与 `ShellTab.values` 一一对应**（`tab.index` 就是下标）。
 ///
 /// 写成顶层 `const` 是为了懒挂载时反复取到**同一个实例**：`IndexedStack` 靠位置认
 /// element，实例不变才能保证"进过的页切走再切回来仍是原来那个 State"。
+///
+/// ⚠️ 1.1.0 M3/T15：`extensions` 插在 `completed` 与 `history` 之间（见 `ShellTab` 的
+/// 注释），这里必须同步插在 `CompletedPage` 与 `HistoryPage` 之间 —— 少插/插错位置
+/// 都会让 `tab.index` 指到隔壁那一页（`shell_widget_test` 钉着长度与逐页挂载）。
 const List<Widget> _tabPages = <Widget>[
   HomePage(),
   LibraryPage(),
@@ -242,22 +257,23 @@ const List<Widget> _tabPages = <Widget>[
   FollowingPage(),
   QueuePage(),
   CompletedPage(),
+  ExtensionsPage(),
   HistoryPage(),
   SettingsPage(),
 ];
 
 /// 内容区栈：**首帧只建当前 tab，别的页第一次进去才建，建过就常驻**（1.1.0 M1/T1）。
 ///
-/// 为什么不再一股脑全建：`IndexedStack` 会**把八个孩子全 build 一遍**（它只是不画），
-/// 于是启动即付出八个页面的挂载代价 ——
+/// 为什么不再一股脑全建：`IndexedStack` 会**把九个孩子全 build 一遍**（它只是不画），
+/// 于是启动即付出九个页面的挂载代价 ——
 /// * 设置页 `initState` 同步读一遍 10 MB 的设置 box + 数一遍 KV 缓存占用；
 /// * 「正在追」挂载即按订阅数发请求（N 条订阅 = 启动就 N 个出站请求）；
 /// * 每个页面的 provider 全常驻（首页推荐、轮播、种子块…）。
-/// 用户要的是"切页不丢状态"（`IndexedStack` 的意义），而不是"启动就把八页全跑一遍"：
+/// 用户要的是"切页不丢状态"（`IndexedStack` 的意义），而不是"启动就把九页全跑一遍"：
 /// 懒挂载两样都保住 —— 没进过的页不花一分钱，进过的页切走也不销毁。
 ///
 /// `SizedBox.shrink()` 占位而不是 `null`/跳过：`IndexedStack.index` 是**位置下标**，
-/// 长度必须恒为 8，否则下标会错位。
+/// 长度必须恒为 `ShellTab.values.length`（现在是 9），否则下标会错位。
 class _LazyTabStack extends StatefulWidget {
   const _LazyTabStack({required this.index});
 
@@ -370,6 +386,7 @@ class _Sidebar extends ConsumerWidget {
                 children: <Widget>[
                   for (final ShellTab tab in shellNavTabs)
                     _NavItem(
+                      key: dsSidebarNavRowKey(tab),
                       tab: tab,
                       selected: tab == active,
                       badge: switch (tab) {
@@ -597,6 +614,7 @@ class _NavItemState extends State<_NavItem> {
       ShellTab.following => Icons.favorite_border,
       ShellTab.queue => Icons.downloading,
       ShellTab.completed => Icons.task_alt,
+      ShellTab.extensions => Icons.extension_outlined,
       ShellTab.history => Icons.history,
       ShellTab.settings => Icons.settings_outlined,
     };
@@ -639,7 +657,7 @@ class _NavItemState extends State<_NavItem> {
               child: Row(
                 children: <Widget>[
                   // 第五十二轮：图标 = 色相小方块（未选中 = 18% 淡底 + 色相图标，
-                  // 选中 = 色相实底 + 反差前景图标）。侧栏 8 行因此是一排"彩色路标"。
+                  // 选中 = 色相实底 + 反差前景图标）。侧栏 9 行因此是一排"彩色路标"。
                   Container(
                     width: 24,
                     height: 24,

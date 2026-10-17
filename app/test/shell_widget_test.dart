@@ -15,6 +15,7 @@ import 'package:dsanima/state/playback.dart';
 import 'package:dsanima/state/providers.dart';
 import 'package:dsanima/theme/app_theme.dart';
 import 'package:dsanima/theme/tokens.dart';
+import 'package:dsanima/ui/extensions_page.dart';
 import 'package:dsanima/ui/queue_page.dart';
 import 'package:dsanima/ui/first_run.dart';
 import 'package:dsanima/ui/following_page.dart';
@@ -421,7 +422,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // 顶部导航区每个目的地都在（`shellNavTabs` = ShellTab 去掉 settings 与 history，
-    // 第三十三轮之后是 主页/动漫库/搜索/正在追/队列/已完成 6 项）。
+    // 第三十三轮之后是 主页/动漫库/搜索/正在追/队列/已完成 6 项；
+    // **1.1.0 M3/T15** 在「已完成」后面加了第 7 项「扩展」）。
     for (final ShellTab tab in shellNavTabs) {
       expect(find.text(tab.label), findsWidgets, reason: '缺少导航项：${tab.label}');
     }
@@ -441,13 +443,23 @@ void main() {
     // 第二十一轮：「已缓存」页按用户要求整页删掉（侧栏随之少一项）。
     // `ShellTab.values` 是侧栏与 IndexedStack 的**唯一出处**（`tab.index` 就是下标），
     // 所以这里钉住它的形状 —— 以后谁要加回来，必须同时补 IndexedStack 里的那一页。
-    expect(ShellTab.values.length, 8,
-        reason: '主页/动漫库/搜索/正在追/队列/已完成/观看记录/设置 = 8'
-            '（第三十三轮新增「动漫库」，排在主页下面；第二十七轮：订阅页删掉、新增观看记录）');
+    expect(ShellTab.values.length, 9,
+        reason: '主页/动漫库/搜索/正在追/队列/已完成/扩展/观看记录/设置 = 9'
+            '（第三十三轮新增「动漫库」，排在主页下面；第二十七轮：订阅页删掉、新增观看记录；'
+            '**1.1.0 M3/T15**：新增「扩展」，排在「已完成」之后）');
     expect(ShellTab.values.map((ShellTab t) => t.label), isNot(contains('已缓存')),
         reason: '侧栏不该再有「已缓存」这一项');
     expect(ShellTab.values.map((ShellTab t) => t.label), isNot(contains('订阅')),
         reason: '第二十七轮：「订阅」页整页删掉，订阅功能搬进「正在追」');
+    // M3/T15：第 9 项「扩展」在顶部导航最后（`shellNavTabs.last`），位置在「已完成」之后。
+    expect(shellNavTabs.last, ShellTab.extensions,
+        reason: '「扩展」是顶部导航的最后一项（观看记录/设置都在左下角那一块）');
+    expect(shellNavTabs.indexOf(ShellTab.extensions),
+        greaterThan(shellNavTabs.indexOf(ShellTab.completed)),
+        reason: '「扩展」要排在「已完成」之后');
+    // 导航行的 key 生成函数也要覆盖新 tab（测试按 key 定位，不靠文字 `.first`）。
+    expect(find.byKey(dsSidebarNavRowKey(ShellTab.extensions)), findsOneWidget,
+        reason: '顶部导航缺「扩展」那一行');
     // ⚠️ **第二十七轮补记**（用户：「观看记录改到左下角设置的上面」）：
     // 第一版把「观看记录」当成第 6 个导航项排在顶部列表最后 —— 顶部列表底下隔着一个
     // `Spacer()` 才是设置入口，它离设置有一大段空白，不是"设置的上面"。
@@ -488,6 +500,7 @@ void main() {
       ShellTab.history,
       ShellTab.queue,
       ShellTab.completed,
+      ShellTab.extensions,
       ShellTab.search,
       ShellTab.home,
     ]) {
@@ -1594,12 +1607,12 @@ void main() {
 
   // ── 1.1.0 M1/T1：内容区**懒挂载**（启动只建当前 tab） ────────────────────────
   //
-  // 为什么要改：`IndexedStack` 会把八个孩子**全 build 一遍**（只是不画），于是启动即付出
-  // 八页的挂载代价 —— 设置页 `initState` 同步读一遍设置 box + 数一遍 KV 缓存占用、
+  // 为什么要改：`IndexedStack` 会把九个孩子**全 build 一遍**（只是不画），于是启动即刻付出
+  // 九页的挂载代价 —— 设置页 `initState` 同步读一遍设置 box + 数一遍 KV 缓存占用、
   // 「正在追」挂载即订阅 mikan 排期、每个页面的 provider 全常驻。用户要的是"切页不丢状态"
-  // （`IndexedStack` 的意义），不是"启动把八页全跑一遍"；懒挂载两样都保住。
+  // （`IndexedStack` 的意义），不是"启动把九页全跑一遍"；懒挂载两样都保住。
   group('内容区懒挂载：首帧只建当前 tab，进过的页常驻保状态（1.1.0 M1/T1）', () {
-    testWidgets('启动后另外七页都不在树里，但下标语义不变（长度仍是 8）', (WidgetTester tester) async {
+    testWidgets('启动后另外八页都不在树里，但下标语义不变（长度仍是 9）', (WidgetTester tester) async {
       _sizeTo(tester, const Size(1600, 1000));
       await tester.pumpWidget(harness(const DsShell()));
       await tester.pumpAndSettle();
@@ -1615,11 +1628,13 @@ void main() {
           reason: '没进过正在追，启动时不该订阅排期');
       expect(find.byType(LibraryPage, skipOffstage: false), findsNothing);
       expect(find.byType(SearchPage, skipOffstage: false), findsNothing);
+      expect(find.byType(ExtensionsPage, skipOffstage: false), findsNothing,
+          reason: '没进过扩展页，启动时不该扫扩展目录（M3/T15：它是第 9 页）');
 
       final IndexedStack stack = tester.widget<IndexedStack>(find.byKey(dsShellContentKey));
       expect(stack.index, ShellTab.home.index, reason: '懒挂载不许改「当前在哪一页」的语义');
       expect(stack.children.length, ShellTab.values.length,
-          reason: '占位也要占满 8 格：index 是位置下标，少了会错位');
+          reason: '占位也要占满 9 格：index 是位置下标，少了会错位');
     });
 
     testWidgets('进过就常驻：切走再切回来还是原来那一页（State 不被重建）', (WidgetTester tester) async {
@@ -1651,27 +1666,35 @@ void main() {
       expect(find.byType(HomePage, skipOffstage: false), findsOneWidget);
     });
 
-    testWidgets('八个 tab 逐个点一遍：每一页第一次进都能挂载，且进过之后都在树里', (WidgetTester tester) async {
+    testWidgets('九个 tab 逐个点一遍：每一页第一次进都能挂载，且进过之后都在树里', (WidgetTester tester) async {
       _sizeTo(tester, const Size(1600, 1400));
       await tester.pumpWidget(harness(const DsShell()));
       await tester.pumpAndSettle();
 
       for (final ShellTab tab in ShellTab.values) {
-        // 侧栏在内容区之前，`.first` 命中的是导航项（设置是左下角齿轮旁那颗「设置」字）。
-        await tester.tap(find.text(tab.label).first);
+        // 顶部导航/左下角都走 key（M3/T15 之后侧栏与正文里同名文字变多，按文字 `.first`
+        // 虽然还能用，但页面标题一旦排到侧栏前面就会静默抓错）。
+        final Finder navRow = tab == ShellTab.settings
+            ? find.byKey(dsSettingsGearKey)
+            : tab == ShellTab.history
+                ? find.byKey(dsSidebarFooterRowKey(tab))
+                : find.byKey(dsSidebarNavRowKey(tab));
+        await tester.tap(navRow);
         await tester.pumpAndSettle();
         final IndexedStack stack = tester.widget<IndexedStack>(find.byKey(dsShellContentKey));
         expect(stack.index, tab.index, reason: '点「${tab.label}」后没切过去');
         expect(tester.takeException(), isNull, reason: '「${tab.label}」首次挂载抛异常了');
       }
 
-      // 八页都进过了 → 八页全在树里（懒挂载只在"第一次进"花一次钱）。
-      // 此刻可见的是设置页，其余七页在 `Offstage` 里，所以要 `skipOffstage: false`。
+      // 九页都进过了 → 九页全在树里（懒挂载只在"第一次进"花一次钱）。
+      // 此刻可见的是设置页，其余八页在 `Offstage` 里，所以要 `skipOffstage: false`。
       expect(find.byType(HomePage, skipOffstage: false), findsOneWidget);
       expect(find.byType(LibraryPage, skipOffstage: false), findsOneWidget);
       expect(find.byType(SearchPage, skipOffstage: false), findsOneWidget);
       expect(find.byType(FollowingPage, skipOffstage: false), findsOneWidget);
       expect(find.byType(QueuePage, skipOffstage: false), findsOneWidget);
+      expect(find.byType(ExtensionsPage, skipOffstage: false), findsOneWidget,
+          reason: '进过的扩展页要常驻（切走不销毁）');
       expect(find.byType(SettingsPage), findsOneWidget, reason: '当前可见的就是它');
     });
   });
