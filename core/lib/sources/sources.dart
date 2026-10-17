@@ -15,6 +15,7 @@ export 'mikan.dart';
 export 'mikan_schedule.dart';
 export 'models.dart';
 export 'nyaa.dart';
+export 'parse_off_thread.dart';
 export 'parsing.dart';
 export 'registry.dart';
 export 'rss.dart';

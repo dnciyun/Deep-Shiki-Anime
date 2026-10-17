@@ -27,6 +27,7 @@ import '../subs/title_parser.dart';
 import 'cache.dart';
 import 'http.dart';
 import 'models.dart';
+import 'parse_off_thread.dart';
 import 'parsing.dart';
 import 'source_client.dart';
 
@@ -59,6 +60,35 @@ const String kDmhyBatchSortId = '31';
 class DmhyNotListPageException extends SourceException {
   DmhyNotListPageException(super.message, {super.sourceId, super.url});
 }
+
+/// 列表/搜索页解析的**顶层**入口（1.1.0 M1/T6 起进子 isolate）。
+///
+/// 为什么是顶层函数：实例方法里造的闭包会连 `this` 一起捕获，`Isolate.run` 送不进去
+/// （第四十七轮 mikan 实测，见 `parse_off_thread.dart` 文件头）。小页在
+/// [parseOffThread] 里仍同步解析，行为与改动前一致。
+///
+/// ⚠️ 这里抛出的 [DmhyNotListPageException] / [SourceNoResultsException] 必须能**跨
+/// isolate 原样回来**：前者是 [_loadParsed] 自动重试一次的判据，后者是宿主换短名补搜的
+/// 判据。类型/文案的跨 isolate 等价性由 `parse_off_thread_test.dart` 钉住。
+Future<ParseOutcome> _parseListOffThread({
+  required String body,
+  required String sourceId,
+  required String baseUrl,
+  required String? keyword,
+  required Uri pageUri,
+  required DateTime now,
+}) => parseOffThread<ParseOutcome>(
+  text: body,
+  now: now,
+  compute: (DateTime at) => DmhyListParser.parse(
+    body,
+    sourceId: sourceId,
+    baseUrl: baseUrl,
+    clock: () => at,
+    keyword: keyword,
+    pageUri: pageUri,
+  ),
+);
 
 class DmhySource extends CachedSourceClient {
   DmhySource({
@@ -177,13 +207,14 @@ class DmhySource extends CachedSourceClient {
     for (int attempt = 0; ; attempt++) {
       final String body = await http.getText(uri, sourceId: id);
       try {
-        return DmhyListParser.parse(
-          body,
+        // 一页实测 286KB~390KB：解析进子 isolate（小页仍同步，见 [parseOffThread]）。
+        return await _parseListOffThread(
+          body: body,
           sourceId: id,
           baseUrl: baseUrl,
-          clock: clock,
           keyword: keyword,
           pageUri: uri,
+          now: clock(),
         );
       } on DmhyNotListPageException catch (e) {
         if (attempt >= 1) {

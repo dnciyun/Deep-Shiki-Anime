@@ -26,6 +26,7 @@ import 'bencode.dart';
 import 'cache.dart';
 import 'http.dart';
 import 'models.dart';
+import 'parse_off_thread.dart';
 import 'parsing.dart';
 import 'source_client.dart';
 
@@ -37,6 +38,29 @@ const String kAcgRipAnimeCategory = '1';
 
 /// 「合集」分区（`https://acg.rip/5`）—— 用户说的「全集」在这个站叫合集。
 const String kAcgRipBatchCategory = '5';
+
+/// 列表页解析的**顶层**入口（1.1.0 M1/T6 起进子 isolate）。
+///
+/// 为什么是顶层函数：实例方法里造的闭包会连 `this` 一起捕获，`Isolate.run` 送不进去
+/// （第四十七轮 mikan 实测，见 `parse_off_thread.dart` 文件头）。小页在
+/// [parseOffThread] 里仍同步解析，行为与改动前一致。
+Future<ParseOutcome> _parseListOffThread({
+  required String body,
+  required String sourceId,
+  required String baseUrl,
+  required String categoryLabel,
+  required DateTime now,
+}) => parseOffThread<ParseOutcome>(
+  text: body,
+  now: now,
+  compute: (DateTime at) => AcgRipListParser.parse(
+    body,
+    sourceId: sourceId,
+    baseUrl: baseUrl,
+    categoryLabel: categoryLabel,
+    clock: () => at,
+  ),
+);
 
 class AcgRipSource extends CachedSourceClient {
   AcgRipSource({
@@ -99,12 +123,13 @@ class AcgRipSource extends CachedSourceClient {
       request: CacheRequest.latest(page: page),
       fetch: () async {
         final body = await http.getText(latestUri(page), sourceId: id);
-        final outcome = AcgRipListParser.parse(
-          body,
+        // 一页实测 27KB/30 行：不大，但别把"一般"当保证 —— 按阈值分流。
+        final outcome = await _parseListOffThread(
+          body: body,
           sourceId: id,
           baseUrl: baseUrl,
           categoryLabel: categoryLabel,
-          clock: clock,
+          now: clock(),
         );
         return SourcePage(
           items: outcome.items,
@@ -129,12 +154,12 @@ class AcgRipSource extends CachedSourceClient {
       request: CacheRequest.search(q, page: page),
       fetch: () async {
         final body = await http.getText(searchUri(q, page), sourceId: id);
-        final outcome = AcgRipListParser.parse(
-          body,
+        final outcome = await _parseListOffThread(
+          body: body,
           sourceId: id,
           baseUrl: baseUrl,
           categoryLabel: categoryLabel,
-          clock: clock,
+          now: clock(),
         );
         return SourcePage(
           items: outcome.items,

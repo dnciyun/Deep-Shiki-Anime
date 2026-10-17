@@ -18,6 +18,7 @@ import '../subs/title_parser.dart';
 import 'cache.dart';
 import 'http.dart';
 import 'models.dart';
+import 'parse_off_thread.dart';
 import 'parsing.dart';
 import 'source_client.dart';
 
@@ -170,11 +171,12 @@ class NyaaSource extends CachedSourceClient {
           );
         }
         final body = await http.getText(searchHtmlUri(q, page), sourceId: id);
-        final outcome = NyaaHtmlListParser.parse(
-          body,
+        // ⚠️ 一页可能几百 KB：解析在子 isolate（小页仍同步，见 [parseOffThread]）。
+        final outcome = await _parseHtmlListOffThread(
+          body: body,
           sourceId: id,
           baseUrl: baseUrl,
-          clock: clock,
+          now: clock(),
         );
         return SourcePage(
           items: outcome.items,
@@ -198,12 +200,13 @@ class NyaaSource extends CachedSourceClient {
 
     try {
       final body = await http.getText(viewUri(viewId), sourceId: id);
-      final enriched = NyaaHtmlDetailParser.parse(
-        body,
+      // 详情页一般 ~20KB（同步 1ms），但别把"一般"当保证：同一入口按阈值分流。
+      final enriched = await _parseDetailOffThread(
+        body: body,
         base: item,
         sourceId: id,
         baseUrl: baseUrl,
-        clock: clock,
+        now: clock(),
       );
       if (enriched == null) {
         throw SourceException(
@@ -242,6 +245,46 @@ SourceItem? _itemFromPayload(Map<String, dynamic>? payload) {
     return null;
   }
 }
+
+/// 搜索第 ≥2 页的 HTML 列表解析**顶层**入口（1.1.0 M1/T6 起进子 isolate）。
+///
+/// 为什么是顶层函数：实例方法里造的闭包会连 `this` 一起捕获，`Isolate.run` 送不进去
+/// （第四十七轮 mikan 实测，见 `parse_off_thread.dart` 文件头）。小页在
+/// [parseOffThread] 里仍同步解析，行为与改动前一致。
+Future<ParseOutcome> _parseHtmlListOffThread({
+  required String body,
+  required String sourceId,
+  required String baseUrl,
+  required DateTime now,
+}) => parseOffThread<ParseOutcome>(
+  text: body,
+  now: now,
+  compute: (DateTime at) => NyaaHtmlListParser.parse(
+    body,
+    sourceId: sourceId,
+    baseUrl: baseUrl,
+    clock: () => at,
+  ),
+);
+
+/// `/view/<id>` 详情页解析**顶层**入口（1.1.0 M1/T6 起进子 isolate）。
+Future<SourceItem?> _parseDetailOffThread({
+  required String body,
+  required SourceItem base,
+  required String sourceId,
+  required String baseUrl,
+  required DateTime now,
+}) => parseOffThread<SourceItem?>(
+  text: body,
+  now: now,
+  compute: (DateTime at) => NyaaHtmlDetailParser.parse(
+    body,
+    base: base,
+    sourceId: sourceId,
+    baseUrl: baseUrl,
+    clock: () => at,
+  ),
+);
 
 /// nyaa RSS 解析器。
 class NyaaRssParser {
