@@ -10,11 +10,14 @@ library;
 
 import 'dart:io';
 
+import 'package:dsanima_core/dsanima_core.dart' as core;
 import 'package:dsanima_core/update/update.dart' as core_update;
 
 import 'bangumi.dart';
 import 'bangumi_library.dart';
 import 'episode_group.dart';
+import 'extensions.dart';
+import 'extensions_port.dart';
 import 'models.dart';
 import 'ports.dart';
 
@@ -431,4 +434,43 @@ class UnavailableUpdatePort implements UpdatePort {
 
   @override
   Future<void> declarePending(core_update.PendingUpdate? pending) async {}
+}
+
+/// 扩展端口未接通（测试 / 未装配）：**抛异常**，绝不假装"装好了"。
+///
+/// 这条必须诚实到底的原因：扩展是"用户下载了东西、以为得到了新功能"的入口，
+/// 一个假的「已安装」会让用户对着一个不存在的功能反复排查。
+class UnavailableExtensionsPort implements ExtensionsPort {
+  const UnavailableExtensionsPort();
+
+  static const PortUnavailableException failure = PortUnavailableException(
+    '扩展未接通：没有注入扩展适配器',
+    hint: '这是装配问题（main.dart 未注入 ExtensionsAdapter），请回报开发者',
+  );
+
+  @override
+  String get extensionsDir => '';
+
+  @override
+  Future<List<InstalledExtension>> scan() async => const <InstalledExtension>[];
+
+  @override
+  Future<InstalledExtension> install(
+    ExtensionInstallRequest request, {
+    void Function(ExtensionProgress progress)? onProgress,
+    bool Function()? isCancelled,
+  }) async =>
+      throw failure;
+
+  @override
+  Future<void> setEnabled(String id, bool enabled) async => throw failure;
+
+  @override
+  Future<void> remove(String id) async => throw failure;
+
+  @override
+  Future<List<core.CatalogEntry>> fetchCatalog(Uri url) async => throw failure;
+
+  @override
+  Future<void> openDirectory() async => throw failure;
 }
