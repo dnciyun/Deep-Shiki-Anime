@@ -57,6 +57,28 @@ final SeedSubjectSignature _s2Part2 = seedSignatureOf(
   eps: 12,
 );
 
+/// 命运石之门 = 10380，TV，2011-04-06，25 话。
+///
+/// 补八用户原话：「为什么会有第五季，命运石之门没有第五季」—— 这一页的真标题（mikan 841 条，
+/// 原始记录在 `build/round48c/sg_titles.txt`）里有 6 条带 `[V2]`（发布者的修正版标签），
+/// 旧规则把 V 当罗马数字 ⇒ 一整页「第五季」。
+final SeedSubjectSignature _steinsGate = seedSignatureOf(
+  platform: 'TV',
+  names: <String>['命运石之门', 'STEINS;GATE'],
+  date: '2011-04-06',
+  eps: 25,
+);
+
+/// 带 `[V2]` 的那 6 条真标题（mikan 搜索「命运石之门」，2011 年那批）。
+const List<String> _v2Titles = <String>[
+  '【命运石之门Steins;Gate】【23】【TSDM字幕组】【GB简体】【480P】【PC&PSP兼容MP4】【V2】【修正ED】',
+  '【命运石之门Steins;Gate】【23】【TSDM字幕组】【BIG5繁体】【480P】【PC&PSP兼容MP4】【V2】【修正ED】',
+  '【命运石之门Steins;Gate】【09】【TSDM字幕组】【MKV720P】（简体字幕出问题，附上V2版网盘下载）',
+  '[KTKJ][Steins;Gate_命运石之门][06][BIG5][576RMVB&720MKV&Tips][V2]',
+  '【动漫花园】[4月新番][Steins；Gate][命运石之门][05][V2][TV正式版][848X480][CHT][RMVB]',
+  '[KTKJ][Steins;Gate_命运石之门][02V2][BIG5][576RMVB&720MKV&Tips]',
+];
+
 /// 判定成一句话（本作 / 别的版本标签），断言读起来像表格。
 String _judge(
   SeedSubjectSignature subject,
@@ -199,6 +221,35 @@ void main() {
     test('空标题不炸、也没有标记', () {
       expect(parseSeedVersion('').isEmpty, isTrue);
       expect(parseSeedVersion('  ').isEmpty, isTrue);
+    });
+  });
+
+  // 补八：用户「为什么会有第五季，命运石之门没有第五季」。
+  group('罗马数字 vs 发布标签（`[V2]` 不是第五季）', () {
+    test('真标题：`[V2]` / `02V2` / `V2版` 都不解出季号', () {
+      for (final String title in _v2Titles) {
+        expect(parseSeedVersion(title).season, isNull, reason: title);
+      }
+    });
+
+    test('这 6 条在命运石之门页上算本作（不再落进「第五季」）', () {
+      for (final String title in _v2Titles) {
+        expect(
+          _judge(_steinsGate, title, publishedAt: DateTime.utc(2011, 6, 1)),
+          '本作',
+          reason: title,
+        );
+      }
+    });
+
+    test('真罗马数字照旧：`Mushoku Tensei II` = 季 2，全角 Ⅱ / Ⅲ 也认', () {
+      expect(
+        parseSeedVersion('Mushoku Tensei II: Isekai Ittara Honki Dasu - 01')
+            .season,
+        2,
+      );
+      expect(parseSeedVersion('無職転生Ⅱ ～異世界行ったら本気だす～ - 01').season, 2);
+      expect(parseSeedVersion('無職転生Ⅲ ～異世界行ったら本気だす～ - 01').season, 3);
     });
   });
 

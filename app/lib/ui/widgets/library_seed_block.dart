@@ -34,6 +34,10 @@
 ///   番外等等」）：本作按字幕组分段照旧，判成"另一版"的条目（`SeedOtherBlock`）默认折在
 ///   结果下面那行「其他版本（N 条）」里，点开按版本分小节（第三季 / 剧场版 / 更早的版本…），
 ///   小节里还是按字幕组来 —— **判错也不丢**，最坏只是把一条本作挪进了那一区；
+/// * **分页只给「合集」一页**（第四十八轮·补七 / 补八，补八用户原话「只给合集最分页，
+///   其他的不要」）：**本作里的整季批量种**（`isSeedBatch`）从本作里切出去，在组名列表
+///   **上面**占一页「合集」——本作的条数 / 「这一组都入队」就不会被几条全集顶长；别的版本
+///   **不做页**，仍旧收在底部那行折区里。分页条只在真有合集时才画（只剩本作一页时不出）；
 /// * mikan 番剧页降级成**手动**口（「改搜索词 / 粘链接」里粘地址或 id）—— 它给的东西更完整
 ///   （整部剧集表 + 每组自己的 RSS），只是不该再当主力，见 `domain/library_seed.dart` 的库注释。
 library;
@@ -101,12 +105,22 @@ Key dsDetailSeedsGroupCollapseKey(String key) =>
 Key dsDetailSeedsGroupMoreKey(String key) =>
     ValueKey<String>('seed-group-more-$key');
 
+/// 「其他版本（N 条）」那一行（第四十八轮·补六；点它 = 展开 / 收起别的版本）。
+const Key dsDetailSeedsOtherKey = Key('library-detail-seeds-other');
+
+/// 「其他版本（N 条）」那一行本身（点它 = 展开 / 收起）。
+const Key dsDetailSeedsOtherToggleKey = Key('library-detail-seeds-other-toggle');
+
+/// 其他版本里的版本小节（例如「第三季」那一块）。
+Key dsDetailSeedsOtherBlockKey(String version) =>
+    ValueKey<String>('seed-other-block-$version');
+
 /// 「本作」那一页的页名（分页条第一页；界面 + 用例共用）。
 const String kSeedCurrentLabel = '本作';
 
-/// 分页条上的一页（第四十八轮·补七）：一个版本 + 它的字号组段 + 条目。
+/// 分页条上的一页（第四十八轮·补七 / 补八）：一组字号组段 + 条目。
 ///
-/// 页 = 版本（本作 / 合集 / 第三季 / 剧场版 / 更早的版本…）。界面上点哪页就画哪页的段。
+/// 补八（用户「只给合集最分页，其他的不要」）之后只有两页：`本作` 与 `合集`。
 @immutable
 class _SeedCategory {
   const _SeedCategory({
@@ -128,21 +142,22 @@ class _SeedCategory {
       : '$label（${groups.length} 个字幕组 · $count 条）';
 }
 
-/// 分页条上一页的按钮（点它 = 切到那一版；第四十八轮·补七）。
+/// 分页条上一页的按钮（点它 = 切到那一页；第四十八轮·补七）。
 Key dsDetailSeedsCategoryKey(String label) =>
     ValueKey<String>('seed-category-$label');
 
-/// 「合集」那一页里某一段字幕组的抬头（[key] = 归一化组名）。
+/// 分页（`合集` 页）或其他版本折区里某一段字幕组的抬头（[key] = 归一化组名）。
 ///
-/// `version` 传页名（`合集` / `第三季` / `更早的版本`…）—— 同一家组在不同页各有一段。
+/// `version` 传页名 / 版本标签（`合集` / `第三季` / `更早的版本`…）—— 同一家组在不同区
+/// 各有一段。
 Key dsDetailSeedsOtherGroupKey(String version, String key) =>
     ValueKey<String>('seed-other-group-$version-$key');
 
-/// 分页里（非本作页）某一段的抬头开关。
+/// 分页（`合集` 页）或其他版本折区里某一段的抬头开关。
 Key dsDetailSeedsOtherGroupToggleKey(String version, String key) =>
     ValueKey<String>('seed-other-toggle-$version-$key');
 
-/// 分页里（非本作页）某一段末尾的「本组还有 N 条」/「收起这一组」。
+/// 分页（`合集` 页）或其他版本折区里某一段末尾的「本组还有 N 条」/「收起这一组」。
 Key dsDetailSeedsOtherGroupMoreKey(String version, String key) =>
     ValueKey<String>('seed-other-more-$version-$key');
 Key dsDetailSeedsOtherGroupCollapseKey(String version, String key) =>
@@ -192,6 +207,9 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   ///
   /// 存**页名**而不是下标：重新搜一次之后页会变（比如合集没了），存下标会指到别的页上。
   String? _categoryLabel;
+
+  /// 「其他版本（N 条）」那一行点开了没有（第四十八轮·补六；默认收起）。
+  bool _showOther = false;
   bool _busyGroup = false;
   String? _busyItemId;
 
@@ -222,6 +240,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     _openGroups.clear();
     _fullGroups.clear();
     _categoryLabel = null;
+    _showOther = false;
     _ensureSoon();
   }
 
@@ -431,8 +450,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
     final String showTitle =
         (s.detail?.displayTitle ?? widget.subject.displayTitle).trim();
-    // 分页（第四十八轮·补七，用户「在字幕组上面加入分页，把合集分进去」）：
-    // 一页一版 —— 本作 / 合集 / 第三季 / 更早的版本 / 剧场版…（只列有内容的）。
+    // 分页（第四十八轮·补七 / 补八）：只给「合集」单独一页 —— 本作 / 合集，只列有内容的。
+    // 补八用户原话「只给合集最分页，其他的不要」：别的版本不做页，回到下面那行折区。
     final List<_SeedCategory> categories = _categories(s);
     final int categoryAt = _categoryIndex(categories);
     final _SeedCategory? category =
@@ -474,6 +493,14 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
               child: _controls(s, currentPage: currentPage),
             ),
           ],
+          // 别的版本（第四十八轮·补六；补八起这里是唯一入口）：默认折一行，点开才按版本
+          // 分小节 —— 判错的条目也在这区里，一条不删（见 `domain/seed_version.dart` 头部）。
+          // 补七那一版把它们做成了分页上的一页页，补八用户退回：「只给合集最分页，其他的不要」。
+          if (s.phase == LibrarySeedPhase.ready &&
+              s.otherVersions.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 4),
+            _otherVersions(s, showTitle, marks, jobs, torrents),
+          ],
         ],
       ),
     );
@@ -492,8 +519,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   ///
   /// ⚠️ 它们只动**段窗口**（露几个组名），不碰每段自己的开合。
   ///
-  /// 补七起：这两颗**只在「本作」那一页**出现 —— 别的页（合集 / 第三季 / …）都是那一版的
-  /// 全量段，没有"首屏 4 段"这回事，画出来反而是两颗灰的。
+  /// 补七起：这两颗**只在「本作」那一页**出现 —— 「合集」页是那一版的全部组名
+  /// （没有"首屏 4 段"这回事），画出来反而是两颗灰的。
   Widget _controls(LibrarySeedState s, {required bool currentPage}) {
     final LibrarySeedController controller = ref.read(
       librarySeedProvider.notifier,
@@ -574,8 +601,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
 
   /// 抬头那行小字：说清"这一页是哪一版、几个组、几条、用的是哪个词"。
   ///
-  /// 分页（补七）之后要跟着**当前页**走：切到「合集 / 第三季」时这里的组数与条数必须是那一页的，
-  /// 否则用户会拿本作的数字去对别的页。
+  /// 分页（补七 / 补八）之后要跟着**当前页**走：切到「合集」时这里的组数与条数必须是那一页的，
+  /// 否则用户会拿本作的数字去对另一页。
   String _subtitle(LibrarySeedState s, _SeedCategory? category) =>
       switch (s.phase) {
         LibrarySeedPhase.idle ||
@@ -625,7 +652,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
         _SeedCategory(label: kSeedCurrentLabel, groups: s.groups, items: s.episodes);
     final bool currentPage = page.isCurrent;
     final List<SeedGroup> shown = currentPage ? s.shownGroups : page.groups;
-    // 段 id：本作页就用归一化组名；别的页带页名前缀（同一家组在不同页各有一段）。
+    // 段 id：本作页就用归一化组名；「合集」页带页名前缀（同一家组在两页各有一段）。
     String? openKeyOf(SeedGroup group) =>
         currentPage ? null : _categoryOpenKey(page.label, group.key);
     String effectiveKey(SeedGroup group) => openKeyOf(group) ?? group.key;
@@ -817,7 +844,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
 
   /// 这一段现在该画几条（收起着的段一条都不画；展开了先露 [kSeedGroupVisibleStep] 条）。
   ///
-  /// [openKey]：同一家字幕组可能在「本作」「合集」「第三季」各出现一次，段 id 要能区分
+  /// [openKey]：同一家字幕组可能在「本作」「合集」各出现一次，段 id 要能区分
   /// （见 [_categoryOpenKey]）。
   List<SourceItemView> _visibleItems(SeedGroup group, {String? openKey}) {
     final String key = openKey ?? group.key;
@@ -989,16 +1016,161 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 分页里某一段的 id：`页名\u0000归一化组名`。
+  /// 其他版本折区里某一段的 id：`版本标签\u0000归一化组名`。
   ///
-  /// 同一家字幕组（`桜都`）在本作页、「合集」页、「第三季」页各有一段，三个 Set 不能撞。
+  /// 同一家字幕组（`桜都`）在本作区与「第三季」区各有一段，两个 Set 不能撞。
+  static String _otherKey(String version, String groupKey) =>
+      '$version\u0000$groupKey';
+
+  /// 结果下面那行「其他版本（N 条）」+ 展开后的版本小节（第四十八轮·补六 / 补八）。
+  ///
+  /// 补八（用户「只给合集最分页，其他的不要」）把补七的版本分页撤了，这里是别的版本
+  /// **唯一**的入口。为什么默认收起：主列表要干净（用户要的是"打开就看到本作"）；但被判成
+  /// "别的版本"的条目**一条都不能丢** —— 判据是标题里的版本标记 + 放送时间窗，必然会有判错
+  /// 的时候（见 `domain/seed_version.dart` 头部），折在这里用户随时翻得到、还能直接入队。
+  Widget _otherVersions(
+    LibrarySeedState s,
+    String showTitle,
+    Map<String, DateTime> marks,
+    List<QueueJobView> jobs,
+    List<EngineTorrentView> torrents,
+  ) {
+    final DsTokens t = context.ds;
+    final int total = s.otherCount;
+    final String summary = s.otherVersions
+        .map((SeedOtherBlock b) => '${b.label} ${b.count}')
+        .join(' · ');
+    return Column(
+      key: dsDetailSeedsOtherKey,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Tooltip(
+          message: _showOther ? '收起其他版本' : '展开其他版本（$total 条）',
+          child: InkWell(
+            key: dsDetailSeedsOtherToggleKey,
+            onTap: () => setState(() => _showOther = !_showOther),
+            borderRadius: BorderRadius.circular(t.radiusControl),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    _showOther
+                        ? Icons.keyboard_arrow_down
+                        : Icons.keyboard_arrow_right,
+                    size: 16,
+                    color: t.text3,
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.layers, size: 13, color: t.text3),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '其他版本（$total 条）：$summary',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: t.text2,
+                        fontSize: DsTypeScale.caption,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_showOther)
+          for (final SeedOtherBlock block in s.otherVersions) ...<Widget>[
+            _otherBlockHeader(block),
+            for (final SeedGroup group in block.groups) ...<Widget>[
+              _groupHeader(
+                context,
+                s,
+                group,
+                showTitle,
+                marks,
+                jobs,
+                torrents,
+                openKey: _otherKey(block.label, group.key),
+                versionLabel: block.label,
+              ),
+              if (_openGroups.contains(
+                _otherKey(block.label, group.key),
+              )) ...<Widget>[
+                _groupTable(
+                  context,
+                  s,
+                  group,
+                  showTitle,
+                  marks,
+                  jobs,
+                  torrents,
+                  // 表头只在最上面那张画一次；这里是展开区，不重复画。
+                  showHeader: false,
+                  scope: block.items,
+                  playlist: block.items,
+                  openKey: _otherKey(block.label, group.key),
+                ),
+                _groupFoot(
+                  group,
+                  t,
+                  openKey: _otherKey(block.label, group.key),
+                  versionLabel: block.label,
+                ),
+              ],
+            ],
+          ],
+      ],
+    );
+  }
+
+  /// 其他版本里一个小节的头：版本标签（`第三季` / `剧场版` / `更早的版本`）+ 条数。
+  Widget _otherBlockHeader(SeedOtherBlock block) {
+    final DsTokens t = context.ds;
+    return Padding(
+      key: dsDetailSeedsOtherBlockKey(block.label),
+      padding: const EdgeInsets.only(top: 10, bottom: 2),
+      child: Row(
+        children: <Widget>[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: t.accentSoft,
+              borderRadius: BorderRadius.circular(t.radiusPill),
+            ),
+            child: Text(
+              block.label,
+              style: TextStyle(
+                color: t.accent,
+                fontSize: DsTypeScale.caption,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            block.hint == null
+                ? '${block.count} 条'
+                : '${block.hint} · ${block.count} 条',
+            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 本作页与「合集」页里某一段的 id：`页名\u0000归一化组名`。
+  ///
+  /// 同一家字幕组（`桜都`）在本作页与「合集」页各有一段，两个 Set 不能撞。
   static String _categoryOpenKey(String label, String groupKey) =>
       '$label\u0000$groupKey';
 
-  /// 当前有哪些页（第四十八轮·补七）：本作 / 合集 / 别的版本各一页，只列有内容的。
+  /// 当前有哪些页（第四十八轮·补七 / 补八）：只有 `本作` 与 `合集`，只列有内容的。
   ///
-  /// 顺序就是界面上的顺序：本作永远第一页（用户打开这一页先看这个），
-  /// 合集第二（本作的批量种），别的版本按条数从多到少（`splitSeedVersions` 已经排好）。
+  /// 顺序就是界面上的顺序：本作永远第一页（用户打开这一页先看这个），合集第二（本作的
+  /// 整季批量种）。**别的版本不做页**（补八「其他的不要」）—— 它们收在底部那行
+  /// 「其他版本（N 条）」折区里（[_otherVersions]），不进这里。
   List<_SeedCategory> _categories(LibrarySeedState s) {
     if (s.phase != LibrarySeedPhase.ready) return const <_SeedCategory>[];
     final List<_SeedCategory> all = <_SeedCategory>[
@@ -1012,12 +1184,6 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
           label: kSeedBatchLabel,
           groups: s.batchGroups,
           items: s.batchItems,
-        ),
-      for (final SeedOtherBlock block in s.otherVersions)
-        _SeedCategory(
-          label: block.label,
-          groups: block.groups,
-          items: block.items,
         ),
     ];
     return <_SeedCategory>[
@@ -1036,10 +1202,10 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     return at < 0 ? 0 : at;
   }
 
-  /// 分页条：一页一版（`本作 332` / `合集 120` / `第三季 266` / `更早的版本 229`…）。
+  /// 分页条：`本作 332` / `合集 120`（补八起只有这两页，且只有真的有合集时才画）。
   ///
   /// 位置在**组名列表上面**（用户补七原话「在字幕组上面加入分页，把合集分进去」）。
-  /// 横向滚动：页数可能不少（一部番 S1/S1后半/S2/S2后半/S3… + 剧场版 + 番外）。
+  /// 横向滚动留着：以后真要多页也不至于换一次布局。
   Widget _categoryTabs(List<_SeedCategory> categories, int selected) {
     final DsTokens t = context.ds;
     return SingleChildScrollView(
