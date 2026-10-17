@@ -155,6 +155,7 @@ SourceItemView _item(
   int day = 1,
   String source = 'mikan',
   String? title,
+  DateTime? publishedAt,
 }) => SourceItemView(
   id: '$source:${_hash(n)}',
   sourceId: source,
@@ -163,14 +164,28 @@ SourceItemView _item(
   magnet: 'magnet:?xt=urn:btih:${_hash(n)}',
   infoHash: _hash(n),
   sizeBytes: 400 * 1024 * 1024,
-  publishedAt: DateTime(2026, 10, day),
+  publishedAt: publishedAt ?? DateTime(2026, 10, day),
   episodeHints: <String>[n.toString().padLeft(2, '0')],
 );
 
-BangumiSubject _subject() => const BangumiSubject(
-  id: 400602,
-  name: 'Sousou no Frieren',
-  nameCn: '葬送的芙莉莲',
+BangumiSubject _subject({
+  int id = 400602,
+  String? nameCn = '葬送的芙莉莲',
+  String? name = 'Sousou no Frieren',
+  List<String> aliases = const <String>[],
+  String? platform,
+  String? date,
+  int? eps,
+}) => BangumiSubject(
+  id: id,
+  name: name,
+  nameCn: nameCn,
+  platform: platform,
+  date: date,
+  eps: eps,
+  infobox: aliases.isEmpty
+      ? const <BangumiInfoboxItem>[]
+      : <BangumiInfoboxItem>[BangumiInfoboxItem(key: '别名', values: aliases)],
 );
 
 BangumiDetailView _detail(String id, List<SourceItemView> episodes) =>
@@ -200,6 +215,7 @@ class _Harness {
     required this.store,
     this.queue,
     this.engine,
+    this.subject,
   });
 
   final SourcePort source;
@@ -207,6 +223,9 @@ class _Harness {
   final InMemoryKeyValueStore store;
   final _FakeQueue? queue;
   final _FakeEngine? engine;
+
+  /// 不给就用默认那部（「葬送的芙莉莲」，没有 platform/放送日 ⇒ 不参与版本判定）。
+  final BangumiSubject? subject;
   int searchPageTaps = 0;
 
   Widget widget() => ProviderScope(
@@ -222,7 +241,7 @@ class _Harness {
       home: Scaffold(
         body: SingleChildScrollView(
           child: LibrarySeedBlock(
-            subject: _subject(),
+            subject: subject ?? _subject(),
             onOpenSearchPage: () => searchPageTaps++,
           ),
         ),
@@ -496,6 +515,119 @@ void main() {
 
     expect(find.byKey(dsDetailSeedsGroupKey('组5')), findsNothing);
     expect(find.byTooltip('展开更多字幕组（一次 8 个，还有 16 个）'), findsOneWidget);
+  });
+
+  testWidgets('别的版本默认收在「其他版本」那一行里（真标题：无职转生）', (
+    WidgetTester tester,
+  ) async {
+    // 第四十八轮·补六：用户「详细页会搜到其他版本的，比如第二季 剧场版 番外等等」。
+    // 本作（S2）照旧按字幕组分段；S3 与"没标季号的 S1 行"（靠放送时间窗判）收进底部
+    // 那一行 —— **判错也不丢**：点开按版本分小节，还能直接入队。
+    final _Harness h = _Harness(
+      subject: _subject(
+        id: 444557,
+        nameCn: '无职转生 第二季 ～到了异世界就拿出真本事～',
+        name: '無職転生Ⅱ ～異世界行ったら本気だす～',
+        aliases: <String>['无职转生'],
+        platform: 'TV',
+        date: '2024-04-07',
+        eps: 12,
+      ),
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:无职转生 第二季 ～到了异世界就拿出真本事～': <SourceItemView>[
+          _item(
+            1,
+            group: '桜都字幕组',
+            title: '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p]',
+            publishedAt: DateTime.utc(2024, 4, 10),
+          ),
+          _item(
+            2,
+            group: '桜都字幕组',
+            title: '无职转生 第二季 ～到了异世界就拿出真本事～ - 02 [1080p]',
+            publishedAt: DateTime.utc(2024, 4, 17),
+          ),
+          _item(
+            3,
+            group: 'LoliHouse',
+            title: '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p]',
+            publishedAt: DateTime.utc(2024, 4, 11),
+          ),
+          _item(
+            4,
+            group: '绿茶字幕组',
+            title: '[绿茶字幕组] 无职转生 第三季 ～到了异世界就拿出真本事～ - 14',
+            publishedAt: DateTime.utc(2026, 7, 10),
+          ),
+          _item(
+            5,
+            group: '绿茶字幕组',
+            title: '無職転生Ⅲ ～異世界行ったら本気だす～ / 无职转生 第三季 - 01',
+            publishedAt: DateTime.utc(2026, 7, 20),
+          ),
+          _item(
+            6,
+            group: '桜都字幕组',
+            title: '无职转生 ～到了异世界就拿出真本事～ - 05',
+            publishedAt: DateTime.utc(2021, 2, 8),
+          ),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+
+    // 本作区：只有 S2 的那两家组；S1 / S3 的条目**不许**混进段的条数里。
+    expect(find.text('桜都字幕组（2 条）'), findsOneWidget, reason: 'S1 那条（更早的版本）不算进来');
+    expect(find.text('LoliHouse（1 条）'), findsOneWidget);
+    expect(find.text('绿茶字幕组（2 条）'), findsNothing, reason: '第三季不进本作区');
+    expect(find.textContaining('2 个字幕组'), findsOneWidget);
+    expect(find.textContaining('共 3 条'), findsOneWidget, reason: '本作的条数（不是整池 6 条）');
+    // 底部那一行：说清有几条、都是哪几个版本。
+    expect(find.textContaining('其他版本（3 条）'), findsOneWidget);
+    expect(find.textContaining('第三季 2'), findsOneWidget);
+    expect(find.textContaining('更早的版本 1'), findsOneWidget);
+    expect(
+      find.byKey(dsDetailSeedsOtherGroupKey('第三季', '绿茶')),
+      findsNothing,
+      reason: '默认收着：别的版本的段一个都不画',
+    );
+
+    await tester.tap(find.byKey(dsDetailSeedsOtherToggleKey));
+    await tester.pumpAndSettle();
+
+    // 展开：按版本分小节，小节里还是按字幕组分段；本作区原样不动。
+    expect(find.byKey(dsDetailSeedsOtherBlockKey('第三季')), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsOtherBlockKey('更早的版本')), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsOtherGroupKey('第三季', '绿茶')), findsOneWidget);
+    expect(
+      find.byKey(dsDetailSeedsOtherGroupKey('更早的版本', '桜都')),
+      findsOneWidget,
+    );
+    expect(find.text('桜都字幕组（2 条）'), findsOneWidget, reason: '本作区没被别的版本改动');
+    expect(find.text('桜都字幕组（1 条）'), findsOneWidget, reason: '更早的版本里那一条');
+    expect(
+      find.byKey(dsDetailSeedsOtherGroupToggleKey('第三季', '绿茶')),
+      findsOneWidget,
+    );
+
+    // 别的版本里的段也能展开看条目（真的是能下的，不是摆设）。
+    await tester.tap(find.byKey(dsDetailSeedsOtherGroupToggleKey('第三季', '绿茶')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(dsDetailSeedsOtherGroupCollapseKey('第三季', '绿茶')),
+      findsOneWidget,
+      reason: '展开后末尾会有「本组还有 N 条 / 收起这一组」',
+    );
+
+    await tester.tap(find.byKey(dsDetailSeedsOtherGroupToggleKey('第三季', '绿茶')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(dsDetailSeedsOtherGroupCollapseKey('第三季', '绿茶')),
+      findsNothing,
+      reason: '再点抬头就收起来',
+    );
   });
 
   testWidgets('跨站同名合并成一条：行尾带「别的站也有」的小标记', (WidgetTester tester) async {

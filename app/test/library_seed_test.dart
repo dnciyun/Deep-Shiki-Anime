@@ -19,6 +19,7 @@ import 'package:dsanima/domain/bangumi.dart';
 import 'package:dsanima/domain/library_seed.dart';
 import 'package:dsanima/domain/models.dart';
 import 'package:dsanima/domain/ports.dart';
+import 'package:dsanima/domain/seed_version.dart';
 import 'package:dsanima/domain/subtitle_groups.dart';
 import 'package:dsanima/domain/unavailable.dart';
 import 'package:dsanima/state/providers.dart';
@@ -111,6 +112,7 @@ SourceItemView _item(
   String title, {
   String group = '桜都字幕组',
   String source = 'mikan',
+  DateTime? publishedAt,
 }) => SourceItemView(
   id: '$source:${_hash(n)}',
   sourceId: source,
@@ -119,7 +121,7 @@ SourceItemView _item(
   magnet: 'magnet:?xt=urn:btih:${_hash(n)}',
   infoHash: _hash(n),
   sizeBytes: 400 * 1024 * 1024,
-  publishedAt: DateTime(2026, 10, 1).add(Duration(days: n)),
+  publishedAt: publishedAt ?? DateTime(2026, 10, 1).add(Duration(days: n)),
   episodeHints: <String>['$n'],
 );
 
@@ -145,10 +147,16 @@ BangumiSubject _subject({
   String? nameCn = '葬送的芙莉莲',
   String? name = 'Sousou no Frieren',
   List<String> aliases = const <String>[],
+  String? platform,
+  String? date,
+  int? eps,
 }) => BangumiSubject(
   id: id,
   name: name,
   nameCn: nameCn,
+  platform: platform,
+  date: date,
+  eps: eps,
   infobox: aliases.isEmpty
       ? const <BangumiInfoboxItem>[]
       : <BangumiInfoboxItem>[BangumiInfoboxItem(key: '别名', values: aliases)],
@@ -800,6 +808,124 @@ void main() {
       expect(back.remainingGroups, 20 - kSeedVisibleGroups);
       controller.collapseGroups();
       expect(c.read(librarySeedProvider).shownGroups, hasLength(kSeedVisibleGroups));
+    });
+
+    test('种子池按版本分开：本作进 groups，别的版本进 otherVersions（真标题）', () async {
+      // 第四十八轮·补六（用户「详细页会搜到其他版本的，比如第二季 剧场版 番外等等」）：
+      // 一条基础名一搜回来，S1 / S2 / S3 全混在一起（实测 mikan 基础名 1666 条）——
+      // 这一层把"别的版本"分出去，**但一条都不丢**（进 otherVersions，界面上翻得到）。
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:无职转生 第二季 ～到了异世界就拿出真本事～': <SourceItemView>[
+            _item(
+              1,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ - 01',
+              publishedAt: DateTime.utc(2024, 4, 10),
+            ),
+            _item(
+              2,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ - 02',
+              publishedAt: DateTime.utc(2024, 4, 17),
+            ),
+            _item(
+              3,
+              '[绿茶字幕组] 无职转生 第三季 ～到了异世界就拿出真本事～ - 14',
+              group: '绿茶字幕组',
+              publishedAt: DateTime.utc(2026, 7, 10),
+            ),
+            _item(
+              4,
+              '無職転生Ⅲ ～異世界行ったら本気だす～ / 无职转生 第三季 - 01',
+              group: '绿茶字幕组',
+              publishedAt: DateTime.utc(2026, 7, 20),
+            ),
+            _item(
+              5,
+              '无职转生 ～到了异世界就拿出真本事～ - 05',
+              publishedAt: DateTime.utc(2021, 2, 8),
+            ),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+      final LibrarySeedController controller = c.read(
+        librarySeedProvider.notifier,
+      );
+
+      await controller.resolve(
+        _subject(
+          nameCn: '无职转生 第二季 ～到了异世界就拿出真本事～',
+          name: '無職転生Ⅱ ～異世界行ったら本気だす～',
+          aliases: <String>['无职转生'],
+          platform: 'TV',
+          date: '2024-04-07',
+          eps: 12,
+        ),
+      );
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready);
+      // 本作：只有 S2 那两条（S1 的行按时间窗判成"更早的版本"，S3 按季号判走）。
+      // 池子里是**新→旧**排过的（`aggregateSort`），所以 02 在 01 前面。
+      expect(s.episodes.map((SourceItemView i) => i.title), <String>[
+        '无职转生 第二季 ～到了异世界就拿出真本事～ - 02',
+        '无职转生 第二季 ～到了异世界就拿出真本事～ - 01',
+      ]);
+      // 段也只算本作：「桜都字幕组（2 条）」不会把 S1 那条算进去。
+      expect(s.groups, hasLength(1));
+      expect(s.groups.single.label, contains('桜都'));
+      expect(s.groups.single.count, 2);
+      // 别的版本：按桶分好，桶里也按字幕组分段（界面直接画）。
+      expect(s.otherVersions.map((SeedOtherBlock b) => b.label), <String>[
+        '第三季',
+        '更早的版本',
+      ]);
+      expect(s.otherVersions.first.count, 2);
+      expect(s.otherVersions.first.groups.single.label, contains('绿茶'));
+      expect(s.otherVersions.last.count, 1);
+      expect(s.otherCount, 3);
+      // 整池还在（勾选下载、手动锚点再合成要用它）。
+      expect(s.allItems, hasLength(5));
+    });
+
+    test('本作一条都不剩时**不分**：整池还是本作，不许把页面弄空', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:无职转生 第二季 ～到了异世界就拿出真本事～': <SourceItemView>[
+            for (int i = 1; i <= 3; i++)
+              _item(
+                i,
+                '无职转生 第三季 ～到了异世界就拿出真本事～ - 0$i',
+                publishedAt: DateTime.utc(2026, 7, 10),
+              ),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(
+        _subject(
+          nameCn: '无职转生 第二季 ～到了异世界就拿出真本事～',
+          name: '無職転生Ⅱ ～異世界行ったら本気だす～',
+          aliases: <String>['无职转生'],
+          platform: 'TV',
+          date: '2024-04-07',
+          eps: 12,
+        ),
+      );
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.otherVersions, isEmpty, reason: '全判成别的版本时宁可不分');
+      expect(s.episodes, hasLength(3));
+      expect(s.groups, isNotEmpty);
     });
   });
 

@@ -1,0 +1,560 @@
+/// 种子块的「版本判定」（第四十八轮·补六）：这一条种子属于**哪一版**。
+///
+/// 用户原话（补六）：
+/// > 「详细页会搜到其他版本的，比如第二季 剧场版 番外等等，应该怎么解决好」
+///
+/// 为什么必须判：番名阶梯为了"能搜到"，最后一档一定退到**基础名**（`dropSeasonSuffix`）。
+/// 实测（`build/round48c/uw_*.txt`）：
+/// * `無職転生 ～異世界行ったら本気だす～ 第2クール` 这个官方名去 mikan 搜是 **0 条**；
+/// * 退到基础名 `无职转生 ～到了异世界就拿出真本事～` 一搜 = **1666 条**（S1 / S1后半 / S2 /
+///   S2后半 / S3 全混在一起）；
+/// * 而回来之后只过一道 [seedTitleMentions]（"标题里有没有这个名字"），没有"这是哪一版"。
+///
+/// 所以这里补一层：把**本条目**和**每条种子标题**都解成一个 [SeedVersion]（形态 / 季 / 部），
+/// 比签名，而不是拿关键词黑名单去删 —— 删不准，也删不回来（判错的那些由界面收在
+/// 「其他版本」里，见 `library_seed_block.dart` 的 `_otherVersions`）。
+///
+/// 判定顺序（从确定到猜）：
+/// 1. **形态冲突**：TV 页面上出现「剧场版 / OVA / 番外」；反过来剧场版页面上出现带季号的 TV 行
+///    ⇒ 别的版本；
+/// 2. **最终季**：「最终季 / Final Season / 完結編」与本条目不一致 ⇒ 别的版本；
+/// 3. **季号冲突**：两边都解出来且不等 ⇒ 别的版本（`第二季` vs `第三季`）；
+/// 4. **标题里没有任何决定性标记** ⇒ 看**放送时间窗**（早于放送前 8 个月 / 晚于播完后 2 年
+///    ⇒ 别的版本）—— 这一层专门抓"老季没标季号"的条目；
+/// 5. 判不出来 ⇒ **算本作**（宁多勿少；别的版本区随时翻得到）。
+///
+/// ⚠️ 两条钉死的取舍：
+/// * **「第N部分 / 第Nクール / 后半」不算另一个版本**：Bangumi 把 S2 前半/后半拆成两个条目，
+///   但下载时它就是同一季的后半（用户要的是整季）——所以「部」只解出来、不参与排除；
+/// * **「第Nクール」不能当季号**：S1 后半的官方名是 `無職転生 … 第2クール`（**没有 Ⅱ**）。
+///   当成季 2 的话，它在 S1 的页面上会被判成"第二季"。
+library;
+
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
+
+import 'library_seed.dart' show SeedGroup, groupSeedItems;
+import 'models.dart' show SourceItemView;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 签名
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 放送形态。种子侧只能从标题里的词看出来（`TV` 看不出来 —— 没标形态的按"不知道"算）。
+enum SeedForm {
+  unknown,
+  tv,
+  movie,
+  ova,
+  sp,
+}
+
+/// 一条标题 / 一个条目的「版本签名」。
+@immutable
+class SeedVersion {
+  const SeedVersion({
+    this.form = SeedForm.unknown,
+    this.season,
+    this.part,
+    this.finalSeason = false,
+    this.seasonConflict = false,
+  });
+
+  /// 形态（剧场版 / OVA / 番外…；没标就是 [SeedForm.unknown]）。
+  final SeedForm form;
+
+  /// 季号（`第二季` / `第2期` / `Season 2` / `S3` / `Ⅱ` / `3期`）。
+  final int? season;
+
+  /// 部 / クール（`第2部分` / `第2クール` / `Part 2` / `后半`）。**不参与排除**，只做签名。
+  final int? part;
+
+  /// 最终季（`最终季` / `Final Season` / `完結編`）。
+  final bool finalSeason;
+
+  /// 同一标题里出现了互相矛盾的季号（`第二季 … 第三季`）= 多半是跨季合集。
+  final bool seasonConflict;
+
+  bool get isEmpty =>
+      form == SeedForm.unknown &&
+      season == null &&
+      part == null &&
+      !finalSeason &&
+      !seasonConflict;
+}
+
+/// 本条目的签名 + 时间窗要用的两样东西。
+@immutable
+class SeedSubjectSignature {
+  const SeedSubjectSignature({required this.version, this.date, this.eps});
+
+  final SeedVersion version;
+
+  /// 放送开始（`YYYY-MM-DD`；可能没有）。
+  final DateTime? date;
+
+  /// 话数（时间窗用它算"播完"；没有就按 12 话估）。
+  final int? eps;
+}
+
+/// 从一条条目的字段拼出它的版本签名。
+///
+/// [names] 按"优先级从高到低"给（中文名 → 原名 → 别名），逐个解，先解出来的那个算数。
+/// [platform] 是 Bangumi 的放送形态（`TV` / `剧场版` / `OVA` / `WEB`），它比名字里的词可靠。
+SeedSubjectSignature seedSignatureOf({
+  required Iterable<String> names,
+  String? platform,
+  String? date,
+  int? eps,
+}) {
+  final SeedForm platformForm = _formOfPlatform(platform);
+  SeedForm form = platformForm;
+  int? season;
+  int? part;
+  bool finalSeason = false;
+  for (final String raw in names) {
+    final SeedVersion v = parseSeedVersion(raw);
+    if (form == SeedForm.unknown && v.form != SeedForm.unknown) form = v.form;
+    if (season == null && v.season != null) season = v.season;
+    if (part == null && v.part != null) part = v.part;
+    if (v.finalSeason) finalSeason = true;
+  }
+  // 名字里没有季号时：TV 按第一季算（保守）。
+  // ⚠️ 只有 platform 明确是 TV/WEB 才这么默认 —— 形态都不知道时别乱假设，
+  // 否则"别名/剧场版"那些条目会被无端判成"第二季"。
+  if (season == null && form == SeedForm.tv) season = 1;
+  return SeedSubjectSignature(
+    version: SeedVersion(
+      form: form,
+      season: season,
+      part: part,
+      finalSeason: finalSeason,
+    ),
+    date: _parseDate(date),
+    eps: eps,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 判定
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 判定结果：本作 / 别的版本（带一个给人看的标签，如「第三季」「剧场版」「更早的版本（2021）」）。
+@immutable
+class SeedVersionVerdict {
+  const SeedVersionVerdict.current()
+      : other = false,
+        label = null;
+
+  const SeedVersionVerdict.other(String this.label) : other = true;
+
+  final bool other;
+
+  /// 只有 [other] 时有值：这一桶叫什么。
+  final String? label;
+}
+
+/// 这一条种子属于本作吗。
+SeedVersionVerdict judgeSeedVersion({
+  required String title,
+  required DateTime? publishedAt,
+  required SeedSubjectSignature subject,
+}) {
+  final SeedVersion item = parseSeedVersion(title);
+  final SeedVersion own = subject.version;
+
+  // ① 形态冲突（TV 页面上出现剧场版 / OVA / 番外；或者反过来）。
+  if (item.form != SeedForm.unknown &&
+      own.form != SeedForm.unknown &&
+      item.form != own.form) {
+    return SeedVersionVerdict.other(_formLabel(item.form));
+  }
+  // ①b 本作不是 TV（剧场版 / OVA），却来了一条带季号的没标形态的行 ⇒ 那是 TV 版。
+  if (own.form != SeedForm.unknown &&
+      own.form != SeedForm.tv &&
+      item.form == SeedForm.unknown &&
+      (item.season != null || item.finalSeason)) {
+    return const SeedVersionVerdict.other('TV 版');
+  }
+
+  // ② 最终季。
+  if (item.finalSeason && !own.finalSeason) {
+    return const SeedVersionVerdict.other('最终季');
+  }
+  if (own.finalSeason && item.season != null && !item.finalSeason) {
+    return SeedVersionVerdict.other(_seasonLabel(item.season!));
+  }
+
+  // ③ 季号冲突。⚠️「部 / クール」在这里**不算冲突**（见文件头那两条取舍）。
+  if (item.seasonConflict) return const SeedVersionVerdict.other('多季合集');
+  if (item.season != null && own.season != null && item.season != own.season) {
+    return SeedVersionVerdict.other(_seasonLabel(item.season!));
+  }
+
+  // ④ 标题里没有任何决定性标记 ⇒ 放送时间窗（抓"老季没标季号"的那些）。
+  final bool decisive =
+      item.form != SeedForm.unknown || item.season != null || item.finalSeason;
+  if (!decisive) {
+    final String? beyond = _timeWindowVerdict(publishedAt, subject);
+    if (beyond != null) return SeedVersionVerdict.other(beyond);
+  }
+  return const SeedVersionVerdict.current();
+}
+
+/// 标题没有任何版本标记时，按发布时间猜它是不是"别的一季"。
+///
+/// 窗口：放送开始前 8 个月 → 播完（`eps`×7 天，至少 13 周）+ 2 年。
+/// 前一条抓"上一季"（它的行发布时间远早于本季）；后一条抓"好几季之前的行 / 旧合集"。
+/// ⚠️ 这是**猜**：窗口外判错的那些会进「其他版本」区（不丢，翻得到），窗口内一律算本作。
+///
+/// 标签**不带年份**：同一季的行可能跨好几个年头（正片 + 后来的 BDRip），
+/// 带上年份会把"第一季"拆成「更早的版本（2021）」「更早的版本（2022）」两个桶；
+/// 年份改由 [SeedOtherBlock.hint] 显示成区间。
+String? _timeWindowVerdict(
+  DateTime? publishedAt,
+  SeedSubjectSignature subject,
+) {
+  final DateTime? start = subject.date;
+  if (start == null || publishedAt == null) return null;
+  final DateTime at = publishedAt.toUtc();
+  final DateTime startUtc = start.toUtc();
+  final DateTime early = startUtc.subtract(const Duration(days: 240));
+  final int eps = subject.eps ?? 12;
+  final DateTime late = startUtc.add(
+    Duration(days: math.max(eps, 13) * 7 + 730),
+  );
+  if (at.isBefore(early)) return kEarlierVersionLabel;
+  if (at.isAfter(late)) return kLaterVersionLabel;
+  return null;
+}
+
+/// 时间窗判出来的两个桶名（界面 + 用例都用这两个常量）。
+const String kEarlierVersionLabel = '更早的版本';
+const String kLaterVersionLabel = '更晚的版本';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 整池分开
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 时间窗那两桶的年份区间（`2021` / `2021–2022`）；别的桶不给。
+///
+/// 为什么单独算：同一季的行会跨年头（正片在 2021、后来的 BDRip 在 2022），
+/// 按"年份"进标签会把它拆成两个桶 —— 桶名固定、年份只当补充说明。
+String? _yearsHint(String label, List<SourceItemView> items) {
+  if (label != kEarlierVersionLabel && label != kLaterVersionLabel) return null;
+  final List<int> years = <int>[
+    for (final SourceItemView item in items)
+      if (item.publishedAt != null) item.publishedAt!.toUtc().year,
+  ]..sort();
+  if (years.isEmpty) return null;
+  final int first = years.first;
+  final int last = years.last;
+  return first == last ? '$first' : '$first–$last';
+}
+
+/// 「其他版本」里的一桶（一个标签 + 这一桶的条目 + 分好的字幕组段）。
+@immutable
+class SeedOtherBlock {
+  const SeedOtherBlock({
+    required this.label,
+    required this.items,
+    required this.groups,
+    this.hint,
+  });
+
+  /// 给人看的版本名（`第三季` / `剧场版` / `更早的版本` …）。
+  final String label;
+
+  /// 补充说明。现在只有时间窗那两桶用：`2021` 或 `2021–2022`（同一季的行会跨年头）。
+  final String? hint;
+
+  /// 这一桶的条目（新→旧，与池子同序）。
+  final List<SourceItemView> items;
+
+  /// 这一桶按字幕组分好的段（界面按它画，和本作区一样的形状）。
+  final List<SeedGroup> groups;
+
+  int get count => items.length;
+}
+
+/// 分开之后的两半。
+@immutable
+class SeedVersionSplit {
+  const SeedVersionSplit({required this.current, required this.others});
+
+  /// 本作那些条目（**已经**是原来那个顺序）。
+  final List<SourceItemView> current;
+
+  /// 别的版本（按条数从多到少）。
+  final List<SeedOtherBlock> others;
+
+  int get otherCount {
+    int total = 0;
+    for (final SeedOtherBlock block in others) {
+      total += block.count;
+    }
+    return total;
+  }
+}
+
+/// 把一池子条目分成"本作"和"别的版本"。
+///
+/// ⚠️ 兜底：**如果一条都不剩本作，就不分了**（整池原样当本作）—— 判错方向宁可"多给"，
+/// 也不能让用户打开这一页看见个空列表。
+SeedVersionSplit splitSeedVersions(
+  List<SourceItemView> items,
+  SeedSubjectSignature subject,
+) {
+  if (items.isEmpty) {
+    return SeedVersionSplit(
+      current: items,
+      others: const <SeedOtherBlock>[],
+    );
+  }
+  final List<SourceItemView> current = <SourceItemView>[];
+  final Map<String, List<SourceItemView>> buckets =
+      <String, List<SourceItemView>>{};
+  for (final SourceItemView item in items) {
+    final SeedVersionVerdict verdict = judgeSeedVersion(
+      title: item.title ?? '',
+      publishedAt: item.publishedAt,
+      subject: subject,
+    );
+    if (verdict.other) {
+      (buckets[verdict.label!] ??= <SourceItemView>[]).add(item);
+    } else {
+      current.add(item);
+    }
+  }
+  if (current.isEmpty) {
+    return SeedVersionSplit(
+      current: items,
+      others: const <SeedOtherBlock>[],
+    );
+  }
+  final List<SeedOtherBlock> others = <SeedOtherBlock>[
+    for (final MapEntry<String, List<SourceItemView>> e in buckets.entries)
+      SeedOtherBlock(
+        label: e.key,
+        hint: _yearsHint(e.key, e.value),
+        items: List<SourceItemView>.unmodifiable(e.value),
+        groups: groupSeedItems(e.value),
+      ),
+  ]..sort((SeedOtherBlock a, SeedOtherBlock b) {
+    // 先按条数（多的在前）；平手按标签（`List.sort` 不保证稳定，不写第二键会出现
+    // "同一批数据两次跑出不同顺序"）。
+    final int byCount = b.count.compareTo(a.count);
+    return byCount != 0 ? byCount : a.label.compareTo(b.label);
+  });
+  return SeedVersionSplit(
+    current: List<SourceItemView>.unmodifiable(current),
+    others: List<SeedOtherBlock>.unmodifiable(others),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 解析（词表）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 解一条标题的版本签名（不知道的字段留 null / [SeedForm.unknown]）。
+///
+/// 整条标题都要扫：实测同一条里可能同时有中文名与日文名
+/// （`无职转生 第三季 ～…～ / Mushoku Tensei S3`），也可能季号写在**副标题后面**
+/// （`无职转生～到了异世界就拿出真本事～ 第二季`）。
+SeedVersion parseSeedVersion(String title) {
+  final String text = _halfWidth(title);
+  final String lower = text.toLowerCase();
+
+  // 形态：movie > ova > sp（同一条里出现多个标记时按"最重"的算）。
+  final SeedForm form = _kMovie.hasMatch(lower)
+      ? SeedForm.movie
+      : _kOva.hasMatch(lower)
+      ? SeedForm.ova
+      : _kSp.hasMatch(lower)
+      ? SeedForm.sp
+      : SeedForm.unknown;
+
+  // 季号：中文「第二季/第2期/3期」、英文「Season 2/2nd Season/S03」、
+  // 罗马数字「Ⅱ / III」（日文名常见：`無職転生Ⅲ ～…～`）。
+  final Set<int> seasons = <int>{};
+  for (final Match m in _kSeasonZh.allMatches(lower)) {
+    _addNum(seasons, _num(m.group(1)));
+  }
+  for (final Match m in _kSeasonBarePeriod.allMatches(lower)) {
+    _addNum(seasons, _num(m.group(1)));
+  }
+  for (final Match m in _kSeasonEn.allMatches(lower)) {
+    _addNum(seasons, _num(m.group(1)));
+  }
+  for (final Match m in _kSeasonOrdinal.allMatches(lower)) {
+    _addNum(seasons, _num(m.group(1)));
+  }
+  for (final Match m in _kRoman.allMatches(text)) {
+    _addNum(seasons, _romanValue(m.group(1)));
+  }
+  for (final Match m in _kFullWidthRoman.allMatches(text)) {
+    _addNum(seasons, _fullWidthRomanValue(m.group(0)!));
+  }
+
+  // 部 / クール：「第2部分」「第2クール」「Part 2」「后半」。
+  // ⚠️ 只记进签名，**不参与排除**（见文件头）。
+  final Set<int> parts = <int>{};
+  for (final Match m in _kPartZh.allMatches(lower)) {
+    _addNum(parts, _num(m.group(1)));
+  }
+  for (final Match m in _kPartEn.allMatches(lower)) {
+    _addNum(parts, _num(m.group(1)));
+  }
+  if (_kSecondHalf.hasMatch(lower)) parts.add(2);
+  if (_kFirstHalf.hasMatch(lower)) parts.add(1);
+
+  return SeedVersion(
+    form: form,
+    season: seasons.length == 1 ? seasons.first : null,
+    part: parts.length == 1 ? parts.first : null,
+    finalSeason: _kFinalSeason.hasMatch(lower),
+    seasonConflict: seasons.length > 1,
+  );
+}
+
+void _addNum(Set<int> into, int? value) {
+  if (value != null && value > 0 && value <= 99) into.add(value);
+}
+
+// ── 词表（一条一条都有真实标题作证：`build/round48c/uw_mikan_versions.txt`）──
+
+final RegExp _kSeasonZh = RegExp(
+  r'第\s*([0-9]{1,2}|[一二三四五六七八九十]+)\s*(?:季|期|シーズン)',
+);
+// 「3期」这种不带「第」的写法（实测：`[LoliHouse] 无职转生 3期 / Mushoku Tensei S3`）。
+// ⚠️ 故意不含「クール」—— 那是"部"不是"季"。
+final RegExp _kSeasonBarePeriod = RegExp(
+  r'(?<![0-9a-z])([0-9]{1,2}|[一二三四五六七八九十]+)\s*(?:季|期)',
+);
+final RegExp _kSeasonEn = RegExp(
+  r'(?<![a-z])(?:season|s)\s*0?([0-9]{1,2})(?![0-9])',
+);
+final RegExp _kSeasonOrdinal = RegExp(r'([0-9]{1,2})\s*(?:st|nd|rd|th)\s+season');
+final RegExp _kPartZh = RegExp(
+  r'第\s*([0-9]{1,2}|[一二三四五六七八九十]+)\s*(?:部分|クール)',
+);
+final RegExp _kPartEn = RegExp(r'(?<![a-z])(?:part|cour)\s*([0-9]{1,2})(?![0-9])');
+final RegExp _kFirstHalf = RegExp(r'前半|前篇');
+final RegExp _kSecondHalf = RegExp(r'后半|後半|下半|後編|后篇');
+final RegExp _kFinalSeason = RegExp(
+  r'最终季|最終季|final\s+season|完結編|完结编|完结篇|終章|终章',
+);
+final RegExp _kMovie = RegExp(r'剧场版|劇場版|映画|(?<![a-z])the\s+movie(?![a-z])|(?<![a-z])movie(?![a-z])');
+final RegExp _kOva = RegExp(r'(?<![a-z])ova(?![a-z])|(?<![a-z])oad(?![a-z])');
+final RegExp _kSp = RegExp(
+  r'特别篇|特別篇|特别编|特別編|番外|外传|外傳|总集篇|總集篇|総集編|回忆篇|recap',
+);
+// 罗马数字：只认 II 以上（单独的 `I` 太容易撞英文里的 "I"），长写在前。
+final RegExp _kRoman = RegExp(
+  r'(?<![A-Za-z])(VIII|VII|III|IX|IV|VI|II|V)(?![A-Za-z])',
+);
+final RegExp _kFullWidthRoman = RegExp(r'[ⅡⅢⅣⅤⅥⅦⅧⅨⅩ]');
+
+const Map<String, int> _kRomanValues = <String, int>{
+  'II': 2,
+  'III': 3,
+  'IV': 4,
+  'V': 5,
+  'VI': 6,
+  'VII': 7,
+  'VIII': 8,
+  'IX': 9,
+};
+
+int? _romanValue(String? raw) => _kRomanValues[(raw ?? '').trim()];
+
+int? _fullWidthRomanValue(String raw) {
+  const List<String> all = <String>['Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ'];
+  final int at = all.indexOf(raw);
+  return at < 0 ? null : at + 2;
+}
+
+/// `第二季` / `2` / `十一` → int（认不出来就 null）。
+int? _num(String? raw) {
+  final String text = (raw ?? '').trim();
+  if (text.isEmpty) return null;
+  final int? digit = int.tryParse(text);
+  if (digit != null) return digit;
+  const Map<String, int> zh = <String, int>{
+    '一': 1,
+    '二': 2,
+    '三': 3,
+    '四': 4,
+    '五': 5,
+    '六': 6,
+    '七': 7,
+    '八': 8,
+    '九': 9,
+    '十': 10,
+  };
+  if (zh.containsKey(text)) return zh[text];
+  // 十一 / 十二 / 二十 这类组合（少见，但别解错）。
+  if (text.startsWith('十')) {
+    final int? rest = zh[text.substring(1)];
+    return rest == null ? null : 10 + rest;
+  }
+  if (text.endsWith('十')) {
+    final int? lead = zh[text.substring(0, text.length - 1)];
+    return lead == null ? null : lead * 10;
+  }
+  return null;
+}
+
+String _seasonLabel(int n) {
+  const List<String> zh = <String>[
+    '零', '一', '二', '三', '四', '五', '六', '七', '八', '九',
+  ];
+  if (n >= 1 && n <= 10) return '第${zh[n]}季';
+  return '第$n季';
+}
+
+String _formLabel(SeedForm form) => switch (form) {
+  SeedForm.movie => '剧场版',
+  SeedForm.ova => 'OVA',
+  SeedForm.sp => '番外 / 特别篇',
+  SeedForm.tv => 'TV 版',
+  SeedForm.unknown => '别的版本',
+};
+
+SeedForm _formOfPlatform(String? raw) {
+  final String text = (raw ?? '').trim();
+  if (text.isEmpty) return SeedForm.unknown;
+  final String lower = text.toLowerCase();
+  if (lower == 'tv' || lower == 'web' || text.contains('TV') || text.contains('WEB')) {
+    return SeedForm.tv;
+  }
+  if (text.contains('剧场')) return SeedForm.movie;
+  if (lower.contains('ova') || lower.contains('oad')) return SeedForm.ova;
+  return SeedForm.unknown;
+}
+
+DateTime? _parseDate(String? raw) {
+  final String text = (raw ?? '').trim();
+  if (text.length < 10) return null;
+  return DateTime.tryParse(text.substring(0, 10));
+}
+
+/// 全角 → 半角（ASCII 段 + 全角空格）。
+///
+/// ⚠️ 与 `library_seed.dart` 里那份是同一件事的第二个副本 —— 刻意重复：那边做的是
+/// "标题归一化"（剥括号、砍集号），这边要保留原文只统一书写宽度；共用一个字符映射
+/// 会把两个领域的意图绑在一起（`subtitle_groups.dart` 里还有第三个副本，同理）。
+String _halfWidth(String text) {
+  final StringBuffer out = StringBuffer();
+  for (final int rune in text.runes) {
+    if (rune == 0x3000) {
+      out.write(' ');
+    } else if (rune >= 0xFF01 && rune <= 0xFF5E) {
+      out.writeCharCode(rune - 0xFEE0);
+    } else {
+      out.writeCharCode(rune);
+    }
+  }
+  return out.toString();
+}

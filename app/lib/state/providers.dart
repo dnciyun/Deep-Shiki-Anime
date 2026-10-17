@@ -25,6 +25,7 @@ import '../domain/queue_sort.dart';
 import '../domain/reveal_in_explorer.dart';
 import '../domain/recycle_bin.dart';
 import '../domain/library_seed.dart';
+import '../domain/seed_version.dart';
 import '../domain/settings_effect.dart';
 import '../domain/subtitle_groups.dart';
 import '../domain/unavailable.dart';
@@ -1792,7 +1793,9 @@ class LibrarySeedState {
     this.binding,
     this.detail,
     this.episodes = const <SourceItemView>[],
+    this.allItems = const <SourceItemView>[],
     this.groups = const <SeedGroup>[],
+    this.otherVersions = const <SeedOtherBlock>[],
     this.visibleGroups = kSeedVisibleGroups,
     this.problem = LibrarySeedProblem.none,
     this.failure,
@@ -1815,11 +1818,25 @@ class LibrarySeedState {
   /// 有它才能画每个字幕组旁边那颗「订阅」（mikan 的组订阅靠番剧 id + 组 RSS 地址）。
   final BangumiDetailView? detail;
 
-  /// 全部条目（相关度筛过、跨站同名合并过、新→旧排过；播放列表与批量下载用它）。
+  /// **本作**的条目（相关度筛过、跨站同名合并过、新→旧排过、**版本筛过**）。
+  ///
+  /// 播放列表与批量下载用它 —— 别的版本的条目**不在**这里，否则播完一集「下一集」会
+  /// 跳到另一季去（第四十八轮·补六）。
   final List<SourceItemView> episodes;
+
+  /// **整池**（本作 + 别的版本；同名合并过、新→旧排过）。
+  ///
+  /// 只给"合成 / 勾选下载"这类要拿到全量的地方用，界面本身不拿它画列表
+  /// （界面画的是 [groups] 与 [otherVersions]）。
+  final List<SourceItemView> allItems;
 
   /// **按字幕组分好的段**（界面按它渲染；顺序 = 条数多的在前，见 [groupSeedItems]）。
   final List<SeedGroup> groups;
+
+  /// **别的版本**（第四十八轮·补六）：按版本分好的桶（第三季 / 剧场版 / 更早的版本…）。
+  ///
+  /// 界面上默认收在「其他版本（N 条）」那一行里 —— 判错的条目也在里面，**不删**。
+  final List<SeedOtherBlock> otherVersions;
 
   /// 现在露几段（「显示更多字幕组」加 [kSeedGroupsStep]）。
   final int visibleGroups;
@@ -1841,6 +1858,15 @@ class LibrarySeedState {
   /// 还有几段没露出来（0 = 「显示更多字幕组」该消失）。
   int get remainingGroups => groups.length - shownGroups.length;
 
+  /// 别的版本一共几条（0 = 界面上连那一行都不画）。
+  int get otherCount {
+    int total = 0;
+    for (final SeedOtherBlock block in otherVersions) {
+      total += block.count;
+    }
+    return total;
+  }
+
   /// 实际用的词（没搜过时为 null）。
   String? get word {
     final String text = (query ?? binding?.query ?? '').trim();
@@ -1855,7 +1881,9 @@ class LibrarySeedState {
     BangumiDetailView? detail,
     bool clearDetail = false,
     List<SourceItemView>? episodes,
+    List<SourceItemView>? allItems,
     List<SeedGroup>? groups,
+    List<SeedOtherBlock>? otherVersions,
     int? visibleGroups,
     LibrarySeedProblem? problem,
     DsFailure? failure,
@@ -1869,7 +1897,9 @@ class LibrarySeedState {
     binding: binding ?? this.binding,
     detail: clearDetail ? null : (detail ?? this.detail),
     episodes: episodes ?? this.episodes,
+    allItems: allItems ?? this.allItems,
     groups: groups ?? this.groups,
+    otherVersions: otherVersions ?? this.otherVersions,
     visibleGroups: visibleGroups ?? this.visibleGroups,
     problem: problem ?? this.problem,
     failure: clearFailure ? null : (failure ?? this.failure),
@@ -2059,7 +2089,10 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     _publish(
       run,
       subjectId: subject.id,
-      pool: _seedPool(state.episodes, detail.episodes),
+      subject: subject,
+      // ⚠️ 这里要用**整池** [LibrarySeedState.allItems]：`episodes` 只是本作那一半，
+      // 拿它再合成会把「其他版本」的条目从池子里永久洗掉（第四十八轮·补六）。
+      pool: _seedPool(state.allItems, detail.episodes),
       query: saved.query,
       binding: saved,
       detail: detail,
@@ -2238,6 +2271,7 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     _publish(
       run,
       subjectId: subject.id,
+      subject: subject,
       pool: _seedPool(
         found,
         anchor.detail?.episodes ?? const <SourceItemView>[],
@@ -2261,10 +2295,11 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     ),
   );
 
-  /// 定稿：分段 + 判"有没有可下的"。**池子为空由调用方先说清是哪一种空**。
+  /// 定稿：分版本 + 分段 + 判"有没有可下的"。**池子为空由调用方先说清是哪一种空**。
   void _publish(
     int run, {
     required int subjectId,
+    required BangumiSubject subject,
     required List<SourceItemView> pool,
     String? query,
     MikanSeedBinding? binding,
@@ -2273,7 +2308,6 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     String? warning,
   }) {
     if (_stale(run)) return;
-    final List<SeedGroup> groups = groupSeedItems(pool);
     if (!pool.any((SourceItemView item) => item.canDownload)) {
       // 「搜到了条目但没有一条带源」是独立的一种空（第四十五轮选定）。
       state = state.copyWith(
@@ -2284,13 +2318,27 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
         binding: binding,
         detail: detail,
         episodes: pool,
-        groups: groups,
+        allItems: pool,
+        groups: groupSeedItems(pool),
+        otherVersions: const <SeedOtherBlock>[],
         visibleGroups: kSeedVisibleGroups,
         warning: warning,
         clearWarning: warning == null,
       );
       return;
     }
+    // 「这一条属于哪一版」（第四十八轮·补六，见 `domain/seed_version.dart`）：
+    // 本作进列表，别的版本收进 [otherVersions]。判错的方向**宁多勿少** —— 最坏也只是把
+    // 本作的一条挪进了「其他版本」，那条不丢、翻得到。
+    final SeedVersionSplit split = splitSeedVersions(
+      pool,
+      seedSignatureOf(
+        names: _seedNamesOf(subject),
+        platform: subject.platform,
+        date: subject.date,
+        eps: subject.eps,
+      ),
+    );
     final String banner = aggregateFailureBanner(results);
     final String note = <String>[
       ?warning,
@@ -2302,8 +2350,10 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
       query: query,
       binding: binding,
       detail: detail,
-      episodes: pool,
-      groups: groups,
+      episodes: split.current,
+      allItems: pool,
+      groups: groupSeedItems(split.current),
+      otherVersions: split.others,
       warning: note.isEmpty ? null : note,
     );
   }

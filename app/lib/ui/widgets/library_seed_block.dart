@@ -30,6 +30,10 @@
 /// * 这一排跟着结果走，画在结果**下面**（第四十八轮·补四：「这些位置也不应该在上面」——
 ///   控制行挪到上面那一版也被退回了）；
 /// * 每一段展开后的末尾另有一颗「收起这一组」：翻完 80 行想收起来时，不用再滚回抬头去点；
+/// * **别的版本收在底部**（第四十八轮·补六，用户「详细页会搜到其他版本的，比如第二季 剧场版
+///   番外等等」）：本作按字幕组分段照旧，判成"另一版"的条目（`SeedOtherBlock`）默认折在
+///   结果下面那行「其他版本（N 条）」里，点开按版本分小节（第三季 / 剧场版 / 更早的版本…），
+///   小节里还是按字幕组来 —— **判错也不丢**，最坏只是把一条本作挪进了那一区；
 /// * mikan 番剧页降级成**手动**口（「改搜索词 / 粘链接」里粘地址或 id）—— 它给的东西更完整
 ///   （整部剧集表 + 每组自己的 RSS），只是不该再当主力，见 `domain/library_seed.dart` 的库注释。
 library;
@@ -46,6 +50,7 @@ import '../../domain/error_text.dart';
 import '../../domain/following_subscription.dart';
 import '../../domain/library_seed.dart';
 import '../../domain/models.dart';
+import '../../domain/seed_version.dart' show SeedOtherBlock;
 import '../../domain/subtitle_groups.dart';
 import '../../state/playback.dart';
 import '../../state/providers.dart';
@@ -96,6 +101,30 @@ Key dsDetailSeedsGroupCollapseKey(String key) =>
 Key dsDetailSeedsGroupMoreKey(String key) =>
     ValueKey<String>('seed-group-more-$key');
 
+/// 「其他版本（N 条）」那一行（第四十八轮·补六；点它 = 展开 / 收起别的版本）。
+const Key dsDetailSeedsOtherKey = Key('library-detail-seeds-other');
+
+/// 其他版本里的版本小节（例如「第三季」那一块）。
+Key dsDetailSeedsOtherBlockKey(String version) =>
+    ValueKey<String>('seed-other-block-$version');
+
+/// 其他版本里某一段字幕组的抬头（[version] = 版本标签，[key] = 归一化组名）。
+Key dsDetailSeedsOtherGroupKey(String version, String key) =>
+    ValueKey<String>('seed-other-group-$version-$key');
+
+/// 其他版本里某一段的抬头开关。
+Key dsDetailSeedsOtherGroupToggleKey(String version, String key) =>
+    ValueKey<String>('seed-other-toggle-$version-$key');
+
+/// 「其他版本（N 条）」那一行本身（点它 = 展开 / 收起）。
+const Key dsDetailSeedsOtherToggleKey = Key('library-detail-seeds-other-toggle');
+
+/// 其他版本里某一段末尾的「本组还有 N 条」/「收起这一组」。
+Key dsDetailSeedsOtherGroupMoreKey(String version, String key) =>
+    ValueKey<String>('seed-other-more-$version-$key');
+Key dsDetailSeedsOtherGroupCollapseKey(String version, String key) =>
+    ValueKey<String>('seed-other-collapse-$version-$key');
+
 /// 工具行（改搜索词 / 粘链接）。
 const Key dsDetailSeedsQueryFieldKey = Key('library-detail-seeds-query');
 const Key dsDetailSeedsRawFieldKey = Key('library-detail-seeds-raw');
@@ -123,6 +152,9 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
 
   /// 哪几段**展开着**（第四十八轮·补：默认**全收起** —— 进页面先看组名与条数，
   /// 点哪一段看哪一段）。纯界面状态，不落盘、换条目就清。
+  ///
+  /// 键是**段的 id**：本作区就是归一化组名；其他版本区是 `版本标签\u0000组名`
+  /// （同一家字幕组在两区都有，不能撞）。
   final Set<String> _openGroups = <String>{};
 
   /// 哪几段把「本组还有 N 条」也点开了（= 这一段全露）。收起那一段时一起丢掉，
@@ -132,6 +164,9 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   final TextEditingController _word = TextEditingController();
   final TextEditingController _raw = TextEditingController();
   bool _tools = false;
+
+  /// 「其他版本（N 条）」那一行点开了没有（第四十八轮·补六；默认收起）。
+  bool _showOther = false;
   bool _busyGroup = false;
   String? _busyItemId;
 
@@ -161,6 +196,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     _selected.clear();
     _openGroups.clear();
     _fullGroups.clear();
+    _showOther = false;
     _ensureSoon();
   }
 
@@ -173,19 +209,23 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
 
   // ── 动作 ────────────────────────────────────────────────────────────────────
 
+  /// [playlist] 是这一行所在的**那一池**（本作区 = 本作条目；其他版本区 = 那一个版本的条目）。
+  /// ⚠️ 必须分开：播完一集「下一集」不该跳到另一季去（第四十八轮·补六）。
   Future<void> _play(
     SourceItemView item,
     LibrarySeedState s,
-    String showTitle,
-  ) async {
+    String showTitle, {
+    List<SourceItemView>? playlist,
+  }) async {
+    final List<SourceItemView> queue = playlist ?? s.episodes;
     setState(() => _busyItemId = item.id);
     try {
       await ref
           .read(playbackProvider.notifier)
           .playItem(
             item,
-            upNext: followingEpisodes(s.episodes, item),
-            playlist: s.episodes,
+            upNext: followingEpisodes(queue, item),
+            playlist: queue,
             showTitle: showTitle,
             coverUrl: widget.subject.coverUrl,
             coverReferer: 'https://bgm.tv/',
@@ -391,6 +431,12 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
               child: _controls(s),
             ),
           ],
+          // 别的版本（第四十八轮·补六）：默认折一行，点开才按版本分小节 —— 判错的条目
+          // 也在这区里，不删（见 `domain/seed_version.dart` 头部的取舍）。
+          if (s.phase == LibrarySeedPhase.ready && s.otherVersions.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 4),
+            _otherVersions(s, showTitle, marks, jobs, torrents),
+          ],
         ],
       ),
     );
@@ -533,8 +579,6 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
       for (final SeedGroup group in shown)
         if (_openGroups.contains(group.key)) ..._visibleItems(group),
     ];
-    final bool connected = ref.watch(engineStatusProvider).isConnected;
-    final List<SourceOption> sources = ref.watch(sourceOptionsProvider);
     // 表头（番名 / 大小 / 状态 / 操作 + 全选）只在**第一张展开出来的**表上画一次：
     // 默认全都收着时一张表都没有，也就不该有一条孤零零的表头。
     final int headerAt = shown.indexWhere(
@@ -553,61 +597,17 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
         for (int i = 0; i < shown.length; i++) ...<Widget>[
           _groupHeader(context, s, shown[i], showTitle, marks, jobs, torrents),
           if (_openGroups.contains(shown[i].key)) ...<Widget>[
-            SearchResultsTable(
-              items: _visibleItems(shown[i]),
-              embedded: true,
-              // 表头只在最上面画一次（列宽一样，每段都来一行会把版面切碎）。
+            _groupTable(
+              context,
+              s,
+              shown[i],
+              showTitle,
+              marks,
+              jobs,
+              torrents,
               showHeader: i == headerAt,
-              selectAllScope: scope,
-              engineConnected: connected,
-              busyItemId: _busyItemId,
-              sources: sources,
-              onPlay: (SourceItemView item) =>
-                  unawaited(_play(item, s, showTitle)),
-              onDownload: (SourceItemView item) => runGuarded(
-                context,
-                action: () => ref.read(queuePortProvider).enqueueDownload(item),
-                success: '已加入下载队列',
-              ),
-              onSubscribe: (SourceItemView item) => runGuarded(
-                context,
-                action: () => ref.read(queuePortProvider).attachToSubsRule(item),
-                success: '已加入订阅过滤',
-              ),
-              selectedIds: _selected,
-              onToggleSelect: (SourceItemView item) => setState(() {
-                if (!_selected.remove(item.id)) _selected.add(item.id);
-              }),
-              onToggleSelectAll: (bool select) => setState(() {
-                for (final SourceItemView item in scope) {
-                  if (!canBatchDownload(item)) continue;
-                  if (select) {
-                    _selected.add(item.id);
-                  } else {
-                    _selected.remove(item.id);
-                  }
-                }
-              }),
-              marksOf: (SourceItemView item) => _marks(
-                item,
-                s,
-                showTitle,
-                watched: marks,
-                jobs: jobs,
-                torrents: torrents,
-              ),
-              groupActionLabel: (SourceItemView item) =>
-                  '这一组都入队（${shown[i].count} 条）',
-              onGroupAction: (SourceItemView item) => unawaited(
-                _enqueueGroup(
-                  shown[i].items,
-                  s,
-                  showTitle,
-                  marks,
-                  jobs,
-                  torrents,
-                ),
-              ),
+              scope: scope,
+              playlist: s.episodes,
             ),
             _groupFoot(shown[i], t),
           ],
@@ -625,8 +625,10 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                 onPressed: _busyGroup
                     ? null
                     : () async {
+                        // ⚠️ 用**整池**找勾中的条目：勾选可以在「其他版本」区里发生，
+                        // 只扫 `episodes`（本作）会点了没反应（第四十八轮·补六）。
                         final List<SourceItemView> picked = <SourceItemView>[
-                          for (final SourceItemView item in s.episodes)
+                          for (final SourceItemView item in s.allItems)
                             if (_selected.contains(item.id)) item,
                         ];
                         if (picked.isEmpty) return;
@@ -667,10 +669,80 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
+  /// 一段展开后的那张表（本作区与「其他版本」区共用）。
+  ///
+  /// 表头（番名 / 大小 / 状态 / 操作 + 全选）只在**最上面那张**上画一次 —— 列宽一样，
+  /// 每段都来一行会把版面切碎。
+  Widget _groupTable(
+    BuildContext context,
+    LibrarySeedState s,
+    SeedGroup group,
+    String showTitle,
+    Map<String, DateTime> marks,
+    List<QueueJobView> jobs,
+    List<EngineTorrentView> torrents, {
+    required bool showHeader,
+    required List<SourceItemView> scope,
+    required List<SourceItemView> playlist,
+    String? openKey,
+  }) {
+    return SearchResultsTable(
+      items: _visibleItems(group, openKey: openKey),
+      embedded: true,
+      showHeader: showHeader,
+      selectAllScope: scope,
+      engineConnected: ref.watch(engineStatusProvider).isConnected,
+      busyItemId: _busyItemId,
+      sources: ref.watch(sourceOptionsProvider),
+      onPlay: (SourceItemView item) =>
+          unawaited(_play(item, s, showTitle, playlist: playlist)),
+      onDownload: (SourceItemView item) => runGuarded(
+        context,
+        action: () => ref.read(queuePortProvider).enqueueDownload(item),
+        success: '已加入下载队列',
+      ),
+      onSubscribe: (SourceItemView item) => runGuarded(
+        context,
+        action: () => ref.read(queuePortProvider).attachToSubsRule(item),
+        success: '已加入订阅过滤',
+      ),
+      selectedIds: _selected,
+      onToggleSelect: (SourceItemView item) => setState(() {
+        if (!_selected.remove(item.id)) _selected.add(item.id);
+      }),
+      onToggleSelectAll: (bool select) => setState(() {
+        for (final SourceItemView item in scope) {
+          if (!canBatchDownload(item)) continue;
+          if (select) {
+            _selected.add(item.id);
+          } else {
+            _selected.remove(item.id);
+          }
+        }
+      }),
+      marksOf: (SourceItemView item) => _marks(
+        item,
+        s,
+        showTitle,
+        watched: marks,
+        jobs: jobs,
+        torrents: torrents,
+      ),
+      groupActionLabel: (SourceItemView item) =>
+          '这一组都入队（${group.count} 条）',
+      onGroupAction: (SourceItemView item) => unawaited(
+        _enqueueGroup(group.items, s, showTitle, marks, jobs, torrents),
+      ),
+    );
+  }
+
   /// 这一段现在该画几条（收起着的段一条都不画；展开了先露 [kSeedGroupVisibleStep] 条）。
-  List<SourceItemView> _visibleItems(SeedGroup group) {
-    if (_fullGroups.contains(group.key) ||
-        group.count <= kSeedGroupVisibleStep) {
+  ///
+  /// [openKey]：同一家字幕组可能在「本作区」与「其他版本区」各出现一次，段 id 要能区分
+  /// （见 [_otherKey]）。
+  List<SourceItemView> _visibleItems(SeedGroup group, {String? openKey}) {
+    final String key = openKey ?? group.key;
+    if (_fullGroups.contains(key) || group.count <= kSeedGroupVisibleStep) {
       return group.items;
     }
     return group.items.sublist(0, kSeedGroupVisibleStep);
@@ -681,8 +753,14 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   /// 为什么末尾也要一颗"收起"（第四十八轮·补四）：一段 80 行，看完想收起来时不该再滚回
   /// 抬头去点那颗小箭头 —— 用户的原话是「只有展开没有收起」（抬头那颗箭头的"收起"只写在
   /// 悬停提示里，看不出也够不着）。
-  Widget _groupFoot(SeedGroup group, DsTokens t) {
-    final int hidden = group.count - _visibleItems(group).length;
+  Widget _groupFoot(
+    SeedGroup group,
+    DsTokens t, {
+    String? openKey,
+    String? versionLabel,
+  }) {
+    final String key = openKey ?? group.key;
+    final int hidden = group.count - _visibleItems(group, openKey: openKey).length;
     Widget link(Key key, String label, VoidCallback onPressed) => TextButton(
       key: key,
       style: TextButton.styleFrom(
@@ -702,14 +780,18 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
         children: <Widget>[
           if (hidden > 0)
             link(
-              dsDetailSeedsGroupMoreKey(group.key),
+              versionLabel == null
+                  ? dsDetailSeedsGroupMoreKey(group.key)
+                  : dsDetailSeedsOtherGroupMoreKey(versionLabel, group.key),
               '本组还有 $hidden 条',
-              () => setState(() => _fullGroups.add(group.key)),
+              () => setState(() => _fullGroups.add(key)),
             ),
           link(
-            dsDetailSeedsGroupCollapseKey(group.key),
+            versionLabel == null
+                ? dsDetailSeedsGroupCollapseKey(group.key)
+                : dsDetailSeedsOtherGroupCollapseKey(versionLabel, group.key),
             '收起这一组',
-            () => _toggleGroup(group.key),
+            () => _toggleGroup(key),
           ),
         ],
       ),
@@ -734,6 +816,9 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   /// 抬头本身是**这一段的开关**（第四十八轮·补：默认全收起）—— 点它才画条目。
   /// 「这一组都入队」与「订阅」留在收起态里：这两件事本来就不需要先看见每一行
   /// （想整组下的人正是最不想翻那 90 行的人）。
+  ///
+  /// [openKey] / [versionLabel] 只在「其他版本」区给：同一家字幕组在两区都会出现，
+  /// 段的 id 与 key 都要带版本前缀（第四十八轮·补六）。
   Widget _groupHeader(
     BuildContext context,
     LibrarySeedState s,
@@ -741,20 +826,27 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     String showTitle,
     Map<String, DateTime> watched,
     List<QueueJobView> jobs,
-    List<EngineTorrentView> torrents,
-  ) {
+    List<EngineTorrentView> torrents, {
+    String? openKey,
+    String? versionLabel,
+  }) {
     final DsTokens t = context.ds;
     final BangumiGroupView? detailGroup = _detailGroupOf(s, group);
-    final bool open = _openGroups.contains(group.key);
+    final String key = openKey ?? group.key;
+    final bool open = _openGroups.contains(key);
     return Padding(
-      key: dsDetailSeedsGroupKey(group.key),
+      key: versionLabel == null
+          ? dsDetailSeedsGroupKey(group.key)
+          : dsDetailSeedsOtherGroupKey(versionLabel, group.key),
       padding: const EdgeInsets.only(top: 10, bottom: 6),
       child: Row(
         children: <Widget>[
           Expanded(
             child: InkWell(
-              key: dsDetailSeedsGroupToggleKey(group.key),
-              onTap: () => _toggleGroup(group.key),
+              key: versionLabel == null
+                  ? dsDetailSeedsGroupToggleKey(group.key)
+                  : dsDetailSeedsOtherGroupToggleKey(versionLabel, group.key),
+              onTap: () => _toggleGroup(key),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Row(
@@ -812,6 +904,147 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                       torrents,
                     ),
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 其他版本的段 id：`版本标签\u0000归一化组名`。
+  ///
+  /// 同一家字幕组（`桜都`）在本作区和「第三季」区各有一段，两个 Set 不能撞。
+  static String _otherKey(String version, String groupKey) =>
+      '$version\u0000$groupKey';
+
+  /// 结果下面那行「其他版本（N 条）」+ 展开后的版本小节（第四十八轮·补六）。
+  ///
+  /// 为什么默认收起：主列表要干净（用户要的是"打开就看到本作"）；但被判成"别的版本"的
+  /// 条目**一条都不能丢** —— 判据是标题里的版本标记 + 放送时间窗，必然会有判错的时候
+  /// （见 `domain/seed_version.dart` 头部），折在这里用户随时翻得到、还能直接入队。
+  Widget _otherVersions(
+    LibrarySeedState s,
+    String showTitle,
+    Map<String, DateTime> marks,
+    List<QueueJobView> jobs,
+    List<EngineTorrentView> torrents,
+  ) {
+    final DsTokens t = context.ds;
+    final int total = s.otherCount;
+    final String summary = s.otherVersions
+        .map((SeedOtherBlock b) => '${b.label} ${b.count}')
+        .join(' · ');
+    return Column(
+      key: dsDetailSeedsOtherKey,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Tooltip(
+          message: _showOther ? '收起其他版本' : '展开其他版本（$total 条）',
+          child: InkWell(
+            key: dsDetailSeedsOtherToggleKey,
+            onTap: () => setState(() => _showOther = !_showOther),
+            borderRadius: BorderRadius.circular(t.radiusControl),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    _showOther
+                        ? Icons.keyboard_arrow_down
+                        : Icons.keyboard_arrow_right,
+                    size: 16,
+                    color: t.text3,
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.layers, size: 13, color: t.text3),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      '其他版本（$total 条）：$summary',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: t.text2,
+                        fontSize: DsTypeScale.caption,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_showOther)
+          for (final SeedOtherBlock block in s.otherVersions) ...<Widget>[
+            _otherBlockHeader(block),
+            for (final SeedGroup group in block.groups) ...<Widget>[
+              _groupHeader(
+                context,
+                s,
+                group,
+                showTitle,
+                marks,
+                jobs,
+                torrents,
+                openKey: _otherKey(block.label, group.key),
+                versionLabel: block.label,
+              ),
+              if (_openGroups.contains(_otherKey(block.label, group.key))) ...<Widget>[
+                _groupTable(
+                  context,
+                  s,
+                  group,
+                  showTitle,
+                  marks,
+                  jobs,
+                  torrents,
+                  // 表头只在最上面那张画一次；这里是展开区，不重复画。
+                  showHeader: false,
+                  scope: block.items,
+                  playlist: block.items,
+                  openKey: _otherKey(block.label, group.key),
+                ),
+                _groupFoot(
+                  group,
+                  t,
+                  openKey: _otherKey(block.label, group.key),
+                  versionLabel: block.label,
+                ),
+              ],
+            ],
+          ],
+      ],
+    );
+  }
+
+  /// 其他版本里一个小节的头：版本标签（`第三季` / `剧场版` / `更早的版本（2021）`）+ 条数。
+  Widget _otherBlockHeader(SeedOtherBlock block) {
+    final DsTokens t = context.ds;
+    return Padding(
+      key: dsDetailSeedsOtherBlockKey(block.label),
+      padding: const EdgeInsets.only(top: 10, bottom: 2),
+      child: Row(
+        children: <Widget>[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: t.accentSoft,
+              borderRadius: BorderRadius.circular(t.radiusPill),
+            ),
+            child: Text(
+              block.label,
+              style: TextStyle(
+                color: t.accent,
+                fontSize: DsTypeScale.caption,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            block.hint == null
+                ? '${block.count} 条'
+                : '${block.hint} · ${block.count} 条',
+            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
           ),
         ],
       ),
