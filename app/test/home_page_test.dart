@@ -856,6 +856,58 @@ void main() {
     expect(find.textContaining('已加入「正在追」'), findsOneWidget);
   });
 
+  // ── 第五十轮（用户：「名字过长就会出现显示不全的问题」）────────────────────────
+  testWidgets('第五十轮：两行番名整行看得见（不再切掉第二行），悬停标题看全名', (WidgetTester tester) async {
+    sizeTo(tester, const Size(1600, 1000));
+    const String longTitle = '剧场版 关于我转生变成史莱姆这档事 红莲之绊篇';
+    final Map<int, List<ScheduleEntryView>> byDay = <int, List<ScheduleEntryView>>{
+      3: <ScheduleEntryView>[_entry(3, 1, longTitle)],
+    };
+    await tester.pumpWidget(
+      harness(
+        const HomePage(),
+        schedule: FakeSchedulePort(
+          ScheduleView(
+            entries: byDay.values.expand((List<ScheduleEntryView> e) => e).toList(),
+            byDay: byDay,
+            fetchedAt: DateTime.now(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder title = find.text(longTitle);
+    expect(title, findsOneWidget);
+    final Text text = tester.widget<Text>(title);
+    expect(text.maxLines, 2, reason: '番名仍然是两行上限（超过的收省略号）');
+
+    // 两行实际要多高：拿**同一个 style** 量一行再 ×2 —— 真字体是 19/行（不是 18.9×2=37.8）。
+    final TextPainter painter = TextPainter(
+      text: TextSpan(text: '两行', style: text.style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    expect(
+      tester.getSize(title).height,
+      greaterThanOrEqualTo(painter.height * 2 - 0.01),
+      reason: '番名区必须装得下两行（${painter.height * 2}）；旧值 32 装不下 → '
+          '第二行被切掉半截，看着就是"名字过长显示不全"',
+    );
+
+    // 超过两行的名字收省略号，但**悬停**能看到完整番名。
+    final Tooltip tip = tester.widget<Tooltip>(
+      find.ancestor(of: find.text(longTitle), matching: find.byType(Tooltip)),
+    );
+    expect(tip.message, longTitle);
+    // 悬停一下确认 tooltip 真的会弹（不是挂在那儿没人触发）。
+    final TestGesture mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(title));
+    await tester.pumpAndSettle();
+    expect(find.text(longTitle), findsNWidgets(2), reason: '卡片上一份 + tooltip 浮层一份');
+  });
+
   testWidgets('点推荐卡 → 打开动漫库详情；详情里「搜种子」才去搜索页（第三十三轮）',
       (WidgetTester tester) async {
     sizeTo(tester, const Size(1400, 1000));

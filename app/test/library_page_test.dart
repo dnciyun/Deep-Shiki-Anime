@@ -12,15 +12,18 @@ import 'dart:ui' show Tristate;
 
 import 'package:dsanima/domain/bangumi.dart';
 import 'package:dsanima/domain/bangumi_library.dart';
+import 'package:dsanima/domain/following_store.dart';
 import 'package:dsanima/domain/ports.dart';
 import 'package:dsanima/domain/search_history.dart';
 import 'package:dsanima/state/library_provider.dart';
 import 'package:dsanima/state/providers.dart';
 import 'package:dsanima/ui/library_detail_page.dart';
 import 'package:dsanima/ui/library_page.dart';
+import 'package:dsanima/ui/widgets/follow_button.dart';
 import 'package:dsanima/ui/widgets/library_seed_block.dart';
 import 'package:dsanima/ui/widgets/neo.dart';
 import 'package:dsanima_core/sources/kv.dart' show InMemoryKeyValueStore;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -546,5 +549,81 @@ void main() {
         reason: '用户不该自己按返回 —— 详情页是压在 shell 上的整屏路由，必须自己 pop');
     expect(container.read(navProvider), ShellTab.search, reason: '落到搜索页');
     expect(container.read(searchProvider).keyword, '葬送的芙莉莲', reason: '关键字就是这条目的名字');
+  });
+
+  // ── 第五十轮 ────────────────────────────────────────────────────────────────
+  // 用户原话：「名字过长就会出现显示不全的问题，然后动漫库右上角应该加个订阅按钮
+  // 同主页的那样」；问答选定「动漫库每张海报卡的右上角：悬停出现 ♥（追番），
+  // 和主页海报卡一样」。
+
+  testWidgets('第五十轮：长番名两行**整行**看得见（不再被切掉第二行），卡片上悬停看全名',
+      (WidgetTester tester) async {
+    const String longTitle = '剧场版 关于我转生变成史莱姆这档事 红莲之绊篇';
+    final ({Widget widget, FakeLibraryPort port, InMemoryKeyValueStore store}) h =
+        _build(items: <BangumiSubject>[_sub(1, longTitle)], total: 1);
+    await _pump(tester, h.widget);
+
+    final Finder title = find.text(longTitle);
+    expect(title, findsOneWidget);
+    final Text text = tester.widget<Text>(title);
+    expect(text.maxLines, kLibraryCardTitleLines, reason: '番名仍然是两行上限（超过的收省略号）');
+
+    // 两行实际要多高：拿**同一个 style** 量一行，×2 —— 真字体是 19/行（不是 18.9）。
+    final TextPainter painter = TextPainter(
+      text: TextSpan(text: '两行', style: text.style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final double twoLines = painter.height * kLibraryCardTitleLines;
+    expect(
+      tester.getSize(title).height,
+      greaterThanOrEqualTo(twoLines - 0.01),
+      reason: '番名区必须装得下两行（$twoLines）；旧值 30 装不下 → 第二行被切掉半截，'
+          '看着就是"名字过长显示不全"',
+    );
+
+    // 超过两行的名字收省略号，但**悬停**能看到完整番名（卡片上挂的 Tooltip 就是全名）。
+    final Tooltip tip = tester.widget<Tooltip>(
+      find.ancestor(of: find.text(longTitle), matching: find.byType(Tooltip)),
+    );
+    expect(tip.message, longTitle);
+  });
+
+  testWidgets('第五十轮：卡片右上角悬停出现追番 ♥（同主页海报卡）；点了只追番、不打开详情',
+      (WidgetTester tester) async {
+    final ({Widget widget, FakeLibraryPort port, InMemoryKeyValueStore store}) h =
+        _build();
+    await _pump(tester, h.widget);
+    final ProviderContainer container = ProviderScope.containerOf(
+      tester.element(find.byType(LibraryPage)),
+    );
+    expect(find.byType(FollowButton), findsNothing, reason: '不悬停时不挤封面角');
+
+    final TestGesture mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(find.byKey(const Key('library-card-1'))));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(FollowButton), findsOneWidget, reason: '悬停 → 卡片右上角出现追番 ♥');
+    final Rect heart = tester.getRect(find.byType(FollowButton));
+    final Rect card = tester.getRect(find.byKey(const Key('library-card-1')));
+    expect(heart.top, lessThan(card.center.dy), reason: '在封面的上半部，不是标题那一侧');
+    expect(heart.right, lessThanOrEqualTo(card.right + 1), reason: '贴着卡片右缘（右上角）');
+
+    // 点 ♥ = 追番（本地标记，不建订阅、不下载），**不**顺带把详情页点开。
+    await tester.tap(find.byType(FollowButton));
+    await tester.pumpAndSettle();
+    expect(find.byType(LibraryDetailPage), findsNothing, reason: '点 ♥ 不该连带打开详情页');
+    expect(
+      container.read(followingProvider).map((FollowingEntry e) => e.id),
+      contains('bgm:1'),
+      reason: '写进了「正在追」的那条 bgm 记录',
+    );
+    expect(find.byIcon(Icons.favorite), findsOneWidget, reason: '已追 → 实心 ♥');
+
+    // 已追的卡片：鼠标移开也把那颗 ♥ 留在角上（与主页海报卡同一条规矩）。
+    await mouse.moveTo(Offset.zero);
+    await tester.pumpAndSettle();
+    expect(find.byType(FollowButton), findsOneWidget, reason: '已追的卡不悬停也留着 ♥');
   });
 }

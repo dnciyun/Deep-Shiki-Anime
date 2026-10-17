@@ -20,6 +20,12 @@
 /// * 「刷新」与「换一批」各自成了 [NeoCircleButton]：**只有矢量图，没有文字**，
 ///   原来写在按钮上的字改由 tooltip 承载。
 ///
+/// ⚠️ **第五十轮**（用户：「名字过长就会出现显示不全的问题，然后动漫库右上角应该加个
+/// 订阅按钮同主页的那样」）：海报卡下面那行番名原来装在 32px 高的盒子里，而两行字实际
+/// 要 **38px**（14 × 1.35，真字体度量取整到 19/行）—— 长番名第二行被**切掉半截**。
+/// 现在 [kHomeCardTitleHeight] = 38（两行整行看得见），再长的悬停标题看全名；
+/// 卡片总高 [kHomeCardTextHeight] 不变。
+///
 /// 三条硬约束：
 /// 1. 星期切换**不重新拉数据**（一次 `schedule()` 拿全周）；
 /// 2. 首页条目**没有磁力**：点卡片进番剧详情，再由剧集入队播放，不硬凑可播项；
@@ -58,8 +64,22 @@ import 'widgets/state_views.dart';
 /// 卡片间距（CSS `gap:14px`）。
 const double kHomeGridGap = 14;
 
-/// 封面下的文字块高度：6(间距) + 32(标题 2 行) + 3(间距) + 14(来源行)。
+/// 封面下的文字块高度（卡片总高 = 封面高 + 它）。
+///
+/// ⚠️ 现在的卡片文字块只有「6(间距) + 番名两行 38」= 44，[kHomeCardTextHeight] 56 是
+/// **留了 12 的余量**。对外保持 56 不动：第三十四轮起"一页 = 列数 × 行数"、封面高度都
+/// 按它算（`home_page_test` 也拿它反推封面高）。第五十轮只把番名盒子 32 → 38
+/// （见 [kHomeCardTitleHeight]），那点余量正好装得下，卡片总高不变。
 const double kHomeCardTextHeight = 56;
+
+/// 番名区高度（第五十轮）：**两行**，一行 19px。
+///
+/// 用户原话（第五十轮）：「名字过长就会出现显示不全的问题，然后动漫库右上角应该加个
+/// 订阅按钮同主页的那样」—— 问答里点名了**主页今日更新**也中招。原来是 32：14 号字 ×
+/// 1.35 = 18.9 ⇒ `TextPainter` 实测一行 **19**、两行 **38** —— 32 装不下第二行，
+/// 长番名**被切掉半截**（探针出图 `build/probe-cards/home_1600_before.png`）。
+/// 超过两行的名字收省略号，鼠标停在番名上看完整名字（`Tooltip`，第五十轮加的）。
+const double kHomeCardTitleHeight = 38;
 
 /// 内容区左右内边距（CSS `padding: … 18px`）。
 const double kHomeGridPadding = 18;
@@ -988,7 +1008,10 @@ ScheduleBadge? scheduleBadgeFor({
   return null;
 }
 
-/// 一张海报卡：封面在上（正方、圆角 12、柔光内边）、标题 2 行截断、来源 `mikan`。
+/// 一张海报卡：封面在上（真海报比例、圆角、柔光内边）+ 番名两行 + 悬停时的追番 ♥。
+///
+/// 第五十轮：番名区按两行给足高度（[kHomeCardTitleHeight]），**不再切掉第二行**；
+/// 悬停番名会弹 tooltip 显示完整名字（名字超过两行时截成省略号）。
 class _PosterCard extends ConsumerStatefulWidget {
   const _PosterCard({required this.entry, required this.badge, required this.onTap});
 
@@ -1066,13 +1089,18 @@ class _PosterCardState extends ConsumerState<_PosterCard> {
               ),
             ),
             const SizedBox(height: 6),
-            SizedBox(
-              height: 32,
-              child: Text(
-                entry.displayTitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: t.text, fontSize: DsTypeScale.secondary, height: 1.35),
+            // 第五十轮：番名盒子按**两行**给足（38），第二行不再被切掉半截；
+            // 超过两行的名字收省略号，悬停标题看完整番名。
+            Tooltip(
+              message: entry.displayTitle,
+              child: SizedBox(
+                height: kHomeCardTitleHeight,
+                child: Text(
+                  entry.displayTitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: t.text, fontSize: DsTypeScale.secondary, height: 1.35),
+                ),
               ),
             ),
           ],

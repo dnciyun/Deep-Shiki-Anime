@@ -33,6 +33,21 @@
 ///
 /// 布局的测量点也随之搬了：**列数按左栏宽度算**（不是整窗宽），所以"一页 = 列数 ×
 /// [kLibraryRows]"这条规矩在窄了 248+px 之后仍然成立（不然末行又会缺几个）。
+///
+/// ## 第五十轮：番名为什么会被切掉半行 / 卡片右上角为什么多一颗 ♥
+///
+/// 用户原话（第五十轮）：「名字过长就会出现显示不全的问题，然后动漫库右上角应该加个
+/// 订阅按钮同主页的那样」；问答里选定的是「动漫库每张海报卡的右上角：悬停出现 ♥（追番），
+/// 和主页海报卡一样」，并且「名字显示不全」点名了**动漫库网格卡 + 主页今日更新卡**两处。
+///
+/// * **被切掉半行不是省略号**：番名区原来是 `SizedBox(height: 30)`，而 14 号字 × 1.35 = 18.9
+///   ⇒ `TextPainter` 实测 **一行 19px、两行 38px**（字体度量取整，不是 37.8）—— 盒子只有 30
+///   ⇒ 第二行**被切掉半截**（出图 `build/probe-cards/library_1400_before.png`；修复后
+///   `library_1400_after.png`）。现在 [kLibraryCardTitleHeight] = 38，两行整行看得见；
+///   再长的名字（>2 行）收成省略号，**鼠标停在标题上**看完整番名（`Tooltip`）。
+/// * 卡片右上角那颗 ♥ 与主页海报卡是**同一个** `FollowButton(compact: true)`：悬停出现、
+///   已追的常驻（不悬停也不挤封面角）。点了只写本地追番标记，**不建订阅、不下载**
+///   （spec §7.6 的口径没变）。
 library;
 
 import 'dart:async';
@@ -43,6 +58,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/bangumi.dart';
 import '../domain/bangumi_library.dart';
 import '../domain/error_text.dart';
+import '../domain/following_store.dart';
+import '../state/following_provider.dart';
 import '../state/library_provider.dart';
 import '../state/search_history_provider.dart';
 import '../theme/motion.dart';
@@ -50,6 +67,7 @@ import '../theme/tokens.dart';
 import 'library_detail_page.dart';
 import 'widgets/cover.dart';
 import 'widgets/ds_stagger.dart';
+import 'widgets/follow_button.dart';
 import 'widgets/neo.dart';
 import 'widgets/neo_dropdown.dart';
 import 'widgets/search_history_bar.dart';
@@ -75,12 +93,21 @@ const double _railGap = 8;
 /// 整页上内边距（右栏的搜索框与左栏的抬头行都从这条线起）。
 const double _pageTop = 10;
 
-/// 卡片里海报之下那一块（标题两行）的高度 + 一点余量。
+/// 番名区：**两行**（第五十轮；用户点名「名字过长就会出现显示不全」）。
+///
+/// ⚠️ 行高**不是** 14 × 1.35 = 18.9：真字体（微软雅黑）的度量会取整到 **19px**
+/// （`TextPainter` 实测，探针 `test/card_title_probe.dart`）—— 所以两行要 **38**，
+/// 不是 37.8。盒子给 30（旧值）时第二行会被切掉半截，看着像"名字显示不全"。
+const int kLibraryCardTitleLines = 2;
+const double kLibraryCardTitleHeight = 38;
+
+/// 卡片里海报之下那一块：5（间距）+ 番名区两行 38。
 ///
 /// ⚠️ 这个余量不是随手加的：海报槽带 1px 描边，`AspectRatio` 拿到的是**减去描边**的宽度，
 /// 整块高度 = `w/0.705 − 0.84`，而 `mainAxisExtent` 是拿 `w/0.705` 算的 —— 不留余量时
 /// 卡片 Column 会正好差 0.16px 溢出（真机上就是一条黄黑斜纹）。
-const double _cardTextHeight = 40;
+/// 第五十轮：番名区 30 → [kLibraryCardTitleHeight]，末尾余量仍是原来的 5（总高 40 → 48）。
+const double _cardTextHeight = 5 + kLibraryCardTitleHeight + 5;
 
 /// 每列**目标**宽度（只用来决定"排几列"；真正的高度按每列实际宽度算，见 [_evenWidth]）。
 const double _maxCardWidth = 168;
@@ -604,19 +631,30 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   }
 }
 
-/// 一张库内卡片：海报 + 标题 + 一行「年份 · 评分 · 形态」。
-class _LibraryCard extends StatefulWidget {
+/// 一张库内卡片：海报 + 番名两行（悬停看全名）+ 封面右上角的追番 ♥（第五十轮）。
+class _LibraryCard extends ConsumerStatefulWidget {
   const _LibraryCard({required this.subject, required this.onTap});
 
   final BangumiSubject subject;
   final VoidCallback onTap;
 
   @override
-  State<_LibraryCard> createState() => _LibraryCardState();
+  ConsumerState<_LibraryCard> createState() => _LibraryCardState();
 }
 
-class _LibraryCardState extends State<_LibraryCard> {
+class _LibraryCardState extends ConsumerState<_LibraryCard> {
   bool _hovered = false;
+
+  /// 追番记录（id 走 `followingIdFor` 的 bgm 段：`bgm:<Bangumi 条目 id>`）。
+  ///
+  /// 与动漫库详细页 `_actions` 里那颗 `FollowButton` 用的是**同一条**记录 —— 在卡片上追了，
+  /// 点进详情页看到的就是「已追」，两边不会各记一份。
+  FollowingEntry get _followEntry => followingEntryFromBangumi(widget.subject);
+
+  /// 已追的卡在**不悬停**时也把那颗 ♥ 留在角上（与主页海报卡同一条规矩）。
+  bool get _followed => ref
+      .watch(followingProvider)
+      .any((FollowingEntry e) => e.id == _followEntry.id);
 
   @override
   Widget build(BuildContext context) {
@@ -662,6 +700,15 @@ class _LibraryCardState extends State<_LibraryCard> {
                     if (subject.platform case final String platform
                         when platform.trim().isNotEmpty)
                       Positioned(left: 5, top: 5, child: _Pill(text: platform)),
+                    // 第五十轮（用户：「动漫库右上角应该加个订阅按钮同主页的那样」）：
+                    // 与主页海报卡同一颗 `FollowButton(compact: true)` —— 悬停出现、
+                    // 已追的常驻。点击在按钮自己的命中区里吃掉，不会连带打开详情页。
+                    if (_hovered || _followed)
+                      Positioned(
+                        right: 5,
+                        top: 5,
+                        child: FollowButton(entry: _followEntry, compact: true),
+                      ),
                     if (subject.score != null && subject.score! > 0)
                       Positioned(
                         right: 5,
@@ -673,16 +720,21 @@ class _LibraryCardState extends State<_LibraryCard> {
               ),
             ),
             const SizedBox(height: 5),
-            SizedBox(
-              height: 30,
-              child: Text(
-                subject.displayTitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: t.text,
-                  fontSize: DsTypeScale.secondary,
-                  height: 1.35,
+            // 第五十轮：**两行整行**看得见（盒子 = 两行 38，不是旧值的 30）；
+            // 超过两行的名字收省略号，鼠标停在标题上看完整番名。
+            Tooltip(
+              message: subject.displayTitle,
+              child: SizedBox(
+                height: kLibraryCardTitleHeight,
+                child: Text(
+                  subject.displayTitle,
+                  maxLines: kLibraryCardTitleLines,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: t.text,
+                    fontSize: DsTypeScale.secondary,
+                    height: 1.35,
+                  ),
                 ),
               ),
             ),
