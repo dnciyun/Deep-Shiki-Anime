@@ -639,12 +639,18 @@ void main() {
     // 用全局 `find.text` 会在那个时刻一次命中多个（`DsShell` 里侧栏那一个才算）。
     // 选中态：图标与文字都走强调色（与导航项的选中态一致）——就在**已经切到设置页**
     // 的这个时刻断言，别先切回去（切回去就不是选中态了）。
+    // 选中态：图标与文字都走**该目的地的标识色相**（第五十二轮：设置 = slate）——
+    // 不再是统一的 accent，颜色用于"按颜色认页"（用户 2026-10-17「整个项目太素」）。
     expect(
       tester.widget<Text>(settingsLabel).style?.color,
-      DsTokens.whiteInk.accent,
-      reason: '选中时文字用强调色',
+      DsTokens.whiteInk.hueInk(DsHue.slate),
+      reason: '选中时文字用该页的色相 ink',
     );
-    expect(tester.widget<Icon>(find.byKey(dsSettingsGearKey)).color, DsTokens.whiteInk.accent);
+    expect(
+      tester.widget<Icon>(find.byKey(dsSettingsGearKey)).color,
+      DsTokens.whiteInk.hueOnFill(DsHue.slate),
+      reason: '选中时齿轮在色相实底上，前景自动取反差色',
+    );
   });
 
   testWidgets('搜索页：默认不加载 → 点「搜索」才 loading → 结果表格（4 列表头 + 属性并进番名副行）', (

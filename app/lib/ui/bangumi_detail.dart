@@ -26,6 +26,7 @@ import 'widgets/cover.dart';
 import 'widgets/feedback.dart';
 import 'widgets/follow_button.dart';
 import 'widgets/group_subscribe.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 import 'widgets/state_views.dart';
 
@@ -105,14 +106,32 @@ class _BangumiDetailPageState extends ConsumerState<BangumiDetailPage> {
           onPressed: () => Navigator.of(context).maybePop(),
         ),
         titleSpacing: 0,
-        title: Text(
-          async.value?.displayTitle ?? entry.displayTitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-              color: t.text,
-              fontSize: DsTypeScale.body,
-              fontWeight: FontWeight.w600),
+        // 第五十二轮（用户 2026-10-17「整个项目太素」）：番剧详情的**身份色 = 橙**，
+        // 与主页「今日推荐 / 今日更新」同一个色相（`hueOfTab(ShellTab.home)`）——
+        // 页头标题前一条 3px 橙竖条 + 标题用橙色 ink，从主页点进来颜色是连着的。
+        title: Row(
+          children: <Widget>[
+            Container(
+              width: 3,
+              height: 14,
+              decoration: BoxDecoration(
+                color: t.hueFill(DsHue.orange),
+                borderRadius: BorderRadius.circular(t.radiusPill),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                async.value?.displayTitle ?? entry.displayTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: t.hueInk(DsHue.orange),
+                    fontSize: DsTypeScale.body,
+                    fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
         ),
         actions: <Widget>[
           // 追番按钮（spec §7.6）：详情页头部也能追，不必先建订阅。
@@ -132,7 +151,9 @@ class _BangumiDetailPageState extends ConsumerState<BangumiDetailPage> {
 
   Widget _body(AsyncValue<BangumiDetailView> async, ScheduleEntryView entry) {
     if (entry.bangumiId.trim().isEmpty) {
+      // 第五十二轮：空态图标圆盘也用页面身份色（橙），不再是一个全灰圆盘。
       return const DsEmpty(
+        hue: DsHue.orange,
         icon: Icons.link_off,
         title: '这条追番记录没有番剧 id',
         message: 'mikan 首页没给 id，打不开详情页。可以到「搜索」页按番名搜这一部。',
@@ -154,6 +175,7 @@ class _BangumiDetailPageState extends ConsumerState<BangumiDetailPage> {
     }
     if (detail.episodes.isEmpty) {
       return const DsEmpty(
+        hue: DsHue.orange,
         icon: Icons.movie_filter_outlined,
         title: '这一部还没有可下载的剧集',
         message: 'mikan 番剧页没解析出剧集（可能是新番未开播）。稍后再试，或到「搜索」页按番名找种子。',
@@ -223,12 +245,18 @@ class _Header extends StatelessWidget {
                 if (detail.groups.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 8),
                   // 字幕组用胶囊（凹槽底、无边框），不再「灰底 + 1px 描边」。
+                  // 第五十二轮：每颗字幕组胶囊按 `hueOfTag` 上色 —— 同一组名每次同色，
+                  // 和下面剧集列表里该组的区块头是**同一个色相**（颜色成了"这是哪个组"的编码）。
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
                     children: <Widget>[
                       for (final BangumiGroupView group in detail.groups)
-                        NeoPill(label: group.name, icon: Icons.groups_outlined),
+                        NeoPill(
+                          label: group.name,
+                          icon: Icons.groups_outlined,
+                          hue: hueOfTag(group.name),
+                        ),
                     ],
                   ),
                 ],
@@ -258,7 +286,6 @@ class _EpisodeList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final DsTokens t = context.ds;
     // 字幕组顺序照站点给的顺序；没有 group 的归到最后一组。
     final List<String> groups = <String>[
       ...detail.groupNames,
@@ -279,19 +306,28 @@ class _EpisodeList extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
       children: <Widget>[
         for (final String group in ordered) ...<Widget>[
+          // 第五十二轮（用户 2026-10-17「整个项目太素」）：每个字幕组 = 一块"板块"，
+          // 区块头带该组的色相竖条 + 色相标题（`NeoSectionHeader`，与设置页 `DsSection`
+          // 同一套记号语言）。色相走 `hueOfTag` 的稳定哈希：同一组名每次渲染同色，
+          // 并且与页头那颗同组的字幕组胶囊颜色一致。
           Padding(
             padding: const EdgeInsets.only(top: 6, bottom: 5),
-            child: Row(
-              children: <Widget>[
-                Expanded(child: Text(group, style: dsTableHeaderStyle(t))),
-                GroupSubscribeButton(
-                  bangumiId: detail.bangumiId,
-                  showTitle: detail.displayTitle,
-                  group: byName[group] ??
-                      BangumiGroupView(name: group), // 站点没列出的组：只能逐集下载
-                ),
-                const SizedBox(width: 4),
-              ],
+            child: NeoSectionHeader(
+              title: group,
+              hue: hueOfTag(group),
+              padding: EdgeInsets.zero,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  GroupSubscribeButton(
+                    bangumiId: detail.bangumiId,
+                    showTitle: detail.displayTitle,
+                    group: byName[group] ??
+                        BangumiGroupView(name: group), // 站点没列出的组：只能逐集下载
+                  ),
+                  const SizedBox(width: 4),
+                ],
+              ),
             ),
           ),
           for (final SourceItemView item in detail.episodes)

@@ -9,6 +9,13 @@
 ///
 /// 视觉沿用列表行那一套（凸起面 + listSafe 阴影，无硬边框）；行内的进度条是自绘的
 /// 两段色块，不用 Material 的 `LinearProgressIndicator`（规范 §7：不用默认控件）。
+///
+/// ## 第五十二轮：颜色 = 信息（用户 2026-10-17「整个项目太素」）
+///
+/// 这一页的身份色是**金**（`hueOfTab(ShellTab.history)`，与侧栏图标、工具条页名、
+/// 内容区洗色同源）：页头 3px 竖条 + 统计文字。每一行右侧的进度徽标按语义上色 ——
+/// 没看完 = 蓝（进行中）、看完 = 绿（已看完），行内进度条同色；集数 / 字幕组 / 时间
+/// 这些数据保持中性，不染颜色。
 library;
 
 import 'dart:async';
@@ -28,6 +35,7 @@ import 'widgets/cover.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/ds_stagger.dart';
 import 'widgets/feedback.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 import 'widgets/state_views.dart';
 
@@ -202,6 +210,9 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：「观看记录」的页面身份色。
+    // 走 `hueOfTab` 与侧栏 / 工具条 / 洗色同源；不在页面里写死 DsHue.gold。
+    final DsHue pageHue = hueOfTab(ShellTab.history);
     final List<WatchRecord> records = ref.watch(watchHistoryProvider);
     final int days = ref.watch(settingsProvider).historyRetentionDays;
     final bool recordingProgress = ref.watch(settingsProvider).recordWatchProgress;
@@ -213,9 +224,19 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
           padding: EdgeInsets.fromLTRB(t.spacing, t.spacing, t.spacing, 10),
           child: Row(
             children: <Widget>[
+              // 第五十二轮：页头 = 金色身份（3px 色相竖条 + hueInk 统计）。
+              Container(
+                width: 3,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: t.hueFill(pageHue),
+                  borderRadius: BorderRadius.circular(t.radiusPill),
+                ),
+              ),
+              const SizedBox(width: 8),
               Text(
                 '${records.length} 条记录 · ${_retentionLabel(days)}',
-                style: TextStyle(color: t.text2, fontSize: DsTypeScale.secondary),
+                style: TextStyle(color: t.hueInk(pageHue), fontSize: DsTypeScale.secondary),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -249,6 +270,8 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
               // 空态必须带一个"下一步动作"（同仓库其它页都有；第四十二轮 UX #17）。
               ? DsEmpty(
                   icon: Icons.history,
+                  // 第五十二轮：空态圆盘用页面身份色（金）。
+                  hue: pageHue,
                   title: '还没有观看记录',
                   message:
                       '用播放器看过一集就会记在这里（番名 / 集数 / 字幕组 / 看到哪儿）；'
@@ -315,11 +338,23 @@ class _HistoryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
     final WatchRecord r = record;
+    // 第五十二轮：行右侧的进度徽标按语义分色 —— 没看完 = 蓝（徽标写进度百分比）、
+    // 看完 = 绿（写「已看完」）；行内进度条与徽标同色（同一条信息不出现两种颜色）。
+    // 「没记进度」的行不假装有进度 → 不给徽标；「有时长未知」的行不编百分比 → 写「进行中」。
+    final bool finished = r.finished;
+    final bool inProgress = !finished && r.positionMs > 0;
+    final String? progressBadge = finished
+        ? '已看完'
+        : inProgress
+        ? (r.durationMs > 0 ? '${(r.progress * 100).round()}%' : '进行中')
+        : null;
     final String episode = (r.episodeLabel ?? '').trim().isEmpty
         ? (r.episode == null ? '全集' : '第 ${r.episode!.toString().padLeft(2, '0')} 集')
         : r.episodeLabel!;
+    // 第五十二轮：百分比从这句挪到了行右侧的徽标（同一条信息只出现一次、且带颜色）；
+    // 这里只留「看到哪儿 / 总长」与"时长未知"的说明。
     final String progressText = r.durationMs > 0
-        ? '看到 ${_clock(r.positionMs)} / ${_clock(r.durationMs)}（${(r.progress * 100).round()}%）'
+        ? '看到 ${_clock(r.positionMs)} / ${_clock(r.durationMs)}'
         : (r.positionMs > 0 ? '看到 ${_clock(r.positionMs)}（时长未知）' : '没有进度记录');
     // 关掉「记录观看进度」时，这条进度不会再更新了 —— 明说"这是以前记下的"，
     // 否则页头说"只记时间"、行里却报百分比，用户会以为设置没生效（UX #18）。
@@ -377,17 +412,15 @@ class _HistoryRow extends StatelessWidget {
                         fontFeatures: DsTokens.tabular,
                       ),
                     ),
-                    if (r.finished) ...<Widget>[
-                      const SizedBox(width: 6),
-                      Text(
-                        '已看完',
-                        style: TextStyle(color: t.success, fontSize: DsTypeScale.caption),
-                      ),
-                    ],
                   ],
                 ),
                 const SizedBox(height: 7),
-                _ProgressBar(progress: r.progress, active: r.durationMs > 0),
+                _ProgressBar(
+                  progress: r.progress,
+                  active: r.durationMs > 0,
+                  // 第五十二轮：进度条填充与右侧徽标同色（未看完 = 蓝、看完 = 绿）。
+                  hue: finished ? DsHue.emerald : DsHue.blue,
+                ),
                 const SizedBox(height: 5),
                 Text(
                   progressLine,
@@ -400,9 +433,18 @@ class _HistoryRow extends StatelessWidget {
               ],
             ),
           ),
+          // 第五十二轮（用户 2026-10-17「整个项目太素」）：进度徽标挪到行右侧，
+          // 用**语义色**说"看到哪儿了"：进行中 = 蓝（写百分比）、已看完 = 绿。
+          // 它是这一行唯一的彩色信息，集数 / 字幕组 / 时间保持中性。
+          if (progressBadge != null) const SizedBox(width: 8),
+          if (progressBadge != null)
+            DsChip(
+              label: progressBadge,
+              hue: finished ? DsHue.emerald : DsHue.blue,
+            ),
           const SizedBox(width: 8),
           // 文案必须与**真的会做什么**一致（第四十二轮 UX #2）：有进度 = 「继续播放」
-          // （会从上次那儿接上），已看完 = 「重看」（从 0 开始，行里也写着「已看完」）。
+          // （会从上次那儿接上），已看完 = 「重看」（从 0 开始，行右侧的徽标写着「已看完」）。
           NeoButton(
             label: r.resumePositionMs == null ? (r.finished ? '重看' : '播放') : '继续播放',
             icon: Icons.play_arrow,
@@ -425,14 +467,19 @@ class _HistoryRow extends StatelessWidget {
   }
 }
 
-/// 自绘进度条：凹槽底 + 强调色填充（不用 Material 的 `LinearProgressIndicator`）。
+/// 自绘进度条：凹槽底 + **色相填充**（第五十二轮；不用 Material 的
+/// `LinearProgressIndicator` —— 规范 §7：不用默认控件）。
 class _ProgressBar extends StatelessWidget {
-  const _ProgressBar({required this.progress, required this.active});
+  const _ProgressBar({required this.progress, required this.active, required this.hue});
 
   final double progress;
 
   /// false = 时长未知（画一条纯凹槽，不假装进度是 0%）。
   final bool active;
+
+  /// 第五十二轮：填充色相（未看完 = 蓝、看完 = 绿，与右侧进度徽标同色）。
+  /// 走 `hueFill`：这是装饰填充，不承载文字。
+  final DsHue hue;
 
   @override
   Widget build(BuildContext context) {
@@ -446,7 +493,7 @@ class _ProgressBar extends StatelessWidget {
             ? FractionallySizedBox(
                 alignment: Alignment.centerLeft,
                 widthFactor: progress.clamp(0.0, 1.0),
-                child: ColoredBox(color: t.accent),
+                child: ColoredBox(color: t.hueFill(hue)),
               )
             : null,
       ),

@@ -22,6 +22,7 @@ class SearchHistoryBar extends StatelessWidget {
     required this.onClear,
     this.keyPrefix = 'search-history',
     this.showLabel = true,
+    this.hue,
   });
 
   final List<String> history;
@@ -31,6 +32,10 @@ class SearchHistoryBar extends StatelessWidget {
 
   /// 每组控件的 key 前缀（两个页面同时挂在 `IndexedStack` 里，key 必须区分）。
   final String keyPrefix;
+
+  /// 标识色相（第五十二轮）：给了就把历史胶囊画成该色相 18% 淡底 + 色相 ink 字。
+  /// 搜索页传 cyan、动漫库右栏传 violet（各页面的身份色）。
+  final DsHue? hue;
 
   /// 要不要自带那半截「最近搜索」标签。
   ///
@@ -88,6 +93,7 @@ class SearchHistoryBar extends StatelessWidget {
                   key: Key('$keyPrefix-chip-$word'),
                   keyPrefix: keyPrefix,
                   word: word,
+                  hue: hue,
                   onPick: () => onPick(word),
                   onForget: () => onForget(word),
                 ),
@@ -113,10 +119,14 @@ class _HistoryChip extends StatelessWidget {
     required this.word,
     required this.onPick,
     required this.onForget,
+    this.hue,
   });
 
   /// 与外面那一组控件同前缀（两个页面同时挂在 `IndexedStack` 里，key 必须区分）。
   final String keyPrefix;
+
+  /// 第五十二轮：页面身份色（给了就画淡底 + 色相字）。
+  final DsHue? hue;
 
   final String word;
   final VoidCallback onPick;
@@ -125,11 +135,12 @@ class _HistoryChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
+    final DsHue? hue = this.hue;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: t.sunken,
+        color: hue != null ? t.hueSoft(hue) : t.sunken,
         borderRadius: BorderRadius.circular(t.radiusPill),
-        border: Border.all(color: t.line, width: 1),
+        border: Border.all(color: hue != null ? t.hueLine(hue) : t.line, width: 1),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -143,7 +154,10 @@ class _HistoryChip extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(9, 4, 4, 4),
                 child: Text(
                   word,
-                  style: TextStyle(color: t.text2, fontSize: DsTypeScale.caption),
+                  style: TextStyle(
+                    color: hue != null ? t.hueInk(hue) : t.text2,
+                    fontSize: DsTypeScale.caption,
+                  ),
                 ),
               ),
             ),

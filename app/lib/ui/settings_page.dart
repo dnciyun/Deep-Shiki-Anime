@@ -350,6 +350,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   ///
   /// 数字徽标 + 粗标题 + 一句灰字提示；组与组之间靠上面那段 `spacing * 3` 的留白分开
   /// （第二十六轮 2.5 → 3：字号收小之后，留白得再松一点才不会又挤成一坨）。
+  ///
+  /// 第五十二轮（用户 2026-10-17「整个项目太素」）：设置页的**页面身份色 = 石板灰**
+  /// （`hueOfTab(ShellTab.settings)` 也是 slate，见 `widgets/hues.dart`）——
+  /// 侧栏「设置」图标、页名竖条已经用上它，这里把三个分组序号徽标也染成同一个色，
+  /// 整页的"骨架"就先带上设置页的颜色；区块各自的色相再往下分（见下面每个 `DsSection`）。
   Widget _groupHeader(DsTokens t, int index, String title, String hint) => Padding(
     padding: EdgeInsets.fromLTRB(t.spacing * 2, t.spacing * 3, t.spacing * 2, 0),
     child: Row(
@@ -359,13 +364,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           height: 22,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: t.accentSoft,
+            color: t.hueSoft(DsHue.slate),
             borderRadius: BorderRadius.circular(t.radiusControl * 0.6),
           ),
           child: Text(
             '$index',
             style: TextStyle(
-              color: t.accent,
+              color: t.hueInk(DsHue.slate),
               fontSize: kSettingsCaptionSize,
               fontWeight: FontWeight.w700,
             ),
@@ -769,8 +774,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               // ── 第 ① 组：引擎 / 下载 / 网络 ─────────────────────────────────
               _groupHeader(t, 1, '引擎 · 下载 · 网络',
                   '边车参数、下载目录、代理与限速 —— 改完都要点「保存并生效」'),
+              // 第五十二轮（用户 2026-10-17「整个项目太素」）：**每个区块一个色相 + 图标**。
+              // 颜色在这里是信息编码（"这是哪一类设置"），不是装饰：同一色相在设置页的
+              // 区块头、图标淡底、以及对应的页面/侧栏入口上指同一个东西；页内 9 个区块
+              // 一一对应、互不撞色（12 色环取自 `theme/tokens.dart` 的 [DsHue]）。
+              // 引擎 = 蓝（后台进程 / 端口，与侧栏「队列」同一个蓝，都是"机器在跑的东西"）。
               DsSection(
                 title: '引擎（rqbit-engine 边车）',
+                hue: DsHue.blue,
+                icon: Icons.dns_outlined,
                 subtitle: '拉起的进程参数：下载目录 · 限速 · 做种比 · tracker',
                 trailing: const EngineStatusPill(),
                 child: Column(
@@ -962,8 +974,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   ],
                 ),
               ),
+              // 网络 / 代理 / 限速 = 青（搜索页也是青：这一组管的就是"往外抓东西"）。
               DsSection(
                 title: '网络 · 限速 · 做种',
+                hue: DsHue.cyan,
+                icon: Icons.wifi,
                 subtitle:
                     '代理只作用于源抓取（nyaa/mikan/RSS）；限速与做种比是边车启动参数'
                     '（0 = 不限），改完需「保存并生效」',
@@ -1131,8 +1146,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               // ── 第 ② 组：观感与资源占用 ──────────────────────────────────────
               _groupHeader(t, 2, '外观 · 省流量 · 缓存',
                   '界面观感、预热与省流量规则、封面/源缓存什么时候清'),
+              // 外观 / 主题 = 紫（8 套色表本身就是"换颜色"，用色环里最像"调色盘"的一档）。
+              // ⚠️ 外观选择器（`NeoAppearancePicker` 的 8 张卡）本身已有色，保持不动。
               DsSection(
                 title: '外观',
+                hue: DsHue.violet,
+                icon: Icons.palette_outlined,
                 subtitle: '8 套内置手调色表（无自定义编辑器）· **点一下立刻生效并保存**'
                     '（第三十三轮起不再需要点「保存并生效」）',
                 child: Column(
@@ -1177,8 +1196,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   ],
                 ),
               ),
+              // 省流量 / 缓存 = 水绿（"省"这一族：预热、排除规则、封面缓存清理）。
               DsSection(
                 title: '省流量策略',
+                hue: DsHue.teal,
+                icon: Icons.data_saver_on,
                 subtitle: '预热档位（默认关）+ 做种/删除；对应「设置里加入省流量列表」：'
                     '命中的番剧/规则一律不预热',
                 child: Column(
@@ -1383,8 +1405,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               // ── 第 ③ 组：种子来源与后台 ──────────────────────────────────────
               _groupHeader(t, 3, 'tracker · 后台 · 做种',
                   '公共 tracker 从哪来、关掉主程序后还跑不跑'),
+              // tracker 来源 = 靛（公共 tracker 是"一张网"：来源清单、一键更新、合并去重）。
               DsSection(
                 title: 'tracker 来源',
+                hue: DsHue.indigo,
+                icon: Icons.public,
                 subtitle: _draft.trackerListUpdatedAt == null
                     ? '还没更新过：引擎会用内置兜底列表'
                     : '上次更新：${formatDateTime(_draft.trackerListUpdatedAt)}',
@@ -1523,8 +1548,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   ],
                 ),
               ),
+              // 做种与后台 = 玫红（"把东西送出去 + 常驻"：做种、后台常驻、sukebei 开关）。
               DsSection(
                 title: '做种与后台',
+                hue: DsHue.rose,
+                icon: Icons.cloud_upload_outlined,
                 subtitle: '默认都不做种、不常驻（spec §7.1 Q2 / §7.3 Q14）',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1562,8 +1590,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               // ── 第 ④ 组：观看记录 · 播放器（第二十七轮）───────────────────────
               _groupHeader(t, 4, '观看记录 · 播放器',
                   '看过的能留多久、记不记进度、播放器两条栏什么时候出来'),
+              // 观看记录 = 金（与侧栏「观看记录」页同一个色相：这里配的就是那一页的数据源）。
               DsSection(
                 title: '观看记录',
+                hue: DsHue.gold,
+                icon: Icons.history,
                 subtitle: '侧栏「观看记录」页的数据源：每看一集记一条（番名 / 集数 / 字幕组 / '
                     '看过时间 / 进度），过期的按这里的天数自动清掉',
                 child: Column(
@@ -1613,8 +1644,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   ],
                 ),
               ),
+              // 播放器 = 绿（"播放"那一族；播放页 / 已完成的绿是同一个信息：能看、在看）。
               DsSection(
                 title: '播放器',
+                hue: DsHue.emerald,
+                icon: Icons.play_circle_outline,
                 subtitle: '两条栏（标题栏 / 控制栏）什么时候出来、什么时候淡出',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1733,8 +1767,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         final String? slug = core_update.normalizeRepoSlug(
           core_update.effectiveUpdateRepo(_draft.updateRepo),
         );
+        // 软件更新 / 版本 = 橙（主页今日推荐也是这个橙：这一块管的就是"从外面拿新东西"）。
         return DsSection(
           title: '软件更新',
+          hue: DsHue.orange,
+          icon: Icons.info_outline,
           subtitle: '从 GitHub 的 Release 里取新版本，直接下载整个发布包覆盖本目录并重启'
               '（便携式：程序与它的 DSAnima-data 在同一个文件夹里）',
           trailing: Text(

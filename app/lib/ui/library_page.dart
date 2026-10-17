@@ -48,6 +48,20 @@
 /// * 卡片右上角那颗 ♥ 与主页海报卡是**同一个** `FollowButton(compact: true)`：悬停出现、
 ///   已追的常驻（不悬停也不挤封面角）。点了只写本地追番标记，**不建订阅、不下载**
 ///   （spec §7.6 的口径没变）。
+///
+/// ## 第五十二轮：颜色编码（用户 2026-10-17 原话：「整个项目太素」）
+///
+/// 页面身份色 = **紫**（[DsHue.violet]），只编码信息、不做装饰：
+/// * **生效中的筛选**：右栏那几格（类型/年份/季度/放送形态/排序/评分下限）的小标题变紫
+///   （`NeoDropdown` 的触发器文字在共享层里是写死的 `t.text`，页面这一层只能借标题染色）；
+/// * **类型胶囊**：选中的那一颗按 `hueOfTag` 上色（该 tag 的色相淡底 + 色相 ink）；
+/// * **结果抬头**：3px 紫竖条 + 紫抬头文字 + 紫页码；
+/// * **结果卡片**：形态胶囊 = `hueOfTag(platform)`、评分 = gold；悬停用 1px 紫色描边；
+/// * **空态** = `DsEmpty(hue: DsHue.violet)`。
+///
+/// ⚠️ 取舍：30 多颗类型胶囊**没有全部上色** —— `NeoPill` 的 `hue` 是"一给就着色"，
+/// 和 `selected` 共用同一套视觉（淡底 + 色相 ink + 加粗），全染会让"选没选中"看不出来；
+/// 所以只给**选中项**上色，未选中保持中性（见 [_genreBlock]）。
 library;
 
 import 'dart:async';
@@ -68,6 +82,7 @@ import 'library_detail_page.dart';
 import 'widgets/cover.dart';
 import 'widgets/ds_stagger.dart';
 import 'widgets/follow_button.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 import 'widgets/neo_dropdown.dart';
 import 'widgets/search_history_bar.dart';
@@ -341,7 +356,8 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _railLabel('类型'),
+        // 第五十二轮：这一格有类型在生效 → 小标题走身份色（紫）。
+        _railLabel('类型', active: tag != null),
         const SizedBox(height: 7),
         Wrap(
           spacing: 6,
@@ -351,14 +367,19 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
               key: const Key('library-genre-all'),
               label: '全部',
               selected: tag == null,
+              // 「全部」= 不筛 = 页面身份色（紫）；选中别的类型时它退回中性。
+              hue: tag == null ? DsHue.violet : null,
               tooltip: '不按类型筛',
               onTap: () => controller.setTag(null),
             ),
             for (final String genre in genres)
+              // ⚠️ 第五十二轮：只给**选中项**上色。`NeoPill` 的 hue 是"给了就着色"，
+              // 与 selected 同一套视觉，30 多颗全染会看不出选没选中（见文件头"取舍"）。
               NeoPill(
                 key: Key('library-genre-$genre'),
                 label: genre,
                 selected: genre == tag,
+                hue: genre == tag ? hueOfTag(genre) : null,
                 tooltip: genre == tag
                     ? '再点一下取消（回到全部类型）'
                     : isLibraryGenre(genre)
@@ -397,6 +418,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             ],
             onSelected: (int value) => controller.setYear(value == 0 ? null : value),
           ),
+          active: query.year != null,
         ),
         _railField(
           '季度',
@@ -412,6 +434,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             ],
             onSelected: controller.setQuarter,
           ),
+          active: query.quarter != 0,
         ),
         _railField(
           '放送形态',
@@ -428,6 +451,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             ],
             onSelected: controller.setForm,
           ),
+          active: query.form != BangumiLibraryForm.any,
         ),
         _railField(
           '排序',
@@ -443,6 +467,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             ],
             onSelected: controller.setSort,
           ),
+          active: query.sort != BangumiLibrarySort.heat,
         ),
         _railField(
           '评分下限',
@@ -460,18 +485,23 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             onSelected: (double value) =>
                 controller.setMinScore(value == 0 ? null : value),
           ),
+          active: query.minScore != null,
         ),
       ],
     );
   }
 
   /// 右栏的一小段标题（「类型」「最近搜索」）。
-  Widget _railLabel(String text) {
+  ///
+  /// 第五十二轮：这一格的条件**生效时**标题走动漫库身份色（紫）—— `NeoDropdown` 的
+  /// 触发器文字在共享层里固定是 `t.text`，页面这一层没法给它染色；"选中态"就由
+  /// 「标题变紫 + 触发器上的值」两处共同表达。没生效时保持三级色（不乱染）。
+  Widget _railLabel(String text, {bool active = false}) {
     final DsTokens t = context.ds;
     return Text(
       text,
       style: TextStyle(
-        color: t.text3,
+        color: active ? t.hueInk(DsHue.violet) : t.text3,
         fontSize: DsTypeScale.caption,
         fontWeight: FontWeight.w600,
         letterSpacing: DsTypeScale.caption * 0.08,
@@ -479,13 +509,13 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     );
   }
 
-  /// 一格「小标题 + 下拉」。
-  Widget _railField(String caption, Widget dropdown) => SizedBox(
+  /// 一格「小标题 + 下拉」。[active] = 这一格的条件不是默认值（第五十二轮）。
+  Widget _railField(String caption, Widget dropdown, {bool active = false}) => SizedBox(
         width: _railFieldWidth,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            _railLabel(caption),
+            _railLabel(caption, active: active),
             const SizedBox(height: 5),
             dropdown,
           ],
@@ -504,6 +534,8 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
       return DsEmpty(
         title: '这一档没有条目',
         icon: Icons.travel_explore_outlined,
+        // 第五十二轮：空态带动漫库身份色（紫）—— 图标圆盘 + 色相图标，不再是全灰。
+        hue: DsHue.violet,
         message: view.query.isDefault
             ? 'Bangumi 这次没给出条目（网络或站点抖动都可能）。稍后重试，或换个条件。'
             : '条件：${view.query.description}。'
@@ -527,13 +559,28 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
           padding: const EdgeInsets.fromLTRB(_gridPad, 0, _gridPad, 8),
           child: Row(
             children: <Widget>[
+              // 第五十二轮（用户 2026-10-17「整个项目太素」）：结果抬头 = 这一页的
+              // "区块头"，用动漫库身份色（紫）的 3px 竖条 + 色相文字（与设置页 DsSection
+              // 同一套记号），抬头一行就从灰变紫。
+              Container(
+                width: 3,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: t.hueFill(DsHue.violet),
+                  borderRadius: BorderRadius.circular(t.radiusPill),
+                ),
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   '${view.query.description} · ${view.query.sortLabel} · '
                   '共 ${view.total} 部（Bangumi 这个接口最多给到 $kLibraryTotalCap）',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+                  style: TextStyle(
+                    color: t.hueInk(DsHue.violet),
+                    fontSize: DsTypeScale.caption,
+                  ),
                 ),
               ),
               if (view.loading)
@@ -544,10 +591,11 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                     style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
                   ),
                 ),
+              // 第五十二轮：页码是「现在翻到第几页」的状态，用身份色（紫）标出来。
               Text(
                 '第 ${view.pageNumber} 页',
                 style: TextStyle(
-                  color: t.text2,
+                  color: t.hueInk(DsHue.violet),
                   fontSize: DsTypeScale.caption,
                   fontFeatures: DsTokens.tabular,
                 ),
@@ -595,6 +643,8 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             label: '上一页',
             icon: Icons.chevron_left,
             compact: true,
+            // 第五十二轮：翻页也走动漫库身份色（紫）—— 次按钮 = 紫色 1px 边 + 紫色字。
+            hue: DsHue.violet,
             onPressed: view.canGoBack && !view.loading
                 ? () => unawaited(controller.previousPage())
                 : null,
@@ -604,6 +654,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             label: '下一页',
             icon: Icons.chevron_right,
             compact: true,
+            hue: DsHue.violet,
             // 第四十二轮 UX #38：「上一页」有 `!view.loading` 门禁，这一颗漏了 ——
             // 在途请求期间点它会被 `nextPage()` 里的闸门**静默吃掉**（按钮看着能点、
             // 点了没反应）。两颗按钮的可用条件必须一致。
@@ -684,7 +735,11 @@ class _LibraryCardState extends ConsumerState<_LibraryCard> {
               decoration: BoxDecoration(
                 color: _hovered ? t.sunken : t.raised,
                 borderRadius: BorderRadius.circular(t.radiusControl * 0.67),
-                border: Border.all(color: t.line, width: 1),
+                // 第五十二轮：悬停 = 1px 身份色（紫）描边（不加阴影）—— 卡片是"可以点
+                // 进去"的东西，用颜色把它从网格里点出来。
+                // ⚠️ 写法必须让 `t.` 与 `Border.all(` 同行：`neo_guard_test` 的描边守卫
+                // 只看单行（拆行会被当成"没有 token 的硬边框"）。
+                border: Border.all(color: _hovered ? t.hueLine(DsHue.violet) : t.line, width: 1),
               ),
               child: AspectRatio(
                 aspectRatio: kPosterAspect,
@@ -697,9 +752,15 @@ class _LibraryCardState extends ConsumerState<_LibraryCard> {
                       referer: bangumiCoverReferer,
                       fit: kPosterFit,
                     ),
+                    // 第五十二轮：形态胶囊按 `hueOfTag(platform)` 上色 ——
+                    // TV = 青、剧场版 = 紫、OVA = 靛（与 `hues.dart` 的标签表同一份口径）。
                     if (subject.platform case final String platform
                         when platform.trim().isNotEmpty)
-                      Positioned(left: 5, top: 5, child: _Pill(text: platform)),
+                      Positioned(
+                        left: 5,
+                        top: 5,
+                        child: _Pill(text: platform, hue: hueOfTag(platform)),
+                      ),
                     // 第五十轮（用户：「动漫库右上角应该加个订阅按钮同主页的那样」）：
                     // 与主页海报卡同一颗 `FollowButton(compact: true)` —— 悬停出现、
                     // 已追的常驻。点击在按钮自己的命中区里吃掉，不会连带打开详情页。
@@ -709,11 +770,15 @@ class _LibraryCardState extends ConsumerState<_LibraryCard> {
                         top: 5,
                         child: FollowButton(entry: _followEntry, compact: true),
                       ),
+                    // 第五十二轮：评分 = gold（评分是"信息"，不是强调色）。
                     if (subject.score != null && subject.score! > 0)
                       Positioned(
                         right: 5,
                         bottom: 5,
-                        child: _Pill(text: '★${subject.score!.toStringAsFixed(1)}'),
+                        child: _Pill(
+                          text: '★${subject.score!.toStringAsFixed(1)}',
+                          hue: DsHue.gold,
+                        ),
                       ),
                   ],
                 ),
@@ -746,10 +811,15 @@ class _LibraryCardState extends ConsumerState<_LibraryCard> {
 }
 
 /// 封面角上的小胶囊（形态 / 评分）——与主页日期 chip 同一套形态。
+///
+/// 第五十二轮：给了 `hue` 就用**色相淡底 + 色相 ink**。淡底取 `hueSoftOn(hue, base)`
+/// （不透明）：它叠在封面上，半透明底会随封面亮度漂、对比度守不住；不透明淡底等价于
+/// 原来的 `base` 底，色相 ink 在上面有 4.5:1 的对比度保证（`test/widget_test.dart` 守卫）。
 class _Pill extends StatelessWidget {
-  const _Pill({required this.text});
+  const _Pill({required this.text, required this.hue});
 
   final String text;
+  final DsHue hue;
 
   @override
   Widget build(BuildContext context) {
@@ -757,13 +827,13 @@ class _Pill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
-        color: t.base.withValues(alpha: 0.86),
+        color: t.hueSoftOn(hue, t.base),
         borderRadius: BorderRadius.circular(t.radiusPill),
       ),
       child: Text(
         text,
         style: TextStyle(
-          color: t.text2,
+          color: t.hueInk(hue),
           fontSize: DsTypeScale.caption * 0.92,
           fontFeatures: DsTokens.tabular,
         ),

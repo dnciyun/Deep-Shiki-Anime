@@ -120,6 +120,7 @@ import '../theme/tokens.dart';
 import 'home_page.dart' show openRecommendSearch;
 import 'widgets/cover.dart';
 import 'widgets/follow_button.dart';
+import 'widgets/hues.dart';
 import 'widgets/library_seed_block.dart';
 import 'widgets/neo.dart';
 import 'widgets/state_views.dart';
@@ -294,7 +295,30 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
       appBar: AppBar(
         backgroundColor: t.base,
         elevation: 0,
-        title: Text(subject.displayTitle, style: TextStyle(color: t.text, fontSize: DsTypeScale.title)),
+        // 第五十二轮（用户 2026-10-17「整个项目太素」）：详情页的**身份色 = 紫**，
+        // 与侧栏「动漫库」同一个色相（`hueOfTab(ShellTab.library)`）—— 页头标题前
+        // 一条 3px 色相竖条 + 标题用色相 ink，与工具条页名、区块头是同一套记号语言。
+        title: Row(
+          children: <Widget>[
+            Container(
+              width: 3,
+              height: 14,
+              decoration: BoxDecoration(
+                color: t.hueFill(DsHue.violet),
+                borderRadius: BorderRadius.circular(t.radiusPill),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                subject.displayTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: t.hueInk(DsHue.violet), fontSize: DsTypeScale.title),
+              ),
+            ),
+          ],
+        ),
       ),
       // ⚠️ 第三十六轮**去掉了"整页限宽居中"**（用户：「左右两边留白不好看」）：
       // 1280 窗里留 74px、2048 逻辑宽（2560 屏 @125%）里留 **434px**，而 AppBar 的标题在 16px ——
@@ -772,6 +796,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
       return _card(
         context,
         title: '评分',
+        hue: DsHue.gold,
         subtitle: 'Bangumi 还没给出分布',
         child: Text(
           full.score == null || full.score! <= 0
@@ -789,6 +814,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
     return _card(
       context,
       title: '评分分布',
+      hue: DsHue.gold,
       subtitle: '共 $votes 人评分'
           '${full.score != null && full.score! > 0 ? ' · 均分 ${full.score!.toStringAsFixed(1)}' : ''}'
           '${full.rank != null && full.rank! > 0 ? ' · 排名 #${full.rank}' : ''}',
@@ -816,8 +842,10 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
                     child: NeoProgress(
                       value: full.ratingAt(score) / max,
                       height: 8,
-                      // 最高分那档用强调色，其余用二级色 —— 一眼看出分布形状（不是"全一样"）。
-                      color: score == 10 ? t.accent : t.text3,
+                      // 最高分那档用金色（第五十二轮：评分 = 金），其余用二级色 ——
+                      // 一眼看出分布形状（不是"全一样"）。
+                      hue: score == 10 ? DsHue.gold : null,
+                      color: score == 10 ? null : t.text3,
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -875,6 +903,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
     return _card(
       context,
       title: '收藏统计',
+      hue: DsHue.pink,
       subtitle: c == null || c.isEmpty ? '还没有人收藏' : '共 ${c.total} 人',
       child: Wrap(
         spacing: 12,
@@ -914,6 +943,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
     return _card(
       context,
       title: '资料',
+      hue: DsHue.slate,
       subtitle: '来自 Bangumi 条目（共 ${full.infobox.length} 行）',
       child: _InfoboxTable(items: full.infobox),
     );
@@ -924,6 +954,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
     return _card(
       context,
       title: '标签',
+      hue: DsHue.indigo,
       // 副标题原来写了半句解释（"Bangumi 没有标签大全接口…"），在任何一栏宽度里都被
       // `NeoSectionHeader` 省略号截掉一半（截图里看得见"…从条目上点最"）—— 第三十六轮改短。
       subtitle: '点一个按它回动漫库筛',
@@ -934,9 +965,12 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
           for (final String tag in full.tags.take(24))
             // 第四十四轮：不再自己画一颗 `_TagChip`，改用通用的 [NeoPill]（同一套形态）——
             // 顺带把"鼠标专用"这个毛病一起修了：这里点一下会跳回动漫库，键盘也该做得到。
+            // 第五十二轮：每颗标签按 `hueOfTag` 上色（奇幻紫 / 恋爱粉 / 战斗玫红…），
+            // 同一部番的同一颗标签每次渲染都是同色 —— 颜色成了"这是什么类型"的信息。
             NeoPill(
               key: Key('library-tag-$tag'),
               label: tag,
+              hue: hueOfTag(tag),
               tooltip: '回动漫库按「$tag」筛',
               onTap: () {
                 unawaited(Navigator.of(context).maybePop());
@@ -957,6 +991,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
       context,
       key: dsDetailCharactersKey,
       title: '角色',
+      hue: DsHue.cyan,
       subtitle: '共 ${characters.length} 位',
       child: _CharacterGrid(characters: characters),
     );
@@ -971,6 +1006,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
       context,
       key: dsDetailRelatedKey,
       title: '关联条目',
+      hue: DsHue.orange,
       subtitle: '共 ${related.length} 项',
       child: Wrap(
         spacing: 10,
@@ -992,6 +1028,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
     return _card(
       context,
       title: '简介',
+      hue: DsHue.teal,
       child: SelectableText(
         full.summary!.trim(),
         style: TextStyle(color: t.text2, fontSize: DsTypeScale.body, height: 1.75),
@@ -1000,12 +1037,17 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
   }
 
   /// 一块带标题的卡片（第三十四轮的版面就靠它把空的地方填成"有内容的分区"）。
+  ///
+  /// 第五十二轮（用户 2026-10-17「整个项目太素」）：新增 [hue] —— 每个板块一个色相，
+  /// 由 `NeoSectionHeader` 画成 3px 竖条 + 色相标题。颜色是**信息**：同一位板块在
+  /// 这一页的三种版面里颜色不变，用户二刷时按色就能定位（不靠逐字读标题）。
   Widget _card(
     BuildContext context, {
     required String title,
     required Widget child,
     String? subtitle,
     Key? key,
+    DsHue? hue,
   }) {
     final DsTokens t = context.ds;
     return Container(
@@ -1018,6 +1060,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
           NeoSectionHeader(
             title: title,
             subtitle: subtitle,
+            hue: hue,
             padding: const EdgeInsets.only(bottom: 10),
           ),
           child,
@@ -1051,11 +1094,13 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
+        // 评分胶囊：第五十二轮改用金色（评分 = gold）—— 它是这一页最先要被看到的东西，
+        // 金色也是「评分分布」板块的色，两处对得上；还没评分时仍用金色，只把文字说成"暂无"。
         Container(
           key: const Key('library-detail-score'),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: t.accentSoft,
+            color: t.hueSoft(DsHue.gold),
             borderRadius: BorderRadius.circular(t.radiusPill),
           ),
           child: Text(
@@ -1063,7 +1108,7 @@ class _LibraryDetailPageState extends ConsumerState<LibraryDetailPage> {
                 ? '暂无评分'
                 : '★${subject.score!.toStringAsFixed(1)}',
             style: TextStyle(
-              color: t.accent,
+              color: t.hueInk(DsHue.gold),
               fontSize: DsTypeScale.title,
               fontWeight: FontWeight.w600,
               fontFeatures: DsTokens.tabular,
@@ -1319,13 +1364,11 @@ class _RelatedCell extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: t.text, fontSize: DsTypeScale.caption, height: 1.3),
           ),
+          // 第五十二轮（用户 2026-10-17「整个项目太素」）：关系标签（续集 / 前传 /
+          // 原声集…）从一行灰字改成**色相小胶囊** —— 同一关系名每次渲染同色
+          //（`hueOfTag` 的稳定哈希兜底），一眼分得清"这是哪一类关联"。
           if (related.relation.isNotEmpty)
-            Text(
-              related.relation,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
-            ),
+            NeoPill(label: related.relation, hue: hueOfTag(related.relation)),
         ],
       ),
     );

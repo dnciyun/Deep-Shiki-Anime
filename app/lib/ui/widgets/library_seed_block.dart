@@ -66,6 +66,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../domain/aggregate.dart';
 import '../../domain/bangumi.dart';
 import '../../domain/batch_download.dart';
 import '../../domain/episodes.dart';
@@ -84,6 +85,7 @@ import '../widgets/group_subscribe.dart';
 import '../widgets/neo.dart';
 import '../widgets/search_sections.dart';
 import '../widgets/state_views.dart';
+import 'hues.dart';
 
 /// 整块的 key（版面断言看它）。
 const Key dsDetailSeedsKey = Key('library-detail-seeds');
@@ -523,6 +525,10 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
         children: <Widget>[
           NeoSectionHeader(
             title: '种子',
+            // 第五十二轮（用户 2026-10-17「整个项目太素」）：卡头用**动漫库身份色**（紫）。
+            // 这一块同时挂在动漫库详细页（第四十五轮）与「正在追」订阅详细页（第四十九轮），
+            // 本轮统一认「种子块 = 动漫库的一部分」这个身份，不给它再分一套页面色。
+            hue: DsHue.violet,
             subtitle: _subtitle(s, category),
             padding: const EdgeInsets.only(bottom: 10),
             trailing: _headerActions(s),
@@ -719,6 +725,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     if (s.loading) {
       return DsLoading(
         key: dsDetailSeedsLoadingKey,
+        // 第五十二轮：加载态跟卡头同色（动漫库身份色）。
+        hue: DsHue.violet,
         label: s.phase == LibrarySeedPhase.fetching
             ? '正在取这张 mikan 番剧页…'
             : '正在各站搜这一部（mikan、动漫花园、ACGNX…）…',
@@ -1031,9 +1039,35 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     String? versionLabel,
   }) {
     final DsTokens t = context.ds;
+    // 源表 = 「源」面板同一份真相：徽标显示的是人看的名字，不是 mikan / dmhy-batch 这种内部 id。
+    final List<SourceOption> sources = ref.watch(sourceOptionsProvider);
     final BangumiGroupView? detailGroup = _detailGroupOf(s, group);
     final String key = openKey ?? group.key;
     final bool open = _openGroups.contains(key);
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：**颜色 = 信息编码**。
+    // 这一段（一个字幕组）的种子主要来自哪个站，抬头就用那个源的色相（3px 竖条 +
+    // 源名徽标 + 条数着色）；同一个源在搜索页结果行里也是这个颜色。
+    //
+    // ⚠️ 取的是「这一段条目里出现最多的 sourceId」而不是"每源一行"：种子块是按
+    // **字幕组**分段的（用户第四十八轮定的形态），跨站同名条目已经合并成一条，
+    // 数据层也不给每源结果 —— 硬造一个每源计数会把合并/相关度筛掉的条目算错，
+    // 反而可能又报一次假的「源没回来」（第五十一轮刚修过）。各源的真实条数放在
+    // 徽标的悬停提示里，用户想看明细时能看到。
+    final Map<String, int> sourceCounts = <String, int>{};
+    for (final SourceItemView item in group.items) {
+      sourceCounts[item.sourceId] = (sourceCounts[item.sourceId] ?? 0) + 1;
+    }
+    final List<String> sourceIds = sourceCounts.keys.toList()
+      ..sort((String a, String b) {
+        final int byCount = sourceCounts[b]!.compareTo(sourceCounts[a]!);
+        return byCount != 0 ? byCount : a.compareTo(b);
+      });
+    final String mainSource = sourceIds.isEmpty ? '' : sourceIds.first;
+    final DsHue sourceHue = hueOfSource(mainSource);
+    final String sourceName = sourceIds.isEmpty ? '未知源' : sourceLabelFor(mainSource, sources);
+    final String sourceTip = sourceIds.isEmpty
+        ? '这一段的条目没有来源信息'
+        : '这一段的种子来自：${sourceIds.map((String id) => '${sourceLabelFor(id, sources)} ${sourceCounts[id]} 条').join(' · ')}';
     return Padding(
       key: versionLabel == null
           ? dsDetailSeedsGroupKey(group.key)
@@ -1051,6 +1085,16 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Row(
                   children: <Widget>[
+                    // 源色竖条：这一段的抬头先告诉用户"种子主要来自哪个站"。
+                    Container(
+                      width: 3,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        color: t.hueFill(sourceHue),
+                        borderRadius: BorderRadius.circular(t.radiusPill),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
                     Tooltip(
                       message: open
                           ? '收起这一组'
@@ -1065,8 +1109,19 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                     ),
                     const SizedBox(width: 4),
                     Flexible(
-                      child: Text(
-                        '${group.label}（${group.count} 条）',
+                      // 组名保持原样（"组名（N 条）"是一整句），只把**条数**染成源色：
+                      // 数量是这一段"有没有货"的关键数字，颜色与左边竖条同源。
+                      child: Text.rich(
+                        TextSpan(
+                          text: '${group.label}（',
+                          children: <InlineSpan>[
+                            TextSpan(
+                              text: '${group.count}',
+                              style: TextStyle(color: t.hueInk(sourceHue)),
+                            ),
+                            const TextSpan(text: ' 条）'),
+                          ],
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: dsTableHeaderStyle(
@@ -1079,6 +1134,9 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
               ),
             ),
           ),
+          const SizedBox(width: 6),
+          // 源名徽标：与左边竖条同色，悬停提示里列出这一段各源的真实条数。
+          NeoPill(label: sourceName, hue: sourceHue, tooltip: sourceTip),
           if (detailGroup != null && s.binding != null) ...<Widget>[
             GroupSubscribeButton(
               bangumiId: s.binding!.bangumiId,

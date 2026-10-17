@@ -250,7 +250,32 @@ class _DsCoverState extends ConsumerState<DsCover> {
             _placeholder(context.ds),
       );
 
-  Widget _placeholder(DsTokens t) => Center(
+  /// 「无封面 / 加载中」占位块的色相（第五十二轮——用户「整个项目太素」）。
+  ///
+  /// 取 URL（没有 URL 就用占位文案）的稳定哈希落进 12 色：同一张卡每次渲染同色，
+  /// 相邻卡片大概率不同色。这样封面还没到 / 站点没给封面时，网格里不是一排灰砖，
+  /// 而是一组淡彩占位块（真正的封面到了就盖上去）。
+  DsHue _placeholderHue() {
+    final String raw = (widget.url ?? '').trim();
+    final String seed = raw.isEmpty ? widget.placeholderLabel : raw;
+    int code = 17;
+    for (final int unit in seed.codeUnits) {
+      code = (code * 31 + unit) & 0x7fffffff;
+    }
+    return DsHue.values[code % DsHue.values.length];
+  }
+
+  Widget _placeholder(DsTokens t) {
+    final DsHue hue = _placeholderHue();
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[t.hueSoftOn(hue, t.sunken), t.sunken],
+        ),
+      ),
+      child: Center(
         child: Padding(
           padding: const EdgeInsets.all(4),
           child: Text(
@@ -258,8 +283,10 @@ class _DsCoverState extends ConsumerState<DsCover> {
             textAlign: TextAlign.center,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+            style: TextStyle(color: t.hueInk(hue), fontSize: DsTypeScale.caption),
           ),
         ),
-      );
+      ),
+    );
+  }
 }

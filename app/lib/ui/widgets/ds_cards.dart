@@ -41,6 +41,8 @@ class DsSection extends StatelessWidget {
     this.trailing,
     required this.child,
     this.dense = false,
+    this.hue,
+    this.icon,
   });
 
   final String title;
@@ -48,6 +50,13 @@ class DsSection extends StatelessWidget {
   final Widget? trailing;
   final Widget child;
   final bool dense;
+
+  /// 标识色相（第五十二轮）：给了就把标题前的竖条换成色相色、标题用色相 ink。
+  /// 设置页每个区块一个色相，整页就有了"分区色"。
+  final DsHue? hue;
+
+  /// 可选的区块图标（给 icon 时用「色相淡底小方块 + 图标」代替竖条）。
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -75,22 +84,41 @@ class DsSection extends StatelessWidget {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: <Widget>[
-                          // 区块标题记号：3px 强调色竖条（分组大标题下的一级标题）。
-                          Container(
-                            width: 3,
-                            height: 14,
-                            decoration: BoxDecoration(
-                              color: t.accent,
-                              borderRadius: BorderRadius.circular(t.radiusPill),
+                          // 区块标题记号（第五十二轮）：有 icon 用「色相淡底方块 + 图标」，
+                          // 否则用 3px 竖条（默认强调色，给了 hue 就换成色相色）。
+                          if (icon != null) ...<Widget>[
+                            Container(
+                              width: 24,
+                              height: 24,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: hue != null ? t.hueSoft(hue!) : t.accentSoft,
+                                borderRadius: BorderRadius.circular(t.radiusBadge),
+                              ),
+                              child: Icon(
+                                icon,
+                                size: 14,
+                                color: hue != null ? t.hueInk(hue!) : t.accent,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
+                            const SizedBox(width: 10),
+                          ] else ...<Widget>[
+                            Container(
+                              width: 3,
+                              height: 14,
+                              decoration: BoxDecoration(
+                                color: hue != null ? t.hueFill(hue!) : t.accent,
+                                borderRadius: BorderRadius.circular(t.radiusPill),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
                           Expanded(
                             child: Text(
                               title,
                               style: TextStyle(
                                 // 区块标题 17 → 15（"缩小整体字大小"）。
-                                color: t.text,
+                                color: hue != null ? t.hueInk(hue!) : t.text,
                                 fontSize: kSettingsTitleSize,
                                 fontWeight: FontWeight.w600,
                                 height: 1.25,
@@ -101,8 +129,13 @@ class DsSection extends StatelessWidget {
                       ),
                       if (subtitle != null)
                         Padding(
-                          // 左缩进 = 竖条宽 + 间距，让说明与标题文字左对齐成一列。
-                          padding: const EdgeInsets.only(top: 6, left: 11),
+                          // 左缩进 = 前导记号宽 + 间距，让说明与标题文字左对齐成一列。
+                          // 第五十二轮：前导记号有两种（3px 竖条 = 11；24px 图标方块 = 34），
+                          // 缩进必须跟着走，否则说明会比标题左移一大截。
+                          padding: EdgeInsets.only(
+                            top: 6,
+                            left: icon != null ? 34 : 11,
+                          ),
                           // ⚠️ 第二十六轮：**不再折叠**，全文换行显示（见类文档）。
                           // 行高 1.4 → 1.6：说明收小之后靠行距把可读性补回来。
                           child: Text(
@@ -139,30 +172,34 @@ class DsSection extends StatelessWidget {
 /// 只有 `tone` 才会给 12% 底 + 该色文字。之前传 `color` 让 tone **完全失效**
 /// （队列「失败/取消」不是 danger、已完成不是 success，五颗 chip 一个样）。
 class DsChip extends StatelessWidget {
-  const DsChip({super.key, required this.label, this.icon, this.tone, this.tooltip});
+  const DsChip({super.key, required this.label, this.icon, this.tone, this.hue, this.tooltip});
 
   final String label;
   final IconData? icon;
   final Color? tone;
+
+  /// 标识色相（第五十二轮）：分类色（源 / 标签 / 页面），与 [tone] 语义色二选一。
+  final DsHue? hue;
   final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return NeoPill(label: label, icon: icon, tone: tone, tooltip: tooltip);
+    return NeoPill(label: label, icon: icon, tone: tone, hue: hue, tooltip: tooltip);
   }
 }
 
 /// 细进度条 + 右侧百分比（凹槽轨道 + 语义色填充）。
 class DsProgressLine extends StatelessWidget {
-  const DsProgressLine({super.key, required this.value, this.height = 4, this.tone});
+  const DsProgressLine({super.key, required this.value, this.height = 4, this.tone, this.hue});
 
   final double value;
   final double height;
   final Color? tone;
+  final DsHue? hue;
 
   @override
   Widget build(BuildContext context) {
-    return NeoProgress(value: value, height: height, color: tone);
+    return NeoProgress(value: value, height: height, color: tone, hue: hue);
   }
 }
 
@@ -237,17 +274,20 @@ class QueueJobRow extends StatelessWidget {
                   orElse: () => torrent!.files.first,
                 ));
     final double overall = torrent?.progress ?? 0;
+    // 第五十二轮「整个项目太素」：队列页的身份色 = 蓝（`hueOfTab(queue)`），所以
+    // 「下载中」不再用调色板 accent（白橙外观下是橙、白黑外观下是黑），而是固定的蓝；
+    // 暂停/完成/失败继续用语义色（它们是"状态"不是"页面"）。
     final Color stateTone = switch (job.state) {
-      JobState.downloading => t.accent,
+      JobState.downloading => t.hueInk(DsHue.blue),
       JobState.queued => t.text3,
       JobState.paused => t.warning,
       JobState.completed => t.success,
       JobState.failed => t.danger,
       JobState.cancelled => t.text3,
     };
-    return Container(
+    final Widget card = Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(12, 12, 14, 10),
+      padding: const EdgeInsets.fromLTRB(15, 12, 14, 10),
       decoration: BoxDecoration(
         color: t.raised,
         borderRadius: BorderRadius.circular(t.radiusCard),
@@ -308,12 +348,12 @@ class QueueJobRow extends StatelessWidget {
                 DsChip(
                   label: '↓ ${formatSpeed(torrent!.downloadBps)}',
                   icon: Icons.download,
-                  tone: t.accent2,
+                  hue: DsHue.blue,
                 ),
                 DsChip(
                   label: '↑ ${formatSpeed(torrent!.uploadBps)}',
                   icon: Icons.upload,
-                  tone: t.text3,
+                  hue: DsHue.teal,
                 ),
                 // 原来这里还有一颗「做种 N」徽标（`torrent.peers`）。用户 2026-10-11
                 //「把做种数去掉」后删掉：它显示的是**当前连到的 peer 数**，不是源的做种数，
@@ -402,6 +442,25 @@ class QueueJobRow extends StatelessWidget {
                   compact: true,
                 ),
             ],
+          ),
+        ],
+      ),
+    );
+
+    // 第五十二轮：卡片左缘 3px 状态色竖条 —— 队列一屏十几条时，颜色先于文字告诉你
+    // 「哪条在跑、哪条挂了」。用 Stack + Positioned 而不是 Border/IntrinsicHeight：
+    // 竖条随卡片高度自动拉满，不引入额外布局测量（长列表性能红线）。
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(t.radiusCard),
+      child: Stack(
+        children: <Widget>[
+          card,
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 3,
+            child: ColoredBox(color: stateTone),
           ),
         ],
       ),

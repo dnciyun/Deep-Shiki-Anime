@@ -49,6 +49,7 @@ class NeoDropdown<T> extends StatefulWidget {
     this.height = 26,
     this.fontSize = DsTypeScale.caption,
     this.tooltip,
+    this.hue,
   });
 
   /// 当前值（用于在菜单里打勾 / 着色）。
@@ -65,6 +66,10 @@ class NeoDropdown<T> extends StatefulWidget {
   final double fontSize;
   final String? tooltip;
 
+  /// 标识色相（第五十二轮）：触发器的字/箭头与菜单里的选中项走该色相。
+  /// 页面级的筛选（队列的并发/排序、动漫库的年份/季度…）用它跟页面身份色对齐。
+  final DsHue? hue;
+
   @override
   State<NeoDropdown<T>> createState() => _NeoDropdownState<T>();
 }
@@ -76,6 +81,9 @@ class _NeoDropdownState<T> extends State<NeoDropdown<T>> {
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
     final bool canOpen = widget.items.isNotEmpty;
+    final DsHue? hue = widget.hue;
+    // 第五十二轮：给了色相就把触发器的字与箭头染色（与所在页面的身份色对齐）。
+    final Color fg = hue != null ? t.hueInk(hue) : t.text;
 
     Widget trigger = DsInset(
       radius: t.radiusControl,
@@ -91,13 +99,13 @@ class _NeoDropdownState<T> extends State<NeoDropdown<T>> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: t.text,
+                color: fg,
                 fontSize: widget.fontSize,
                 fontFeatures: DsTokens.tabular,
               ),
             ),
           ),
-          Icon(Icons.expand_more, size: 16, color: t.text3),
+          Icon(Icons.expand_more, size: 16, color: hue != null ? fg : t.text3),
         ],
       ),
     );
@@ -164,6 +172,9 @@ class _NeoDropdownState<T> extends State<NeoDropdown<T>> {
   Widget _row(DsTokens t, NeoDropdownItem<T> item) {
     final bool selected = item.value == widget.value;
     final String? hint = item.hint;
+    // 第五十二轮：选中项跟随触发器的色相（没给色相时仍是 accent）。
+    final Color selectedColor =
+        widget.hue != null ? t.hueInk(widget.hue!) : t.accent;
     return Row(
       children: <Widget>[
         Expanded(
@@ -176,7 +187,7 @@ class _NeoDropdownState<T> extends State<NeoDropdown<T>> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: selected ? t.accent : t.text,
+                  color: selected ? selectedColor : t.text,
                   fontSize: widget.fontSize,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                 ),
@@ -191,7 +202,7 @@ class _NeoDropdownState<T> extends State<NeoDropdown<T>> {
             ],
           ),
         ),
-        if (selected) Icon(Icons.check, size: 15, color: t.accent),
+        if (selected) Icon(Icons.check, size: 15, color: selectedColor),
       ],
     );
   }

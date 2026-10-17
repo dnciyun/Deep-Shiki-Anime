@@ -73,7 +73,7 @@ void main() {
 
   test('对比度：8 套 × 3 面全部 ≥4.5:1，且 onAccent/accent 达标', () {
     final List<({String name, Color fg, Color bg})> pairs = dsContrastPairs();
-    expect(pairs, hasLength(8 * 3 * 4 + 8 + 8 * 3));
+    expect(pairs, hasLength(8 * 3 * 4 + 8 + 8 * 3 + 8 * 12 * 2));
     final List<String> bad = <String>[
       for (final ({String name, Color fg, Color bg}) p in pairs)
         if (dsContrastRatio(p.fg, p.bg) < 4.5) '${p.name} = ${dsContrastRatio(p.fg, p.bg).toStringAsFixed(2)}',

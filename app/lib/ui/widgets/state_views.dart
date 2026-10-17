@@ -19,24 +19,30 @@ import 'neo.dart';
 
 /// 加载中（一行转圈 + 中文说明）。
 class DsLoading extends StatelessWidget {
-  const DsLoading({super.key, this.label = '加载中…', this.compact = false});
+  const DsLoading({super.key, this.label = '加载中…', this.compact = false, this.hue});
 
   final String label;
   final bool compact;
 
+  /// 标识色相（第五十二轮）：转圈与文字走该色相，和所在页面的身份色一致。
+  final DsHue? hue;
+
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
+    final DsHue? hue = this.hue;
     return Padding(
       padding: EdgeInsets.symmetric(vertical: compact ? 12 : 32, horizontal: 16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
           // iOS 风格圆环（用户 2026-10-12 第八轮：Material 那个转圈"太丑不符合"）。
-          const DsSpinner.page(),
+          DsSpinner.page(color: hue != null ? t.hueInk(hue) : null),
           const SizedBox(width: 10),
           Text(label,
-              style: TextStyle(color: t.text2, fontSize: DsTypeScale.body)),
+              style: TextStyle(
+                  color: hue != null ? t.hueInk(hue) : t.text2,
+                  fontSize: DsTypeScale.body)),
         ],
       ),
     );
@@ -51,6 +57,7 @@ class DsEmpty extends StatelessWidget {
     this.icon = Icons.inbox_outlined,
     this.message,
     this.action,
+    this.hue,
   });
 
   final String title;
@@ -58,24 +65,38 @@ class DsEmpty extends StatelessWidget {
   final String? message;
   final Widget? action;
 
+  /// 标识色相（第五十二轮）：空态图标圆盘用该色相 12% 淡底 + 色相图标，
+  /// 不再是一个全灰圆盘。不给就沿用旧的中性圆盘。
+  final DsHue? hue;
+
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
+    final DsHue? hue = this.hue;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            // 凸起圆盘托住图标：新拟态的「空态」不用扁平大图标。
+            // 空态圆盘：有色相时 = 色相淡底圆盘 + 色相图标（第五十二轮）。
             Container(
               width: 72,
               height: 72,
               alignment: Alignment.center,
-              decoration: t.cardDecoration(
-                radius: t.radiusPill,
+              decoration: hue != null
+                  ? BoxDecoration(
+                      color: t.hueSoft(hue),
+                      borderRadius: BorderRadius.circular(t.radiusPill),
+                    )
+                  : t.cardDecoration(
+                      radius: t.radiusPill,
+                    ),
+              child: Icon(
+                icon,
+                size: 32,
+                color: hue != null ? t.hueInk(hue) : t.text3,
               ),
-              child: Icon(icon, size: 32, color: t.text3),
             ),
             const SizedBox(height: 16),
             Text(title,

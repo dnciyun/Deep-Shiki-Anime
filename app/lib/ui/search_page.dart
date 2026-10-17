@@ -40,6 +40,7 @@ import '../theme/motion.dart';
 import '../theme/tokens.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/feedback.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 import 'widgets/neo_dropdown.dart';
 import 'widgets/search_history_bar.dart';
@@ -250,6 +251,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ? ref.watch(searchHistoryProvider).of(SearchHistoryScope.torrents)
         : const <String>[];
     final EngineStatus engineStatus = ref.watch(engineStatusProvider);
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：搜索页身份色 = 青
+    // （侧栏 / 页头 / 页面洗色都用 `hueOfTab(ShellTab.search)`；本页的焦点态、
+    // 分页条、空态也统一取它 —— 一处定义，整页一个色）。
+    final DsHue pageHue = hueOfTab(ShellTab.search);
 
     // 设置页把「聚合 / 单独源」改掉后当场跟着切（用户 2026-10-12 第十四轮：
     // 「设置中切换回单独源模式」）。只盯这一个字段：设置页有 20 多项、
@@ -287,7 +292,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         : aggregate
                         ? '关键字（留空 = 看这一档的最新）。例如：葬送的芙莉莲'
                         : '关键字（留空 = 看最新）。例如：葬送的芙莉莲',
-                    prefixIcon: Icon(Icons.search, size: 15, color: t.text3),
+                    // 第五十二轮（用户 2026-10-17「整个项目太素」）：搜索页身份色 = 青。
+                    // 全局输入框焦点态是 accent（橙），这里按**页面身份**换成青色：
+                    // 8 个页面各有自己的色相，同一套焦点语义在不同页面不串色。
+                    prefixIcon: Icon(Icons.search, size: 15, color: t.hueInk(pageHue)),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(t.radiusControl),
+                      borderSide: BorderSide(color: t.hueInk(pageHue), width: 2),
+                    ),
                   ),
                   // 打字时只重建这一层（用来决定"最近搜索"那一行要不要显示）。
                   onChanged: (String _) => setState(() {}),
@@ -299,10 +311,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 ),
               ),
               const SizedBox(width: 7),
+              // 第五十二轮：搜索页的主按钮用**页面身份色**（青），不再占用全局 accent ——
+              // 「按下去会发生什么」由位置决定，颜色只负责"这是搜索页"。
               NeoButton(
                 label: '搜索',
                 icon: Icons.search,
                 kind: NeoButtonKind.primary,
+                hue: pageHue,
                 onPressed: () => runGuarded(
                   context,
                   action: () async {
@@ -400,6 +415,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                   padding: EdgeInsets.fromLTRB(t.spacing, 8, t.spacing, 0),
                   child: SearchHistoryBar(
                     keyPrefix: 'torrent-history',
+                    // 第五十二轮：历史胶囊 = 青色淡底（搜索页身份色）。
+                    hue: pageHue,
                     history: recentSearches,
                     onPick: (String word) {
                       _keyword.text = word;
@@ -500,9 +517,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   ) {
     final DsTokens t = context.ds;
     final bool aggregate = state.mode == SearchMode.aggregate;
+    // 第五十二轮：空态也带页面身份色（青），不再是一个全灰圆盘。
+    final DsHue pageHue = hueOfTab(ShellTab.search);
     if (state.loading) {
       // 聚合：说清"在等几个源"，而不是含糊的"正在拉取"。
       return DsLoading(
+        hue: pageHue,
         label: aggregate
             ? '正在从 $askedCount 个源拉取…'
             : '正在从 ${_sourceLabel(sources, state.sourceId)} 拉取…',
@@ -513,6 +533,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       // 「默认不加载，只有个搜索，搜索后才有」）——「最新」是那颗按钮，不是默认动作。
       return DsEmpty(
         icon: Icons.search,
+        hue: pageHue,
         title: '在搜索框里输入番名，回车或点「搜索」',
         message: aggregate
             ? '当前是聚合模式：一次搜索会同时问勾选的 $askedCount 个源（默认全开，'
@@ -547,10 +568,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       final SearchQueryController c = ref.read(searchProvider.notifier);
       final String names = _groupNames(state);
       if (state.loadingPage) {
-        return DsLoading(label: '正在按「$names」继续往后拉取…');
+        return DsLoading(hue: pageHue, label: '正在按「$names」继续往后拉取…');
       }
       return DsEmpty(
         icon: Icons.filter_alt_off_outlined,
+        hue: pageHue,
         title: '这批结果里没有「$names」的条目',
         message: state.hasMoreSource
             ? '已经拿到 ${state.fetched.length} 条结果，但都不是这几个字幕组。'
@@ -588,6 +610,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     if (state.isEmpty) {
       return DsEmpty(
         icon: Icons.search_off,
+        hue: pageHue,
         title: state.keyword.isEmpty
             ? (aggregate ? '勾选的源现在没有内容' : '这个源现在没有内容')
             : '没有匹配「${state.keyword}」的结果',
@@ -736,10 +759,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   /// 页码条也不再画末页数字（见 `searchPageNumbers`）。
   Widget _footer(SearchState state) {
     final DsTokens t = context.ds;
+    // 第五十二轮：分页条属于搜索页身份 → 青（当前页、页数文字、翻页箭头同色）。
+    final DsHue pageHue = hueOfTab(ShellTab.search);
     final SearchQueryController controller = ref.read(searchProvider.notifier);
     // 翻页的"正在取数"标记：表格留在原地，只在底部提示。
     if (state.loadingPage) {
-      return const DsLoading(label: '正在取下一页…', compact: true);
+      return DsLoading(hue: pageHue, label: '正在取下一页…', compact: true);
     }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -753,7 +778,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               const SizedBox(width: 12),
               Text(
                 '第 ${state.page} 页',
-                style: TextStyle(color: t.text2, fontSize: DsTypeScale.caption),
+                style: TextStyle(
+                  color: t.hueInk(pageHue),
+                  fontSize: DsTypeScale.caption,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -776,6 +805,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   /// 真翻到才会出现，这样"页数"看起来就是随数据长出来的，而不是一开始就定死一个总数。
   Widget _pager(SearchState state, SearchQueryController controller) {
     final DsTokens t = context.ds;
+    // 第五十二轮：翻页箭头也走页面身份色（禁用态仍由 NeoIconButton 退回 text3）。
+    final Color pageInk = t.hueInk(hueOfTab(ShellTab.search));
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
@@ -783,6 +814,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           icon: Icons.chevron_left,
           size: 24,
           tooltip: '上一页',
+          color: pageInk,
           onPressed: state.canGoPrevious
               ? () => runGuarded(context, action: () => controller.goToPage(state.page - 1))
               : null,
@@ -806,6 +838,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           icon: Icons.chevron_right,
           size: 24,
           tooltip: '下一页',
+          color: pageInk,
           onPressed: state.canGoNext
               ? () => runGuarded(context, action: () => controller.goToPage(state.page + 1))
               : null,
@@ -961,6 +994,7 @@ class _SourceSelectionDialog extends ConsumerWidget {
               child: groups.isEmpty
                   ? const DsEmpty(
                       icon: Icons.hub_outlined,
+                      hue: DsHue.cyan,
                       title: '还没有可选的源',
                       message: '源未接通（core 的 sources/ 尚未注入），或订阅源已被全部删除。',
                     )
@@ -1120,13 +1154,15 @@ class SearchSourcePicker extends StatelessWidget {
     final String fallback = sources.any((SourceOption s) => s.id == 'mikan')
         ? 'mikan'
         : sources.first.id;
+    final String active = hasValue ? value : fallback;
     return NeoDropdown<String>(
       width: 190,
       tooltip: '数据源（搜索/下载都走它）',
-      value: hasValue ? value : fallback,
-      label: sources
-          .firstWhere((SourceOption s) => s.id == (hasValue ? value : fallback))
-          .displayName,
+      // 第五十二轮：单独源模式下这颗下拉**就是当前源的身份色**（hueOfSource）——
+      // 同一个源在结果行、种子块、这里永远同色，切源时颜色跟着变。
+      hue: hueOfSource(active),
+      value: active,
+      label: sources.firstWhere((SourceOption s) => s.id == active).displayName,
       items: <NeoDropdownItem<String>>[
         for (final SourceOption s in sources) NeoDropdownItem<String>(s.id, s.displayName),
       ],
@@ -1160,7 +1196,8 @@ class _PageChip extends StatelessWidget {
         labelWidget: Text(
           '$page',
           style: TextStyle(
-            color: current ? t.accent : t.text2,
+            // 第五十二轮：当前页 = 搜索页身份色（青），翻页条与页面同色。
+            color: current ? t.hueInk(hueOfTab(ShellTab.search)) : t.text2,
             fontSize: DsTypeScale.caption,
             fontWeight: current ? FontWeight.w700 : FontWeight.w500,
           ),
@@ -1299,6 +1336,7 @@ class _GroupFilterDialogState extends ConsumerState<_GroupFilterDialog> {
               child: options.isEmpty
                   ? const DsEmpty(
                       icon: Icons.search_off,
+                      hue: DsHue.cyan,
                       title: '候选里没有这个组名',
                       message: '换几个字试试；长尾里的组要等它出现在结果里才会进候选。',
                     )

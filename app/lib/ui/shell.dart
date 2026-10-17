@@ -46,6 +46,7 @@ import 'search_page.dart';
 import 'settings_page.dart';
 import 'widgets/brand_icon.dart';
 import 'widgets/feedback.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 
 class DsShell extends ConsumerStatefulWidget {
@@ -195,19 +196,36 @@ class _DsShellState extends ConsumerState<DsShell> {
                       Expanded(
                         // Key 是给测试用的：工具条里的源下拉（DropdownButton 内部也有
                         // IndexedStack）会让 `find.byType(IndexedStack).first` 抓错控件。
-                        child: IndexedStack(
-                          key: dsShellContentKey,
-                          index: tab.index,
-                          // ⚠️ 顺序必须与 `ShellTab.values` 一一对应（`tab.index` 就是下标）。
-                          children: const <Widget>[
-                            HomePage(),
-                            LibraryPage(),
-                            SearchPage(),
-                            FollowingPage(),
-                            QueuePage(),
-                            CompletedPage(),
-                            HistoryPage(),
-                            SettingsPage(),
+                        //
+                        // 第五十二轮：内容区**背后**铺一层当前目的地的色相洗色
+                        // （`hueWash`：顶部 9% 淡底 → base），8 个页面因此各自带色。
+                        // 只画一层渐变：无阴影、无动画，不影响滚动性能红线。
+                        child: Stack(
+                          children: <Widget>[
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: t.hueWash(hueOfTab(tab)),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            IndexedStack(
+                              key: dsShellContentKey,
+                              index: tab.index,
+                              // ⚠️ 顺序必须与 `ShellTab.values` 一一对应（`tab.index` 就是下标）。
+                              children: const <Widget>[
+                                HomePage(),
+                                LibraryPage(),
+                                SearchPage(),
+                                FollowingPage(),
+                                QueuePage(),
+                                CompletedPage(),
+                                HistoryPage(),
+                                SettingsPage(),
+                              ],
+                            ),
                           ],
                         ),
                       ),
@@ -383,12 +401,14 @@ class _SettingsGearState extends ConsumerState<_SettingsGear> {
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
     final bool selected = widget.selected;
-    final Color fg = selected ? t.accent : (_hover ? t.text : t.text2);
+    // 第五十二轮：设置也走同一套标识色相（石板灰），与侧栏其余 7 行同一语言。
+    final DsHue hue = hueOfTab(ShellTab.settings);
+    final Color fg = selected ? t.hueInk(hue) : (_hover ? t.text : t.text2);
     // 与 `_NavItem` 同一套：选中 = 凹槽实色；悬停 = 实色 `sunken`（不做过渡动画，
     // 免得又出现第二十五轮那种"半透明底色的 lerp 中间帧"黑一下）。
     // 扁平（规范 §11.6）：选中 = **accent 12% 底 + accent 图标与文字**（不再是"凹槽实色"）。
     final Decoration bg = BoxDecoration(
-      color: selected ? t.accentSoft : (_hover ? t.sunken : Colors.transparent),
+      color: selected ? t.hueSoft(hue) : (_hover ? t.sunken : Colors.transparent),
       borderRadius: BorderRadius.circular(t.radiusControl),
     );
     return Padding(
@@ -419,13 +439,22 @@ class _SettingsGearState extends ConsumerState<_SettingsGear> {
                 children: <Widget>[
                   // key 仍挂在**齿轮图标**上（`shell_widget_test` 的锚点：拿它的 Rect
                   // 与「设置」两个字比位置，还要求它排在引擎点/状态栏之上）。
-                  Icon(
-                    key: dsSettingsGearKey,
-                    Icons.settings_outlined,
-                    size: 16,
-                    color: fg,
+                  Container(
+                    width: 24,
+                    height: 24,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected ? t.hueFill(hue) : t.hueSoft(hue),
+                      borderRadius: BorderRadius.circular(t.radiusBadge),
+                    ),
+                    child: Icon(
+                      key: dsSettingsGearKey,
+                      Icons.settings_outlined,
+                      size: 15,
+                      color: selected ? t.hueOnFill(hue) : t.hueInk(hue),
+                    ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       ShellTab.settings.label,
@@ -510,7 +539,10 @@ class _NavItemState extends State<_NavItem> {
       ShellTab.history => Icons.history,
       ShellTab.settings => Icons.settings_outlined,
     };
-    final Color fg = selected ? t.accent : (_hover ? t.text : t.text2);
+    // 第五十二轮：每个目的地一个标识色相（见 widgets/hues.dart）—— 图标底色、
+    // 选中底、选中文字、徽标全走它，侧栏因此一眼能"按颜色认页"。
+    final DsHue hue = hueOfTab(tab);
+    final Color fg = selected ? t.hueInk(hue) : (_hover ? t.text : t.text2);
     // ⚠️ 第二十五轮（用户：「鼠标拖动到主页 搜索 正在追…时黑一下，改成鼠标在上面就黑着，
     // 符合逻辑」）。根因是悬停底色原来写的是 `t.raised.withValues(alpha: 0.55)`：
     // 侧栏底色**就是** `t.raised`，那层半透明底色静止时等于看不见；而 AnimatedContainer
@@ -520,7 +552,7 @@ class _NavItemState extends State<_NavItem> {
     // 且**不做过渡动画** —— 指针在上面就一直黑着，不会忽明忽暗。
     // 扁平（规范 §11.6）：选中 = **accent 12% 底 + accent 图标与文字**（不再是"凹槽实色"）。
     final Decoration bg = BoxDecoration(
-      color: selected ? t.accentSoft : (_hover ? t.sunken : Colors.transparent),
+      color: selected ? t.hueSoft(hue) : (_hover ? t.sunken : Colors.transparent),
       borderRadius: BorderRadius.circular(t.radiusControl),
     );
     return Padding(
@@ -545,8 +577,23 @@ class _NavItemState extends State<_NavItem> {
               decoration: bg,
               child: Row(
                 children: <Widget>[
-                  Icon(icon, size: 16, color: fg),
-                  const SizedBox(width: 8),
+                  // 第五十二轮：图标 = 色相小方块（未选中 = 18% 淡底 + 色相图标，
+                  // 选中 = 色相实底 + 反差前景图标）。侧栏 8 行因此是一排"彩色路标"。
+                  Container(
+                    width: 24,
+                    height: 24,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected ? t.hueFill(hue) : t.hueSoft(hue),
+                      borderRadius: BorderRadius.circular(t.radiusBadge),
+                    ),
+                    child: Icon(
+                      icon,
+                      size: 15,
+                      color: selected ? t.hueOnFill(hue) : t.hueInk(hue),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       tab.label,
@@ -564,13 +611,13 @@ class _NavItemState extends State<_NavItem> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                       decoration: BoxDecoration(
-                        color: t.accentSoft,
+                        color: t.hueSoft(hue),
                         borderRadius: BorderRadius.circular(t.radiusPill),
                       ),
                       child: Text(
                         badge,
                         style: TextStyle(
-                          color: t.accent,
+                          color: t.hueInk(hue),
                           fontSize: DsTypeScale.caption,
                           fontFeatures: DsTokens.tabular,
                         ),
@@ -607,6 +654,9 @@ class _Toolbar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final DsTokens t = context.ds;
     final ShellTab tab = ref.watch(navProvider);
+    // 第五十二轮：工具条页名带上当前目的地的色相（左侧 4px 色条 + 彩色页名），
+    // 与侧栏图标、内容区洗色同一个颜色 —— 换页时整窗的"色相"跟着换。
+    final DsHue hue = hueOfTab(tab);
     final List<SourceOption> sources = ref.watch(sourceOptionsProvider);
     return Container(
       height: t.barHeight,
@@ -633,13 +683,27 @@ class _Toolbar extends ConsumerWidget {
                   // 用户 2026-10-10 第 4–20 轮清单：页名旁那句小字说明（tab.subtitle）
                   // 删掉 —— 页名本身已经说清楚，副标题只是在重复（`ShellTab.subtitle`
                   // 仍留着：它现在只用于测试与未来的搜索/命令面板）。
-                  child: Text(
-                    tab.label,
-                    style: TextStyle(
-                      color: t.text,
-                      fontSize: DsTypeScale.title,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Container(
+                        width: 4,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          color: t.hueFill(hue),
+                          borderRadius: BorderRadius.circular(t.radiusPill),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        tab.label,
+                        style: TextStyle(
+                          color: t.hueInk(hue),
+                          fontSize: DsTypeScale.title,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

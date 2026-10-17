@@ -20,6 +20,7 @@ import '../theme/tokens.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/ds_stagger.dart';
 import 'widgets/feedback.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 import 'widgets/neo_dropdown.dart';
 import 'widgets/state_views.dart';
@@ -45,6 +46,8 @@ class _ConcurrentPicker extends ConsumerWidget {
       width: 176,
       height: 32,
       fontSize: DsTypeScale.caption,
+      // 第五十二轮：页面级下拉跟队列页身份色（蓝）走，不再是 accent。
+      hue: hueOfTab(ShellTab.queue),
       value: current,
       tooltip: '一起下载几条：队列每次按这个数把任务交给引擎（= 设置里的「并发下载数」）',
       label: '一起下载 · $current 条',
@@ -81,6 +84,8 @@ class _SortPicker extends ConsumerWidget {
       width: 132,
       height: 32,
       fontSize: DsTypeScale.caption,
+      // 第五十二轮：排序也是页面级筛选 → 蓝色身份色。
+      hue: hueOfTab(ShellTab.queue),
       value: order,
       tooltip: '排序：${order.hint}',
       label: '排序 · ${order.label}',
@@ -112,6 +117,9 @@ class QueuePage extends ConsumerWidget {
     //（第四十二轮 UX #3，二级）。
     final Object? torrentsError = torrentsValue.error;
     final bool torrentsFailed = torrentsError != null && !torrentsValue.isLoading;
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：队列页身份色 = 蓝
+    // （侧栏 / 页头 / 页面洗色同源；页头统计与页面级下拉都取它）。
+    final DsHue pageHue = hueOfTab(ShellTab.queue);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -119,9 +127,11 @@ class QueuePage extends ConsumerWidget {
           padding: EdgeInsets.fromLTRB(t.spacing, t.spacing, t.spacing, 0),
           child: Row(
             children: <Widget>[
-              DsChip(label: '下载中 ${summary.active}', tone: t.accent),
+              // 统计胶囊：**页面身份色**只给"这条队列现在有多少"这类数字；
+              // 暂停 / 完成 / 失败继续用语义色（它们是状态，不是页面）。
+              DsChip(label: '下载中 ${summary.active}', hue: pageHue),
               const SizedBox(width: 6),
-              DsChip(label: '排队 ${summary.queued}'),
+              DsChip(label: '排队 ${summary.queued}', hue: pageHue),
               if (summary.paused > 0) ...<Widget>[
                 const SizedBox(width: 6),
                 // 「暂停」不是「下载中」：用户 2026-10-11 的遗留任务就是 paused，
@@ -199,12 +209,15 @@ class QueuePage extends ConsumerWidget {
             isEmpty: (List<QueueJobView> jobs) => jobs.isEmpty,
             empty: DsEmpty(
               icon: Icons.download_done,
+              // 第五十二轮：空态圆盘用页面身份色（蓝）。
+              hue: pageHue,
               title: '队列是空的',
               message: '到「搜索」页点「下载」，或让订阅规则命中后自动入队。',
               action: NeoButton(
                 label: '去搜索',
                 icon: Icons.search,
                 kind: NeoButtonKind.primary,
+                hue: pageHue,
                 onPressed: () => ref.read(navProvider.notifier).select(ShellTab.search),
               ),
             ),

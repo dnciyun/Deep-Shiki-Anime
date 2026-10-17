@@ -26,6 +26,13 @@
 ///   共用同一份种子状态），主页来的只有 mikan 番剧 id 与番名 —— 不联网、不猜；
 /// * 「已看过」与观看记录按**这一部的 mikan 番剧 id** 归组（`LibrarySeedBlock.mikanBangumiId`）：
 ///   订阅里打过的勾，种子块里也显示成「已看过」；在种子块里播的集也记到同一条观看记录上。
+///
+/// ## 第五十二轮：颜色 = 信息（用户 2026-10-17「整个项目太素」）
+///
+/// 这一页是「正在追」的点开层，身份色同样是**粉**（`hueOfTab(ShellTab.following)`）：
+/// 番名旁的 3px 竖条、「这一部的字幕组」区块头。订阅的字幕组行改用**源色**
+/// （`hueOfSource(sub.sourceKind)`：rss = 青 / nyaa = 紫 / mikan = 橙）——
+/// 同一个源在搜索页、种子块、这里都是同一个颜色，颜色因此能回答"这是哪个源的剧集"。
 library;
 
 import 'dart:async';
@@ -52,6 +59,7 @@ import 'widgets/ds_spinner.dart';
 import 'widgets/feedback.dart';
 import 'widgets/follow_button.dart';
 import 'widgets/group_subscribe.dart';
+import 'widgets/hues.dart';
 import 'widgets/library_seed_block.dart';
 import 'widgets/neo.dart';
 import 'widgets/neo_dropdown.dart';
@@ -249,15 +257,37 @@ class _Header extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(
-                entry.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: t.text,
-                  fontSize: DsTypeScale.title,
-                  fontWeight: FontWeight.w600,
-                ),
+              // 第五十二轮：番名旁一条 3px 粉色竖条 = 「正在追」的页面身份色
+              // （与「正在追」页头 / 侧栏 / 工具条页名同一个 `hueOfTab`）。
+              // 番名本身仍是正文色 —— 数据不染成装饰色，只有记号带颜色。
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Container(
+                      width: 3,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: t.hueFill(hueOfTab(ShellTab.following)),
+                        borderRadius: BorderRadius.circular(t.radiusPill),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      entry.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: t.text,
+                        fontSize: DsTypeScale.title,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               if ((entry.titleEn ?? '').trim().isNotEmpty) ...<Widget>[
                 const SizedBox(height: 4),
@@ -491,6 +521,10 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
     final SubscriptionView sub = widget.subscription;
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：这一组的**源色** ——
+    // 与搜索页的分区头、动漫库种子块用的是同一个 `hueOfSource`，
+    // 于是"这条 RSS 属于哪个源"不用读文字、看颜色就认得出。
+    final DsHue sourceHue = hueOfSource(sub.sourceKind);
     final AsyncValue<List<SourceItemView>> items =
         ref.watch(subscriptionItemsProvider(sub.id));
     final String group = _groupName;
@@ -507,7 +541,8 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
         children: <Widget>[
           Row(
             children: <Widget>[
-              Icon(Icons.groups_outlined, size: 15, color: t.accent),
+              // 第五十二轮：组图标 + 源胶囊都吃 `hueOfSource` 的源色。
+              Icon(Icons.groups_outlined, size: 15, color: t.hueInk(sourceHue)),
               const SizedBox(width: 7),
               Expanded(
                 child: Text(
@@ -521,6 +556,8 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
                   ),
                 ),
               ),
+              DsChip(label: sub.sourceKindLabel, hue: sourceHue),
+              const SizedBox(width: 6),
               NeoButton(
                 label: _busy ? '刷新中…' : '刷新',
                 icon: Icons.refresh,
@@ -556,8 +593,10 @@ class _SubscriptionSectionState extends ConsumerState<_SubscriptionSection> {
             loadingLabel: '正在抓取「$group」的 RSS…',
             onRetry: () => ref.invalidate(subscriptionItemsProvider(sub.id)),
             isEmpty: (List<SourceItemView> list) => list.isEmpty,
-            empty: const DsEmpty(
+            empty: DsEmpty(
               icon: Icons.rss_feed,
+              // 第五十二轮：订阅区的空态也是「正在追」的粉色身份（`hueOfTab` 同源）。
+              hue: hueOfTab(ShellTab.following),
               title: '这一组的 RSS 里暂无条目',
               message: 'mikan 这一组可能还没发布剧集，或者地址已失效（可到番剧页重新订阅）。',
             ),
@@ -810,7 +849,12 @@ class _AvailableGroups extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('这一部的字幕组', style: dsTableHeaderStyle(t)),
+        // 第五十二轮：区块头与页头同一套记号（3px 粉色竖条 + 色相标题）。
+        NeoSectionHeader(
+          title: '这一部的字幕组',
+          hue: hueOfTab(ShellTab.following),
+          padding: EdgeInsets.zero,
+        ),
         const SizedBox(height: 6),
         if (value.isLoading && groups.isEmpty)
           const DsLoading(label: '正在拉取这一部的字幕组…')

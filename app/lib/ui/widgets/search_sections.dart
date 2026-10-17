@@ -23,6 +23,7 @@ import '../../theme/motion.dart';
 import '../../theme/tokens.dart';
 import 'ds_spinner.dart';
 import 'ds_stagger.dart';
+import 'hues.dart';
 import 'neo.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -262,11 +263,16 @@ class SearchResultsTable extends StatelessWidget {
                     const SizedBox(height: 3),
                     Row(
                       children: <Widget>[
+                        // 第五十二轮（用户 2026-10-17「整个项目太素」）：**颜色 = 信息编码**。
+                        // 这一条来自哪个站由 `hueOfSource` 决定，行里用「3px 色条 + 同色源名」
+                        // 表达 —— 聚合搜 10 个源时，mikan 橙 / dmhy 蓝 / nyaa 紫 一眼可分；
+                        // 同一个源在动漫库种子块里也是同色（两处共用这张表）。
+                        _SourceBadge(sourceId: item.sourceId, sources: sources),
+                        // 第四十二轮 UX #16：显示源名，不是 `mikan` / `rss:8f3a…`。
+                        // 源名已经由 [_SourceBadge] 画在左边，这里只留"什么时候发的 + 属性"。
                         Flexible(
                           child: Text(
                             <String>[
-                              // 第四十二轮 UX #16：显示源名，不是 `mikan` / `rss:8f3a…`。
-                              sourceLabelFor(item.sourceId, sources),
                               formatRelative(item.publishedAt),
                               ...facts,
                             ].join(' · '),
@@ -434,4 +440,48 @@ class _HoverFillState extends State<_HoverFill> {
     onExit: (_) => setState(() => _hover = false),
     child: widget.builder(_hover),
   );
+}
+
+/// 结果行的**来源徽标**（第五十二轮，用户 2026-10-17「整个项目太素」）。
+///
+/// 「每个源一个色相」在这张表里落在**行首**而不是分区头：搜索结果是一张平铺的表
+/// （决策 A43：无斑马纹、无竖线；聚合结果按时间新→旧混排），没有"一个源一段"的分区。
+/// 所以用「3px 色条 + 同色源名」把来源编码到每一行：色相从 [hueOfSource] 来，
+/// 同一个源在搜索页、动漫库种子块、队列/追番的来源徽标里永远是同一个颜色。
+class _SourceBadge extends StatelessWidget {
+  const _SourceBadge({required this.sourceId, required this.sources});
+
+  final String sourceId;
+  final List<SourceOption> sources;
+
+  @override
+  Widget build(BuildContext context) {
+    final DsTokens t = context.ds;
+    final DsHue hue = hueOfSource(sourceId);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: 3,
+          height: 11,
+          decoration: BoxDecoration(
+            color: t.hueFill(hue),
+            borderRadius: BorderRadius.circular(t.radiusPill),
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          sourceLabelFor(sourceId, sources),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: t.hueInk(hue),
+            fontSize: DsTypeScale.caption,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 5),
+      ],
+    );
+  }
 }

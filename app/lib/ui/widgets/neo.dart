@@ -339,6 +339,7 @@ class NeoButton extends StatefulWidget {
     this.compact = false,
     this.expand = false,
     this.tooltip,
+    this.hue,
   });
 
   final String label;
@@ -352,6 +353,10 @@ class NeoButton extends StatefulWidget {
   final bool expand;
   final String? tooltip;
 
+  /// 标识色相（第五十二轮）：主按钮 = 色相实底 + 反差前景；次按钮 = 色相 1px 描边
+  /// + 色相 ink 文字。危险按钮优先（语义色不能被色相顶掉）。
+  final DsHue? hue;
+
   @override
   State<NeoButton> createState() => _NeoButtonState();
 }
@@ -360,11 +365,17 @@ class _NeoButtonState extends State<NeoButton> {
   bool _hover = false;
   bool _down = false;
 
-  /// 主按钮的底色：强调色实底，悬停往文字色靠 8%、按下 18%（**当帧可见**的沉一档）。
+  /// 主按钮的底色。
+  ///
+  /// 第五十二轮：主按钮有两种实底 —— 没给 [hue] 时是调色板 `accent`；给了色相时是
+  /// 该色相的 `fill`（悬停/按下仍按 8% / 18% 的明暗叠色，"当帧可见"的沉一档不变）。
   Color _primaryFace(DsTokens t) {
-    if (_down) return Color.alphaBlend(t.onAccent.withValues(alpha: 0.18), t.accent);
-    if (_hover) return Color.alphaBlend(t.onAccent.withValues(alpha: 0.08), t.accent);
-    return t.accent;
+    final DsHue? hue = widget.hue;
+    final Color base = hue != null ? t.hueFill(hue) : t.accent;
+    final Color blendBase = hue != null ? t.hueOnFill(hue) : t.onAccent;
+    if (_down) return Color.alphaBlend(blendBase.withValues(alpha: 0.18), base);
+    if (_hover) return Color.alphaBlend(blendBase.withValues(alpha: 0.08), base);
+    return base;
   }
 
   @override
@@ -373,13 +384,17 @@ class _NeoButtonState extends State<NeoButton> {
     final DsMotion motion = DsMotion.of(context);
     final bool enabled = widget.onPressed != null && !widget.busy;
     final bool primary = widget.kind == NeoButtonKind.primary;
+    // 危险按钮优先：danger 是语义色，不能被页面身份色顶掉（规范 §2.3）。
+    final DsHue? hue =
+        widget.kind == NeoButtonKind.danger ? null : widget.hue;
     // 扁平化（规范 §6）：主按钮 = accent 实底 + onAccent 文字；次按钮 = raised 面 + 1px line
     // 描边 + text 文字；危险按钮 = text/danger 文字 + danger 描边。禁用 = sunken 面 + text3。
     final Color fg = !enabled
         ? t.text3
         : switch (widget.kind) {
-            NeoButtonKind.primary => t.onAccent,
-            NeoButtonKind.secondary => t.text,
+            NeoButtonKind.primary =>
+              hue != null ? t.hueOnFill(hue) : t.onAccent,
+            NeoButtonKind.secondary => hue != null ? t.hueInk(hue) : t.text,
             NeoButtonKind.danger => t.danger,
           };
     final Color face = !enabled
@@ -428,7 +443,9 @@ class _NeoButtonState extends State<NeoButton> {
         border: primary
             ? null
             : Border.all(
-                color: widget.kind == NeoButtonKind.danger && enabled ? t.danger : t.line,
+                color: widget.kind == NeoButtonKind.danger && enabled
+                    ? t.danger
+                    : (hue != null ? t.hueLine(hue) : t.line),
                 width: 1,
               ),
       ),
@@ -553,6 +570,7 @@ class NeoCircleButton extends StatefulWidget {
     this.tooltip,
     this.busyTooltip,
     this.size = 28,
+    this.hue,
   });
 
   final IconData icon;
@@ -571,6 +589,9 @@ class NeoCircleButton extends StatefulWidget {
   /// 圆面直径。
   final double size;
 
+  /// 标识色相（第五十二轮）：给页面自己的「刷新」这类单动作圆钮上色。
+  final DsHue? hue;
+
   @override
   State<NeoCircleButton> createState() => _NeoCircleButtonState();
 }
@@ -584,7 +605,10 @@ class _NeoCircleButtonState extends State<NeoCircleButton> {
     final DsTokens t = context.ds;
     final DsMotion motion = DsMotion.of(context);
     final bool enabled = widget.onPressed != null && !widget.busy;
-    final Color fg = enabled ? t.accent : t.text3;
+    final DsHue? hue = widget.hue;
+    final Color fg = enabled
+        ? (hue != null ? t.hueInk(hue) : t.accent)
+        : t.text3;
     final bool pressed = widget.busy || _down;
 
     Widget box = AnimatedContainer(
@@ -594,12 +618,13 @@ class _NeoCircleButtonState extends State<NeoCircleButton> {
       height: widget.size,
       alignment: Alignment.center,
       // 扁平化：常态 = raised 圆面 + 1px line；悬停 = sunken；按下/忙 = 再沉一档。
+      // 第五十二轮：给了色相时描边走色相、悬停走色相淡底。
       decoration: BoxDecoration(
         color: pressed
             ? dsPressedFace(t)
-            : (_hover ? t.sunken : t.raised),
+            : (_hover ? (hue != null ? t.hueSoft(hue) : t.sunken) : t.raised),
         shape: BoxShape.circle,
-        border: Border.all(color: t.line, width: 1),
+        border: Border.all(color: hue != null ? t.hueLine(hue) : t.line, width: 1),
       ),
       child: Icon(widget.icon, size: widget.size * 0.5, color: fg),
     );
@@ -946,6 +971,7 @@ class NeoPill extends StatefulWidget {
     required this.label,
     this.color,
     this.tone,
+    this.hue,
     this.icon,
     this.onTap,
     this.selected = false,
@@ -957,6 +983,10 @@ class NeoPill extends StatefulWidget {
 
   /// 语义色（状态标签用）：给了就是「12% 底 + 该色文字」。
   final Color? tone;
+
+  /// 标识色相（第五十二轮）：底 = 该色相 12% 淡底、文字/图标 = `hueInk`，
+  /// 比 [tone] 语义更"分类"—— 用于源 / 标签 / 页面这类**类别**色。
+  final DsHue? hue;
 
   final IconData? icon;
   final VoidCallback? onTap;
@@ -974,14 +1004,20 @@ class _NeoPillState extends State<NeoPill> {
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
-    final Color c = widget.color ?? widget.tone ?? t.text2;
-    final bool tinted = widget.selected || widget.tone != null;
+    final DsHue? hue = widget.hue;
+    final Color c = widget.color ??
+        widget.tone ??
+        (hue != null ? t.hueInk(hue) : t.text2);
+    final bool tinted = widget.selected || widget.tone != null || hue != null;
     Widget pill = AnimatedContainer(
       duration: DsMotion.of(context).hover,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       // 扁平化（规范 §6）：`sunken` 面 + 1px line 描边；语义色胶囊 = 语义色 12% 底 + 语义色文字。
+      // 第五十二轮：给了 [hue] 的胶囊 = 色相 12% 淡底 + 色相 ink（分类色，不是语义色）。
       decoration: BoxDecoration(
-        color: tinted ? c.withValues(alpha: 0.12) : t.sunken,
+        color: tinted
+            ? (hue != null ? t.hueSoft(hue) : c.withValues(alpha: 0.12))
+            : t.sunken,
         borderRadius: BorderRadius.circular(t.radiusPill),
         // 键盘焦点 = 2px accent（规范 §7 白名单里唯一允许的强调色描边）；其余照旧。
         border: _focused
@@ -1059,11 +1095,14 @@ class NeoDot extends StatelessWidget {
 
 /// 细进度条：凹槽轨道 + 强调色（或语义色）填充。
 class NeoProgress extends StatelessWidget {
-  const NeoProgress({super.key, required this.value, this.color, this.height = 6, this.label});
+  const NeoProgress({super.key, required this.value, this.color, this.hue, this.height = 6, this.label});
 
   /// 0.0–1.0。
   final double value;
   final Color? color;
+
+  /// 标识色相（第五十二轮）：进度条填充走色相渐变，比单一 accent 更有"在动"的观感。
+  final DsHue? hue;
   final double height;
 
   /// 右侧数值标签（可选，tabular figures 自动生效）。
@@ -1073,7 +1112,13 @@ class NeoProgress extends StatelessWidget {
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
     final double f = value.clamp(0.0, 1.0);
-    final Color c = color ?? t.accent;
+    final Color c = hue != null ? t.hueFill(hue!) : (color ?? t.accent);
+    // 填充 = 色相 → 同一色相提亮 30%（浅色）/ 20%（深色）的横向渐变：
+    // 静态一条纯色在 4px 高的细条上会显得"死"，渐变让进度有方向感。
+    final Color c2 = Color.alphaBlend(
+      Colors.white.withValues(alpha: t.isDark ? 0.20 : 0.30),
+      c,
+    );
     final Widget bar = DsInset(
       height: height,
       radius: height / 2,
@@ -1089,7 +1134,10 @@ class NeoProgress extends StatelessWidget {
           child: Container(
             height: height,
             margin: const EdgeInsets.all(1),
-            decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(height / 2)),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(colors: <Color>[c, c2]),
+              borderRadius: BorderRadius.circular(height / 2),
+            ),
           ),
         ),
       ),
@@ -1113,23 +1161,31 @@ class NeoProgress extends StatelessWidget {
 }
 
 /// 区块头：表头样式的标题 + 可选副标题与右侧尾随控件。
+///
+/// 第五十二轮：`hue` 非空时标题前面加一条 3px 色相竖条、标题文字用色相 ink ——
+/// 和设置页 `DsSection` 的记号同一套语言，但更轻（区块头本身不占白面）。
 class NeoSectionHeader extends StatelessWidget {
   const NeoSectionHeader({
     super.key,
     required this.title,
     this.subtitle,
     this.trailing,
+    this.hue,
     this.padding = const EdgeInsets.fromLTRB(2, 0, 2, 8),
   });
 
   final String title;
   final String? subtitle;
   final Widget? trailing;
+
+  /// 标识色相：给了就带竖条 + 彩色标题。
+  final DsHue? hue;
   final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
+    final DsHue? hue = this.hue;
     return Padding(
       padding: padding,
       child: Row(
@@ -1138,12 +1194,25 @@ class NeoSectionHeader extends StatelessWidget {
           Expanded(
             child: Row(
               children: <Widget>[
+                if (hue != null) ...<Widget>[
+                  Container(
+                    width: 3,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: t.hueFill(hue),
+                      borderRadius: BorderRadius.circular(t.radiusPill),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 Flexible(
                   child: Text(
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: dsTableHeaderStyle(t),
+                    style: hue == null
+                        ? dsTableHeaderStyle(t)
+                        : dsTableHeaderStyle(t).copyWith(color: t.hueInk(hue)),
                   ),
                 ),
                 if (subtitle != null) const SizedBox(width: 8),

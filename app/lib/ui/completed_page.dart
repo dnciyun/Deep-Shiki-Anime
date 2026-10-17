@@ -16,6 +16,13 @@
 /// ⚠️ 引擎给的 `EngineFileView.path` 是**相对 outputFolder 的文件名**，不是绝对路径
 /// （真机 dump 见第十二轮），所以路径一律经 `engineFileAbsolutePath()` 拼，
 /// 「打开文件夹」与「删文件」都用它 —— 直接拿 `path` 会指到工作目录下的同名文件。
+///
+/// ## 第五十二轮：颜色 = 信息（用户 2026-10-17「整个项目太素」）
+///
+/// 这一页的身份色是**绿**（`hueOfTab(ShellTab.completed)`，与侧栏图标、工具条页名、
+/// 内容区洗色同源）：页头 3px 竖条 + 「已完成 N 部」胶囊；卡片上的「N 集（a–b）」
+/// 集数范围胶囊也是绿的（"这一部的集下完了"这个事实）。文件大小 / 文件夹路径这类
+/// **事实数据**保持中性（text2/text3），不染颜色；没有可染的「评分」胶囊（本页不显示评分）。
 library;
 
 import 'dart:async';
@@ -39,6 +46,7 @@ import 'widgets/cover.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/ds_stagger.dart';
 import 'widgets/feedback.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 import 'widgets/state_views.dart';
 
@@ -83,6 +91,9 @@ class _CompletedPageState extends ConsumerState<CompletedPage> {
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：「已完成」的页面身份色。
+    // 走 `hueOfTab` 与侧栏 / 工具条 / 洗色同源；不在页面里写死 DsHue.emerald。
+    final DsHue pageHue = hueOfTab(ShellTab.completed);
     final AsyncValue<List<EngineTorrentView>> torrentsValue = ref.watch(engineTorrentsProvider);
     final List<CompletedGroup> groups = ref.watch(completedGroupsProvider);
     final CompletedCoverState covers = ref.watch(completedCoverProvider);
@@ -109,7 +120,17 @@ class _CompletedPageState extends ConsumerState<CompletedPage> {
           padding: EdgeInsets.fromLTRB(t.spacing, t.spacing, t.spacing, 0),
           child: Row(
             children: <Widget>[
-              DsChip(label: '已完成 ${groups.length} 部', tone: t.success),
+              // 第五十二轮：页头 = 绿色身份（3px 色相竖条 + 绿色「已完成 N 部」胶囊）。
+              Container(
+                width: 3,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: t.hueFill(pageHue),
+                  borderRadius: BorderRadius.circular(t.radiusPill),
+                ),
+              ),
+              const SizedBox(width: 8),
+              DsChip(label: '已完成 ${groups.length} 部', hue: pageHue),
               const SizedBox(width: 6),
               DsChip(label: '$files 个文件'),
               const SizedBox(width: 6),
@@ -143,6 +164,8 @@ class _CompletedPageState extends ConsumerState<CompletedPage> {
               if (groups.isEmpty) {
                 return DsEmpty(
                   icon: Icons.task_alt,
+                  // 第五十二轮：空态圆盘用页面身份色（绿）。
+                  hue: pageHue,
                   title: all.isEmpty ? '引擎里还没有任务' : '还没有下完的剧集',
                   message: '下完的剧集按番名归成一张卡：点卡片打开（一集一行），'
                       '在里面可以播放、打开所在文件夹；在卡片上**右键**可以换封面、'
@@ -209,6 +232,8 @@ class _CompletedPageState extends ConsumerState<CompletedPage> {
     AppSettings settings,
   ) {
     final DsTokens t = context.ds;
+    // 第五十二轮：点开之后这一屏也是「已完成」的绿色身份（页内区块头同页头一套记号）。
+    final DsHue pageHue = hueOfTab(ShellTab.completed);
     final _CompletedActions actions = _CompletedActions(ref);
     final String? downloadRoot = _downloadRoot(settings);
     final CompletedEpisode first = group.episodes.first;
@@ -228,6 +253,16 @@ class _CompletedPageState extends ConsumerState<CompletedPage> {
                 onPressed: () => setState(() => _opened = null),
               ),
               const SizedBox(width: 10),
+              // 第五十二轮：区块头 3px 绿色竖条（与页头、卡片集数胶囊同一身份色）。
+              Container(
+                width: 3,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: t.hueFill(pageHue),
+                  borderRadius: BorderRadius.circular(t.radiusPill),
+                ),
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   group.name,
@@ -244,7 +279,9 @@ class _CompletedPageState extends ConsumerState<CompletedPage> {
               DsChip(
                 label: group.episodeRangeLabel,
                 icon: Icons.video_library_outlined,
-                tone: t.success,
+                // 第五十二轮：集数范围 = 「这一部下完了」→ 页面身份绿；
+                // 旁边的文件大小仍是中性 chip（事实数据不染色）。
+                hue: pageHue,
               ),
               const SizedBox(width: 6),
               DsChip(label: formatBytes(group.bytes), icon: Icons.save_outlined),
@@ -573,6 +610,8 @@ class _CompletedCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final DsTokens t = context.ds;
+    // 第五十二轮：列表摆法卡片上的集数范围胶囊 = 「这一部下完了」→ 页面身份绿。
+    final DsHue pageHue = hueOfTab(ShellTab.completed);
     final _CompletedActions actions = _CompletedActions(ref);
     final CompletedEpisode first = group.episodes.first;
 
@@ -618,7 +657,8 @@ class _CompletedCard extends ConsumerWidget {
                           DsChip(
                             label: group.episodeRangeLabel,
                             icon: Icons.video_library_outlined,
-                            tone: t.success,
+                            // 第五十二轮：集数范围 = 完成事实 → 页面身份绿。
+                            hue: pageHue,
                           ),
                           DsChip(label: formatBytes(group.bytes), icon: Icons.save_outlined),
                           if (first.torrent.outputFolder.isNotEmpty)

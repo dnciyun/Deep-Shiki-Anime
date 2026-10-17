@@ -16,6 +16,14 @@
 ///
 /// 视觉（新拟态规范 `docs/specs/2026-10-10-dsanima-neo-theme.md`）：卡片 = 凸起面 +
 /// listSafe 阴影（无硬边框）；筛选仍走 `NeoDropdown`。
+///
+/// ## 第五十二轮：颜色 = 信息（用户 2026-10-17「整个项目太素」）
+///
+/// 这一页的身份色是**粉**（`hueOfTab(ShellTab.following)`，与侧栏图标、工具条页名、
+/// 内容区洗色同源）：页头 3px 竖条 + 统计文字；卡片上「已订阅 N 个字幕组」= 粉。
+/// 状态胶囊按语义分色：在追 = 粉、下载中 = 蓝、队列中 = 石板灰；卡片状态行里
+/// 「今日更新」= emerald、「已缓存」= blue。语义色（success/warning/danger）只留给
+/// 真正的"好/坏/要动手"，不再被拿来当页面装饰。
 library;
 
 import 'package:flutter/material.dart';
@@ -30,6 +38,7 @@ import '../theme/tokens.dart';
 import 'following_detail.dart';
 import 'widgets/cover.dart';
 import 'widgets/ds_stagger.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 import 'widgets/neo_dropdown.dart';
 import 'widgets/state_views.dart';
@@ -57,6 +66,10 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：「正在追」的页面身份色。
+    // 用 `hueOfTab` 而不是直接写 `DsHue.pink` —— 与侧栏图标、工具条页名、
+    // 内容区洗色是**同一个来源**，以后调色只改 `hues.dart` 一处。
+    final DsHue pageHue = hueOfTab(ShellTab.following);
     final List<FollowingEntry> entries = ref.watch(followingProvider);
     final AsyncValue<ScheduleView> scheduleValue = ref.watch(scheduleProvider);
     final ScheduleView? schedule = scheduleValue.value;
@@ -112,9 +125,20 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 10),
           child: Row(
             children: <Widget>[
+              // 第五十二轮：页头 = 这一页的粉色身份（3px 色相竖条 + hueInk 统计）。
+              // 颜色只做「这是哪一页」的编码，不给数字本身换语义（数字仍是 text 档的信息）。
+              Container(
+                width: 3,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: t.hueFill(pageHue),
+                  borderRadius: BorderRadius.circular(t.radiusPill),
+                ),
+              ),
+              const SizedBox(width: 8),
               Text(
                 '${all.length} 部 · $updatedCount 部有更新',
-                style: TextStyle(color: t.text2, fontSize: DsTypeScale.secondary),
+                style: TextStyle(color: t.hueInk(pageHue), fontSize: DsTypeScale.secondary),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -133,6 +157,9 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
                 value: _filter,
                 tooltip: '筛选正在追',
                 label: '筛选 · ${_filter.label}',
+                // 第五十二轮：筛选触发器的字 / 箭头 / 菜单选中项都走页面身份粉 ——
+                // 「筛选选中态 = 这一页的颜色」。
+                hue: pageHue,
                 items: <NeoDropdownItem<FollowingFilter>>[
                   for (final FollowingFilter f in FollowingFilter.values)
                     NeoDropdownItem<FollowingFilter>(f, '筛选 · ${f.label}'),
@@ -180,6 +207,8 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
 
   Widget _empty() => DsEmpty(
     icon: Icons.favorite_border,
+    // 第五十二轮：空态圆盘也用页面身份色（`hueOfTab`，与页头 / 侧栏同源）。
+    hue: hueOfTab(ShellTab.following),
     title: '还没有追番',
     message:
         '到「主页」的海报卡、或「搜索」的结果里点「＋追番」，就会收进这里。'
@@ -194,6 +223,8 @@ class _FollowingPageState extends ConsumerState<FollowingPage> {
 
   Widget _filteredEmpty() => DsEmpty(
     icon: Icons.filter_alt_off_outlined,
+    // 第五十二轮：同 `_empty()`，空态也用页面身份色（`hueOfTab`）。
+    hue: hueOfTab(ShellTab.following),
     title: '「${_filter.label}」下没有番',
     message: '换一个筛选，或点「全部」看所有追番。',
     action: NeoButton(label: '看全部', onPressed: () => setState(() => _filter = FollowingFilter.all)),
@@ -221,6 +252,9 @@ class FollowingGridCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final DsTokens t = context.ds;
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：卡片上的「已订阅」也是这一页的
+    // 粉色身份（订阅状态属于「正在追」这件事），与页头 / 侧栏同色。
+    final DsHue pageHue = hueOfTab(ShellTab.following);
     final FollowingEntry entry = card.entry;
     final List<SubscriptionView> subs =
         ref.watch(subscriptionsProvider).value ?? const <SubscriptionView>[];
@@ -255,6 +289,14 @@ class FollowingGridCard extends ConsumerWidget {
     final bool allWatched = allLoaded && allKeys.isNotEmpty && watchedCount == allKeys.length;
 
     final String? stateLine = card.stateText ?? card.nextUpdate;
+    // 第五十二轮：状态行按**信息**上色，不是按位置挑色 ——
+    // * 今日更新 = emerald（和「已完成」同一语义族：这一集真的有了）；
+    // * 已缓存 = blue（和下载管线同族：文件已经在本地）；
+    // * 周三更新 / 无档期 / 已完结 / 下载中 等保持中性的 text3（它们是"信息"，不是"状态"）。
+    final bool cached = (card.stateText ?? '').startsWith('已缓存');
+    final Color stateLineColor = card.hasUpdate
+        ? t.hueInk(DsHue.emerald)
+        : (cached ? t.hueInk(DsHue.blue) : t.text3);
     return NeoSurface(
       radius: t.radiusCard,
       padding: const EdgeInsets.all(8),
@@ -317,7 +359,9 @@ class FollowingGridCard extends ConsumerWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: mine.isEmpty ? t.warning : t.text2,
+              // 第五十二轮：已订阅 = 粉（页面身份色）；未订阅 = warning
+              // （那是"你得动手"，语义色不换）。
+              color: mine.isEmpty ? t.warning : t.hueInk(pageHue),
               fontSize: DsTypeScale.caption,
             ),
           ),
@@ -328,7 +372,7 @@ class FollowingGridCard extends ConsumerWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: card.hasUpdate ? t.accent : t.text3,
+                color: stateLineColor,
                 fontSize: DsTypeScale.caption,
               ),
             ),
@@ -379,7 +423,8 @@ class _CornerMark extends StatelessWidget {
   }
 }
 
-/// 状态徽标：**凸起胶囊 + 着色文字**（语义色只以小面积出现，决策 A18）。
+/// 状态徽标：**着色胶囊**（分类色小面积出现；第五十二轮起走 `NeoPill.hue`，
+/// 不再是"语义色当装饰"）。
 class _StatusBadge extends StatelessWidget {
   const _StatusBadge({required this.status});
 
@@ -387,15 +432,19 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final DsTokens t = context.ds;
-    final (Color tone, IconData icon) = switch (status) {
-      FollowingStatus.downloading => (t.success, Icons.downloading),
-      FollowingStatus.watching => (t.accent, Icons.visibility_outlined),
-      FollowingStatus.queued => (t.text3, Icons.schedule),
+    // 第五十二轮（用户 2026-10-17「整个项目太素」）：状态胶囊改成「分类色」——
+    // * 在追 = 粉（这一页的订阅身份色）；
+    // * 下载中 = 蓝（下载管线；和卡片上「已缓存」同一个颜色家族）；
+    // * 队列中 = 石板灰（中性等待，不抢眼）。
+    // 语义色（success/warning/danger）留给真正的"好/坏"，不再用来染"在追"。
+    final (DsHue hue, IconData icon) = switch (status) {
+      FollowingStatus.downloading => (DsHue.blue, Icons.downloading),
+      FollowingStatus.watching => (DsHue.pink, Icons.visibility_outlined),
+      FollowingStatus.queued => (DsHue.slate, Icons.schedule),
     };
     // 第三十轮：外面原来还套了一层 `cardDecoration(radiusPill)` —— 它给的是
     // `raised` 面 + 1px `line` 描边，而里面那颗 `NeoPill` 自己就是一整颗胶囊
     // ⇒ 白底上多出一圈描边，小徽标看着像"套了两层"。交回 `NeoPill` 一个人画。
-    return NeoPill(label: status.label, icon: icon, color: tone, selected: true);
+    return NeoPill(label: status.label, icon: icon, hue: hue, selected: true);
   }
 }

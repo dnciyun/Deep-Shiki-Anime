@@ -26,6 +26,16 @@
 /// 现在 [kHomeCardTitleHeight] = 38（两行整行看得见），再长的悬停标题看全名；
 /// 卡片总高 [kHomeCardTextHeight] 不变。
 ///
+/// ⚠️ **第五十二轮**（用户 2026-10-17 原话：「整个项目太素」）：给主页加「标识色相」。
+/// 主页的身份色 = **橙**（[DsHue.orange]），颜色只用来编码信息、不做装饰：
+/// * 区头 = 3px 色相竖条 + `hueInk` 标题（[今日推荐] 用橙；[今日更新] 跟着**选中的那天**走，
+///   与星期切换那一项同色 —— 切星期时标题颜色本身就在说明"现在看的是哪一天"）；
+/// * 星期切换每一格一个色相（[hueOfWeekday]，剧场版紫 / OVA 靛），选中/悬停走该色相的
+///   18% 淡底 + 色相 ink；
+/// * 封面角标/日期/评分小胶囊按语义上色：今日更新 = emerald、已缓存 = blue、
+///   已订阅 = pink（侧栏「正在追」的身份色）、更新日期 = emerald、评分 = gold；
+/// * 空态统一 [DsEmpty] + 橙。颜色只从 `context.ds` 的 hue API 取，不写任何颜色字面量。
+///
 /// 三条硬约束：
 /// 1. 星期切换**不重新拉数据**（一次 `schedule()` 拿全周）；
 /// 2. 首页条目**没有磁力**：点卡片进番剧详情，再由剧集入队播放，不硬凑可播项；
@@ -54,6 +64,7 @@ import 'widgets/cover.dart';
 import 'widgets/ds_carousel.dart';
 import 'widgets/ds_stagger.dart';
 import 'widgets/follow_button.dart';
+import 'widgets/hues.dart';
 import 'widgets/neo.dart';
 import 'widgets/state_views.dart';
 
@@ -109,6 +120,21 @@ double coverSizeForDay(int count) => kHomeCoverMaxWidth;
 /// 改版前 7/8 只在"当天有内容"时才出现在下拉里 —— 现在它们照站点口径常驻，
 /// 点开没有内容时给的是空态文案（「剧场版没有更新的番剧」），不是一条假数据。
 const List<int> kHomeDayTabs = <int>[1, 2, 3, 4, 5, 6, 0, 7, 8];
+
+/// 「今日更新」这一排每一项的色相（第五十二轮）：周一…周日走 [hueOfWeekday] 的色环，
+/// mikan 的两个专档按 `hues.dart` 的标签色 —— **剧场版 = 紫、OVA = 靛**。
+///
+/// ⚠️ mikan 的星期键是 `0 = 周日 … 6 = 周六`（见 [dsWeekdayLabel]），而 [hueOfWeekday]
+/// 的入参是 `0 = 周一` —— 差一天，必须换算；不能把 dow 直接塞进去（否则周日会拿到周一的
+/// 蓝色、往后全错一格）。
+///
+/// 纯函数（可单测）：`hueForDayTab(3)` = 周三 = teal、`hueForDayTab(4)` = 周四 = emerald。
+DsHue hueForDayTab(int dow) => switch (dow) {
+      0 => hueOfWeekday(6), // 周日 = 色环最后一格（粉）
+      7 => DsHue.violet, // 剧场版
+      8 => DsHue.indigo, // OVA
+      _ => hueOfWeekday(dow - 1), // 周一 = 0 … 周六 = 5
+    };
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -186,10 +212,14 @@ class HomePage extends ConsumerWidget {
     }
     if (view.total == 0) {
       // 0 条不是「今天没更新」——那是站点没给数据，必须说实话。
+      // 第五十二轮：空态走 [DsEmpty] 并带上主页身份色（橙），图标圆盘不再是全灰。
       return const <Widget>[
         SliverToBoxAdapter(
-          child: _Hint(
-            text:
+          child: DsEmpty(
+            title: '追番表是空的',
+            icon: Icons.cloud_off_outlined,
+            hue: DsHue.orange,
+            message:
                 'mikan 追番表返回了 0 条番剧。可以点「刷新」立即重试；'
                 '若一直为空，多半是站点结构变了（core 的 mikan_schedule 解析器需要更新）。',
           ),
@@ -212,7 +242,17 @@ class HomePage extends ConsumerWidget {
     final DateTime now = ref.watch(todayProvider);
     final List<ScheduleEntryView> items = view.day(selected);
     if (items.isEmpty) {
-      return <Widget>[SliverToBoxAdapter(child: _Hint(text: homeEmptyText(selected, today)))];
+      // 第五十二轮：空态带主页身份色（橙）—— 图标圆盘 + 色相图标，不再是全灰一句话。
+      return <Widget>[
+        SliverToBoxAdapter(
+          child: DsEmpty(
+            title: '这一档没有更新',
+            icon: Icons.event_busy_outlined,
+            hue: DsHue.orange,
+            message: homeEmptyText(selected, today),
+          ),
+        ),
+      ];
     }
 
     // 「已缓存」/「已订阅」角标的真实依据：引擎里已下完的 torrent 名 + 本机订阅名。
@@ -298,23 +338,42 @@ String homeEmptyText(int selectedDay, int todayDow) => selectedDay == todayDow
     ? '今天没有更新的番剧。可以点上方的星期切换看看其它日子。'
     : '${dsWeekdayLabel(selectedDay)}没有更新的番剧。可以点上方的星期切换看看其它日子。';
 
-class _Hint extends StatelessWidget {
-  const _Hint({required this.text});
+/// 区块标题（第五十二轮）：3px 色相竖条 + 色相 ink 标题。
+///
+/// 和设置页 `DsSection` 的记号同一套语言（一行标题前一条 3px 色相竖条）。这里不直接用
+/// [NeoSectionHeader]：它自带 padding/trailing 的取法会改主页这两处区头的行内布局
+///（今日推荐是 Column 里的裸标题、今日更新要跟星期切换和刷新按钮同处一行）。
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.text, required this.hue});
 
   final String text;
+  final DsHue hue;
 
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
-    return Align(
-      alignment: Alignment.topLeft,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(kHomeGridPadding, 26, kHomeGridPadding, 2),
-        child: Text(
-          text,
-          style: TextStyle(color: t.text3, fontSize: DsTypeScale.secondary, height: 1.5),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: 3,
+          height: 12,
+          decoration: BoxDecoration(
+            color: t.hueFill(hue),
+            borderRadius: BorderRadius.circular(t.radiusPill),
+          ),
         ),
-      ),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: TextStyle(
+            color: t.hueInk(hue),
+            fontSize: DsTypeScale.title,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -388,6 +447,8 @@ class _RefreshCountdownState extends ConsumerState<_RefreshCountdown> {
       icon: Icons.refresh,
       size: 28,
       busy: loading,
+      // 第五十二轮：主页身份色（橙）—— 这颗圆钮是主页的"单动作"，跟着页面色走。
+      hue: DsHue.orange,
       tooltip: '追番表每 ${interval.inMinutes} 分钟自动刷新；点这里立即刷新',
       busyTooltip: '正在刷新追番表…',
       onPressed: loading ? null : _refreshNow,
@@ -443,15 +504,8 @@ class _RecommendRailState extends ConsumerState<_RecommendRail> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            '今日推荐',
-            style: TextStyle(
-              color: t.text,
-              fontSize: DsTypeScale.title,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
-            ),
-          ),
+          // 第五十二轮：区头带页面身份色（主页 = 橙）的 3px 竖条 + 色相标题。
+          const _SectionTitle(text: '今日推荐', hue: DsHue.orange),
           const SizedBox(height: 9),
           if (items == null)
             _RecommendSkeleton(geometry: geometry)
@@ -504,7 +558,9 @@ class _RecommendEmpty extends StatelessWidget {
         alignment: Alignment.centerLeft,
         child: Text(
           'Bangumi 这次没给出可用的推荐条目（明天会自动重试）。',
-          style: TextStyle(color: t.text3, fontSize: DsTypeScale.secondary),
+          // 第五十二轮：空态文字用主页身份色（橙）—— 这一块高度只有轮播的 40%，
+          // 塞不下 [DsEmpty] 的图标圆盘，所以只取它的色相。
+          style: TextStyle(color: t.hueInk(DsHue.orange), fontSize: DsTypeScale.secondary),
         ),
       ),
     );
@@ -669,15 +725,22 @@ class _RecommendCaption extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
+        // 第五十二轮：评分 = gold 色相胶囊（评分是"信息"，不是强调色）；「暂无评分」保持
+        // 中性 —— 不把"没有"装成"有一档颜色"。
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: t.inset(radius: t.radiusPill),
+          decoration: subject.score == null
+              ? t.inset(radius: t.radiusPill)
+              : BoxDecoration(
+                  color: t.hueSoft(DsHue.gold),
+                  borderRadius: BorderRadius.circular(t.radiusPill),
+                ),
           child: Text(
             subject.score == null
                 ? '暂无评分'
                 : '★${subject.score!.toStringAsFixed(1)}',
             style: TextStyle(
-              color: t.accent,
+              color: subject.score == null ? t.text3 : t.hueInk(DsHue.gold),
               fontSize: DsTypeScale.caption,
               fontFeatures: DsTokens.tabular,
             ),
@@ -831,7 +894,6 @@ class _UpdateHeader extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final DsTokens t = context.ds;
     final int selected = ref.watch(selectedDayProvider);
     final int today = ref.watch(todayDowProvider);
     // 选中项万一不在这一排里（旧数据/越界值）→ 高亮回落到今天，不出现"一个都没选中"。
@@ -841,21 +903,18 @@ class _UpdateHeader extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(kHomeGridPadding, 12, kHomeGridPadding, 8),
       child: Row(
         children: <Widget>[
-          Text(
-            selected == today ? '今日更新' : '${dsWeekdayLabel(selected)}更新',
-            style: TextStyle(
-              color: t.text,
-              fontSize: DsTypeScale.title,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
-            ),
+          // 第五十二轮：区头的色相跟着**当前选中的那一天**走 —— 与右边那一排切换项同一个
+          // 色相，切星期时竖条/标题颜色跟着换（颜色本身就在说明"现在看的是哪一天"）。
+          _SectionTitle(
+            text: selected == today ? '今日更新' : '${dsWeekdayLabel(selected)}更新',
+            hue: hueForDayTab(current),
           ),
           const SizedBox(width: 12),
           // ⚠️ 2026-10-14 第二十八轮（用户：「主页日期改成，在今日更新旁边一排
           // 周一到周日+剧场版+ova，细体淡色」）：
           // * 位置：**就贴在「今日更新」右边**（原来是靠 Spacer 推到行尾的下拉）；
           // * 形态：`周一…周日 + 剧场版 + OVA` 共 9 项一条平铺（见 [kHomeDayTabs]），
-          //   细体淡色 = caption(12) + w300 + 三级色，**选中项才走强调色**；
+          //   细体淡色 = caption(12) + w300 + 三级色，**选中项才走该天的色相**（第五十二轮）；
           // * 只作用于「今日更新」这一块，不筛选推荐（用户第十一轮定的硬约束）。
           //
           // 用 [Expanded] + [Wrap] 而不是 `Row`：窗口窄到放不下 9 项时它会折成两行，
@@ -870,6 +929,8 @@ class _UpdateHeader extends ConsumerWidget {
                 for (final int dow in kHomeDayTabs)
                   _DayTabItem(
                     label: dsWeekdayLabel(dow),
+                    // 第五十二轮：每一格一个色相（周一…周日走色环，剧场版紫 / OVA 靛）。
+                    hue: hueForDayTab(dow),
                     // ⚠️ 没有数据时 `count` 是 **null**，不是 0：把"追番表还没到/拿不到"
                     // 说成「周一 · 0 部」就是编了一个数字（spec 口径：拿不到就说拿不到）。
                     count: view?.day(dow).length,
@@ -891,13 +952,15 @@ class _UpdateHeader extends ConsumerWidget {
 
 /// 这一排里的一项：**只有星期/专档名，没有部数**（用户 2026-10-14：细体淡色）。
 ///
-/// * 细体淡色：caption 字号 + `FontWeight.w300` + 三级色；选中项走强调色 + w500；
+/// * 细体淡色：caption 字号 + `FontWeight.w300` + 三级色；选中项走**该天的色相**
+///   （18% 淡底 + `hueInk` 文字 + w500，第五十二轮）；悬停同样给该色相淡底；
 /// * 「今天」用名字底下那颗 3px 小圆点表达 —— 不写「（今天）」，那一项会被撑得
-///   比别的宽一截，一排就对不齐了；
+///   比别的宽一截，一排就对不齐了；圆点用该天的 `hueFill`（同一份颜色信息编码）；
 /// * 部数没丢：挂在 tooltip 里（`周三（今天） · 8 部`），计数仍是"没有数据就不写"。
 class _DayTabItem extends StatefulWidget {
   const _DayTabItem({
     required this.label,
+    required this.hue,
     required this.count,
     required this.selected,
     required this.today,
@@ -905,6 +968,10 @@ class _DayTabItem extends StatefulWidget {
   });
 
   final String label;
+
+  /// 这天的标识色相（第五十二轮）：周一…周日走 [hueOfWeekday] 的色环，
+  /// 剧场版 = 紫 / OVA = 靛（见 [hueForDayTab]）。
+  final DsHue hue;
 
   /// 这天的番剧数；null = 还没有数据（不许当成 0）。
   final int? count;
@@ -927,7 +994,11 @@ class _DayTabItemState extends State<_DayTabItem> {
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
-    final Color fg = widget.selected ? t.accent : t.text3;
+    final DsHue hue = widget.hue;
+    // 第五十二轮：选中项 = 该天色相淡底 + 色相 ink（对比度由 token 保证）；悬停也给
+    // 同一色相的淡底 —— "这一排很淡"的观感不变，但扫一眼就知道每一格是哪个色相。
+    final bool lit = widget.selected || _hover;
+    final Color fg = lit ? t.hueInk(hue) : t.text3;
     return Tooltip(
       message: _tip,
       child: MouseRegion(
@@ -942,8 +1013,8 @@ class _DayTabItemState extends State<_DayTabItem> {
             curve: DsMotion.hoverCurve,
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             decoration: BoxDecoration(
-              // 悬停只给一层极淡的底（这是"淡"的一排，不做凹槽也不做 pill）。
-              color: _hover ? t.raised.withValues(alpha: 0.5) : Colors.transparent,
+              // 第五十二轮：选中/悬停 = 色相 18% 淡底（这是"淡"的一排，不做凹槽也不做 pill）。
+              color: lit ? t.hueSoft(hue) : Colors.transparent,
               borderRadius: BorderRadius.circular(t.radiusBadge),
             ),
             child: Column(
@@ -964,7 +1035,7 @@ class _DayTabItemState extends State<_DayTabItem> {
                   width: 3,
                   height: 3,
                   decoration: BoxDecoration(
-                    color: widget.today ? t.accent : Colors.transparent,
+                    color: widget.today ? t.hueFill(hue) : Colors.transparent,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -1058,8 +1129,11 @@ class _PosterCardState extends ConsumerState<_PosterCard> {
                 color: _hovered ? t.sunken : t.raised,
                 borderRadius: BorderRadius.circular(t.radiusControl * 0.67),
                 // 凸起面 + 1px 柔光内边（规范 §5 例外 2）。
-                // 悬停靠**阴影升一档**表达，不再用强调色描边（那会变成硬边框）。
-                border: Border.all(color: t.line, width: 1),
+                // 第五十二轮：悬停的描边换成主页身份色（橙）的 1px 色相线 —— 不加剧烈
+                // 阴影（规范只允许 1px 彩色线），一眼能看出"这张卡是活的"。
+                // ⚠️ 写法必须让 `t.` 与 `Border.all(` 同行：`neo_guard_test` 的描边守卫
+                // 只看单行（拆行会被当成"没有 token 的硬边框"）。
+                border: Border.all(color: _hovered ? t.hueLine(DsHue.orange) : t.line, width: 1),
               ),
               child: AspectRatio(
                 aspectRatio: kPosterAspect,
@@ -1122,6 +1196,10 @@ class _PosterCardState extends ConsumerState<_PosterCard> {
 ///
 /// 优先级不变（已订阅 > 已缓存 > 今日更新，判据见 [scheduleBadgeFor]）。
 /// 色点叠在封面图上，所以带一圈 1px 的底色描边 —— 浅色封面下也看得见。
+///
+/// 第五十二轮：三种状态改成**语义色相**（点用 `hueFill`，不承载文字）——
+/// 今日更新 = emerald、已订阅 = pink（侧栏「正在追」的身份色）、已缓存 = blue，
+/// 和别的页面上同意义的角标保持同一个色相。
 class _BadgeDot extends StatelessWidget {
   const _BadgeDot({required this.badge});
 
@@ -1131,9 +1209,9 @@ class _BadgeDot extends StatelessWidget {
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
     final (Color color, String label) = switch (badge) {
-      ScheduleBadge.today => (t.success, '今日更新'),
-      ScheduleBadge.subscribed => (t.accent, '已订阅'),
-      ScheduleBadge.cached => (t.text3, '已缓存'),
+      ScheduleBadge.today => (t.hueFill(DsHue.emerald), '今日更新'),
+      ScheduleBadge.subscribed => (t.hueFill(DsHue.pink), '已订阅'),
+      ScheduleBadge.cached => (t.hueFill(DsHue.blue), '已缓存'),
     };
     return Tooltip(
       message: label,
@@ -1162,19 +1240,19 @@ class _DateChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
-    // 叠在封面图上的日期块：封面可能是任意亮度的图，所以这里必须用
-    // 「半透明黑底 + 白字」这类**图上覆盖层**（同样是 token 派生色，
-    // 不用字面量），不适用新拟态的凹凸语言。
+    // 第五十二轮：日期块 = 「更新」语义 → emerald 色相淡底 + 色相 ink。
+    // 这里仍然要做「图上覆盖层」：封面可能是任意亮度的图，所以用 `hueSoftOn(膜, base)`
+    // 一块**不透明**的淡底压住封面（原来是半透明黑底），色相 ink 在它上面有对比度保证。
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: t.text.withValues(alpha: 0.72),
+        color: t.hueSoftOn(DsHue.emerald, t.base),
         borderRadius: BorderRadius.circular(t.radiusPill),
       ),
       child: Text(
         text,
         style: TextStyle(
-          color: t.base,
+          color: t.hueInk(DsHue.emerald),
           fontSize: DsTypeScale.caption,
           fontFeatures: DsTokens.tabular,
         ),

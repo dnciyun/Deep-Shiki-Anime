@@ -342,7 +342,13 @@ void main() {
       expect(_dayTabStyle(tester, label).fontWeight, FontWeight.w300, reason: '「$label」要细体');
       expect(_dayTabStyle(tester, label).color, DsTokens.whiteInk.text3, reason: '「$label」要淡色');
     }
-    expect(_dayTabStyle(tester, '周三').color, DsTokens.whiteInk.accent, reason: '选中项走强调色');
+    // 第五十二轮：选中的那一天走**它自己的色相**（周三 = teal），不再是统一 accent ——
+    // 颜色是信息：一排日期里哪个高亮 = 正在看哪天（用户 2026-10-17「整个项目太素」）。
+    expect(
+      _dayTabStyle(tester, '周三').color,
+      DsTokens.whiteInk.hueInk(hueForDayTab(3)),
+      reason: '选中项走当天的色相',
+    );
     expect(_dayTabStyle(tester, '周三').fontWeight, FontWeight.w500);
     // 部数没有丢：改挂在 tooltip 上；「今天」写在 tooltip 里（那一排本身只有名字）。
     expect(_dayTabTooltip(tester, '周三'), '周三（今天） · 8 部');
@@ -380,8 +386,8 @@ void main() {
     // 顶部标题跟着切（今天不是周四 → 不写「今日更新」）
     expect(find.text('今日更新'), findsNothing);
     expect(find.text('周四更新'), findsOneWidget);
-    // 这一排的高亮跟着走：周四 = 强调色，周三退回淡色。
-    expect(_dayTabStyle(tester, '周四').color, DsTokens.whiteInk.accent);
+    // 这一排的高亮跟着走：周四 = 周四自己的色相（emerald），周三退回淡色。
+    expect(_dayTabStyle(tester, '周四').color, DsTokens.whiteInk.hueInk(hueForDayTab(4)));
     expect(_dayTabStyle(tester, '周三').color, DsTokens.whiteInk.text3);
   });
 
