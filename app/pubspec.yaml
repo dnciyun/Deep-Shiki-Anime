@@ -20,7 +20,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # ⚠️ 改这里**必须同时改** `lib/domain/app_version.dart` 的 `kAppVersion`
 # （检查更新的比较基准）；`test/app_version_test.dart` 会读本文件对账。
 # 发布标签 = `v` + 三段号（`v1.0.3`），见 `tool/release_github.ps1`。
-version: 1.0.2+3
+version: 1.0.3+4
 
 environment:
   sdk: ^3.12.2
