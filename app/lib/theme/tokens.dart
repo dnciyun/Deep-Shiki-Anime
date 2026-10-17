@@ -16,6 +16,9 @@
 /// **扁平**：除悬浮层（对话框 / 右键菜单 / Tooltip / 下拉浮层，§7）外**一律没有阴影**，
 /// 层次只靠 `base / raised / sunken` 三级色差 + 1px `line` 描边（[cardDecoration] / [inset]）。
 ///
+/// **只有一个强调色**（规范 §2 第 3 条，第五十三轮用户「默认还是按主题的色不要加其他
+/// 颜色」后恢复）：彩色只来自本套外观的 `accent`（文字档 [accentInk]），详见 [DsHue]。
+///
 /// ⚠️ **过渡期遗留**（Task 9 删除，见 [DsBrightness]、[line]、`simpleMode`、
 /// `statusBarHeight`、[raisedDecoration] / [sunkenDecoration]）：这些名字只为让既有
 /// ~210 个调用点在迁移期继续编译，取值已经切到扁平外观
@@ -84,25 +87,21 @@ enum DsAppearance {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 标识色相（第五十二轮：用户「整个项目太素」）
+// 标识色相（第五十二轮引入；第五十三轮起只作语义标识，取色一律落回主题强调色）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// **标识色相** —— 页面 / 来源 / 标签各自一色的固定色环。
+/// **语义标识** —— 页面 / 来源 / 标签 / 星期各自一个「身份」。
 ///
-/// 为什么需要它：扁平化之后全应用只有一个 `accent`（规范 §2 第 3 条「只有一个强调色」），
-/// 信息密度高的页面（动漫库 30 多颗类型胶囊、搜索页 7 个源、队列/历史/已完成三张列表）
-/// 全靠 `raised` 白面 + `text2` 灰字，用户 2026-10-17 的原话就是「整个项目太素」。
+/// 第五十二轮曾给 12 个色相各配一组颜色（`ink` / `fill`），把颜色当信息编码；
+/// 第五十三轮用户原话「默认还是按主题的色不要加其他颜色」——所以从这一轮起
+/// 色相**不再决定颜色**，只作为调用点上的语义标识保留：
 ///
-/// 这一层把「颜色」变成**信息编码**而不是装饰：
-/// * 每个导航目的地一个色相（主页橙 / 动漫库紫 / 搜索青 / 追番粉 / 队列蓝 / 已完成绿 /
-///   观看记录金 / 设置灰）；
-/// * 每个种子源一个色相（mikan 橙 / dmhy 蓝 / nyaa 紫 / acgxn 玫红 …）；
-/// * 标签按语义分色（奇幻紫 / 科幻青 / 恋爱粉 / 热血玫红 …）。
-///
-/// **两档取值**（[DsHueColors]）：[DsHueColors.ink] 给文字与图标（在 8 套外观的
-/// base / raised / sunken / 12% 淡底上都 ≥4.5:1，由 `test/widget_test.dart` 守卫）；
-/// [DsHueColors.fill] 给点 / 细条 / 进度条 / 渐变色块这类**不承载文字**的装饰。
-/// 深色外观上两档同值（亮色在近黑底上既够亮也够对比）。
+/// * [hueInk] / [hueFill] / [hueSoft] / [hueSoftOn] / [hueLine] / [hueOnFill] /
+///   [hueWash] 一律落回本套外观的 `accent`（文字档是 [accentInk]），整个应用
+///   只剩「主题强调色」这一种彩色；
+/// * 页面里的色条 / 色块 / 洗色 / 进度渐变**结构全部保留**，只是同色；
+/// * `ui/widgets/hues.dart` 的映射表保留（标识不漂移），以后若要恢复彩色只改
+///   这一层取色，不用动任何调用点。
 enum DsHue {
   orange,
   amber,
@@ -117,50 +116,6 @@ enum DsHue {
   rose,
   slate,
 }
-
-/// 一个色相的两档取值（见 [DsHue]）。
-@immutable
-class DsHueColors {
-  const DsHueColors({required this.ink, required this.fill});
-
-  /// 文字 / 图标色：浅色外观上在 `base / raised / sunken` 与 12% 淡底上均 ≥4.5:1。
-  final Color ink;
-
-  /// 装饰填充色：点 / 细条 / 进度条 / 渐变。**不要**拿它当文字色（对比度不够）。
-  final Color fill;
-}
-
-/// 浅色外观的 12 色（第五十二轮实测值，见 `build/round52/hue_contrast.py`）。
-const Map<DsHue, DsHueColors> _hueLight = <DsHue, DsHueColors>{
-  DsHue.orange: DsHueColors(ink: Color(0xFFB2430A), fill: Color(0xFFF97316)),
-  DsHue.amber: DsHueColors(ink: Color(0xFF92400E), fill: Color(0xFFF59E0B)),
-  DsHue.gold: DsHueColors(ink: Color(0xFF854D0E), fill: Color(0xFFEAB308)),
-  DsHue.emerald: DsHueColors(ink: Color(0xFF047857), fill: Color(0xFF10B981)),
-  DsHue.teal: DsHueColors(ink: Color(0xFF0F766E), fill: Color(0xFF14B8A6)),
-  DsHue.cyan: DsHueColors(ink: Color(0xFF0E7490), fill: Color(0xFF06B6D4)),
-  DsHue.blue: DsHueColors(ink: Color(0xFF1D4ED8), fill: Color(0xFF3B82F6)),
-  DsHue.indigo: DsHueColors(ink: Color(0xFF4338CA), fill: Color(0xFF6366F1)),
-  DsHue.violet: DsHueColors(ink: Color(0xFF6D28D9), fill: Color(0xFF8B5CF6)),
-  DsHue.pink: DsHueColors(ink: Color(0xFFBE185D), fill: Color(0xFFEC4899)),
-  DsHue.rose: DsHueColors(ink: Color(0xFFBE123C), fill: Color(0xFFF43F5E)),
-  DsHue.slate: DsHueColors(ink: Color(0xFF475569), fill: Color(0xFF64748B)),
-};
-
-/// 深色外观的 12 色（在 `#07090C`–`#1C1618` 这一档底上均 ≥4.5:1）。
-const Map<DsHue, DsHueColors> _hueDark = <DsHue, DsHueColors>{
-  DsHue.orange: DsHueColors(ink: Color(0xFFFB923C), fill: Color(0xFFFB923C)),
-  DsHue.amber: DsHueColors(ink: Color(0xFFFBBF24), fill: Color(0xFFFBBF24)),
-  DsHue.gold: DsHueColors(ink: Color(0xFFFACC15), fill: Color(0xFFFACC15)),
-  DsHue.emerald: DsHueColors(ink: Color(0xFF34D399), fill: Color(0xFF34D399)),
-  DsHue.teal: DsHueColors(ink: Color(0xFF2DD4BF), fill: Color(0xFF2DD4BF)),
-  DsHue.cyan: DsHueColors(ink: Color(0xFF22D3EE), fill: Color(0xFF22D3EE)),
-  DsHue.blue: DsHueColors(ink: Color(0xFF60A5FA), fill: Color(0xFF60A5FA)),
-  DsHue.indigo: DsHueColors(ink: Color(0xFFA5B4FC), fill: Color(0xFFA5B4FC)),
-  DsHue.violet: DsHueColors(ink: Color(0xFFC4B5FD), fill: Color(0xFFC4B5FD)),
-  DsHue.pink: DsHueColors(ink: Color(0xFFF472B6), fill: Color(0xFFF472B6)),
-  DsHue.rose: DsHueColors(ink: Color(0xFFFB7185), fill: Color(0xFFFB7185)),
-  DsHue.slate: DsHueColors(ink: Color(0xFF94A3B8), fill: Color(0xFF94A3B8)),
-};
 
 /// 阴影档位。业务代码只允许用档位，不直接写 `BoxShadow`。
 ///
@@ -661,56 +616,85 @@ class DsTokens extends ThemeExtension<DsTokens> {
   Color get warningSoft => warning.withValues(alpha: 0.12);
   Color get dangerSoft => danger.withValues(alpha: 0.12);
 
-  // ── 标识色相（第五十二轮，见 [DsHue]）──────────────────────────────────────
+  // ── 主题强调色的成套取值（第五十三轮：所有标识色都落回这里）────────────────
 
-  /// 色相的文字 / 图标色（浅色外观是深一档的 `ink`，深色外观是亮色）。
-  Color hueInk(DsHue hue) => (isDark ? _hueDark : _hueLight)[hue]!.ink;
-
-  /// 色相的装饰填充色：点 / 细条 / 进度条 / 渐变。**不要**拿来写字。
-  Color hueFill(DsHue hue) => (isDark ? _hueDark : _hueLight)[hue]!.fill;
-
-  /// 色相淡底：`raised` 上叠 18%（深色 20%）色相填充。选中行 / 徽标底 / 图标底。
+  /// 强调色的**文字档**：在 accent 淡底（12%）与页面洗色上也 ≥4.5:1。
   ///
-  /// 18% 是第五十二轮实测的上限：12 个色相的 `ink` 在 18% 淡底上仍全部 ≥4.5:1
-  /// （见 `build/round52/ink_candidates.py`），再深就得给每个色相单独调 ink。
-  Color hueSoft(DsHue hue) => hueSoftOn(hue, raised);
-
-  /// 在任意面上叠色相淡底（页面底色上、`sunken` 上等）。
-  Color hueSoftOn(DsHue hue, Color face) => Color.alphaBlend(
-        hueFill(hue).withValues(alpha: isDark ? 0.20 : 0.18),
-        face,
-      );
-
-  /// 色相**实底**上的前景色：只在「实色块里放图标」时用（实底 + 小图标）。
-  ///
-  /// 实底填色是 vivid 档，深浅两档前景各有一半色相达不到 4.5:1 —— 所以这里按
-  /// 对比度挑高的那个（图标只需 3:1，见 WCAG 1.4.11）。**不要**拿它写正文。
-  Color hueOnFill(DsHue hue) {
-    final Color fill = hueFill(hue);
-    final Color light = isDark ? base : Colors.white;
-    final Color dark = isDark ? base : text;
-    return dsContrastRatio(light, fill) >= dsContrastRatio(dark, fill) ? light : dark;
+  /// 8 套外观的 `accent` 本身在 base / raised / sunken 上都已经 ≥4.5（[dsContrastPairs]
+  /// 守卫），但页面里的彩色文字大多压在「accent 12% 淡底」或「页面洗色」上：
+  /// w_orange 叠 12% 淡底后掉到 4.35、w_mint 到 4.40 —— 所以浅色系把 accent 朝 [text]
+  /// **混最少的一档**（实测 w_orange 12%、w_mint 6%），深色系 accent 本身就够亮、
+  /// 原样使用。结果按实例缓存（`DsTokens` 是 const，实例可当 key）。
+  Color get accentInk {
+    final Color? cached = _accentInkCache[this];
+    if (cached != null) return cached;
+    Color ink = accent;
+    for (int step = 0; step <= 100; step++) {
+      ink = Color.lerp(accent, text, step / 100)!;
+      if (_accentInkReadableOnTintedFaces(ink)) break;
+    }
+    _accentInkCache[this] = ink;
+    return ink;
   }
 
-  /// 色相 1px 描边（卡片悬停 / 选中的彩色边，规范只允许 1px）。[alpha] 由调用方细化。
-  Color hueLine(DsHue hue, {double alpha = 1}) =>
-      hueFill(hue).withValues(alpha: alpha * (isDark ? 0.55 : 0.45));
+  static final Map<DsTokens, Color> _accentInkCache = <DsTokens, Color>{};
 
-  /// 页面顶部「洗色」：色相 9%（深色 14%）淡底向下渐变回 `base`。
-  ///
-  /// 外壳把它铺在**内容区背后**，于是 8 个页面（含播放页以外的全部 tab）都带上
-  /// 当前目的地的颜色身份 —— 这是「整个项目太素」最省改动的一层。
-  LinearGradient hueWash(DsHue hue) => LinearGradient(
+  bool _accentInkReadableOnTintedFaces(Color ink) {
+    for (final Color face in <Color>[
+      base,
+      raised,
+      sunken,
+      accentSoftOn(base),
+      accentSoftOn(raised),
+      accentSoftOn(sunken),
+      accentWashTop,
+    ]) {
+      if (dsContrastRatio(ink, face) < 4.5) return false;
+    }
+    return true;
+  }
+
+  /// accent 12% 淡底叠在 [face] 上（选中行 / 图标底 / 徽标底 / 胶囊底）。
+  Color accentSoftOn(Color face) =>
+      Color.alphaBlend(accent.withValues(alpha: 0.12), face);
+
+  /// 页面洗色的顶部色：accent 9%（深色 14%）叠在 [base] 上。
+  Color get accentWashTop =>
+      Color.alphaBlend(accent.withValues(alpha: isDark ? 0.14 : 0.09), base);
+
+  /// 页面顶部「洗色」：accent 淡底向下渐变回 [base]（外壳铺在内容区背后）。
+  LinearGradient get accentWash => LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: <Color>[
-          Color.alphaBlend(
-            hueFill(hue).withValues(alpha: isDark ? 0.14 : 0.09),
-            base,
-          ),
-          base,
-        ],
+        colors: <Color>[accentWashTop, base],
       );
+
+  /// accent 1px 描边（悬停 / 选中的彩色边，规范只允许 1px）。
+  Color get accentLine => accent.withValues(alpha: isDark ? 0.55 : 0.45);
+
+  // ── 标识色相（第五十三轮起只作语义标识，取色一律落回主题强调色）────────────
+
+  /// 标识色相的文字 / 图标色：**不随色相变化**，统一是 [accentInk]。
+  Color hueInk(DsHue hue) => accentInk;
+
+  /// 标识色相的装饰填充色：统一是主题 [accent]（点 / 细条 / 进度条 / 渐变）。
+  Color hueFill(DsHue hue) => accent;
+
+  /// 标识色相淡底：accent 12% 叠在 [raised] 上（选中行 / 徽标底 / 图标底）。
+  Color hueSoft(DsHue hue) => accentSoftOn(raised);
+
+  /// 在任意面上叠 accent 淡底（页面底色上、`sunken` 上等）。
+  Color hueSoftOn(DsHue hue, Color face) => accentSoftOn(face);
+
+  /// 实底上的前景色（主按钮 / 选中色块里的小图标）：统一是 [onAccent]。
+  Color hueOnFill(DsHue hue) => onAccent;
+
+  /// accent 1px 描边（悬停 / 选中）；[alpha] 由调用方细化。
+  Color hueLine(DsHue hue, {double alpha = 1}) =>
+      accent.withValues(alpha: alpha * (isDark ? 0.55 : 0.45));
+
+  /// 页面顶部洗色：从 accent 淡底渐变回 [base]。
+  LinearGradient hueWash(DsHue hue) => accentWash;
 
   /// ⚠️ **过渡期遗留**（Task 9 删除）：过去它是「柔光内边」的高光色，
   /// 扁平后描边统一用 [line]，这个别名只是为了旧调用点不炸。
@@ -949,9 +933,10 @@ double dsContrastRatio(Color fg, Color bg) {
 ///
 /// 8 套外观 × 3 个承载面（`base` / `raised` / `sunken`）× {text, text2, text3, accent}
 /// + 每套的 `onAccent` on `accent` + 语义色（success / warning / danger）on `raised`
-/// = **128** 条；第五十二轮再加 **8×12×2 = 192 条标识色相**（每个色相的 `ink` 在
-/// `raised` 与自己的淡底上都要 ≥4.5:1）。名字形如 `'w_orange/text3-on-sunken'`、
-/// `'w_orange/hue-violet-on-soft'`。
+/// = **128** 条；第五十三轮再加 **8×7 = 56 条**主题强调色文字档
+/// [DsTokens.accentInk]（3 个承载面 + 3 个 12% 淡底 + 页面洗色顶）—— 页面里所有
+/// 「彩色文字」都取这一档，必须全部 ≥4.5:1。名字形如 `'w_orange/text3-on-sunken'`、
+/// `'w_orange/accentInk-on-soft-raised'`。
 List<({String name, Color fg, Color bg})> dsContrastPairs() {
   final List<({String name, Color fg, Color bg})> out =
       <({String name, Color fg, Color bg})>[];
@@ -981,18 +966,19 @@ List<({String name, Color fg, Color bg})> dsContrastPairs() {
     ]) {
       out.add((name: '${a.code}/$fgName-on-raised', fg: fg, bg: t.raised));
     }
-    // 标识色相（第五十二轮）：文字/图标色 × 凸起面 + 自己的淡底。
-    for (final DsHue hue in DsHue.values) {
-      out.add((
-        name: '${a.code}/hue-${hue.name}-on-raised',
-        fg: t.hueInk(hue),
-        bg: t.raised,
-      ));
-      out.add((
-        name: '${a.code}/hue-${hue.name}-on-soft',
-        fg: t.hueInk(hue),
-        bg: t.hueSoft(hue),
-      ));
+    // 主题强调色文字档（第五十三轮）：页面里所有「彩色文字」都取它 —— 在三个
+    // 承载面、3 个 12% 淡底、页面洗色顶上都必须 ≥4.5:1（`accentInk` 自己就是
+    // 按这个阈值挑的「accent 朝 text 混最少的一档」）。
+    for (final (String faceName, Color face) in <(String, Color)>[
+      ('base', t.base),
+      ('raised', t.raised),
+      ('sunken', t.sunken),
+      ('soft-base', t.accentSoftOn(t.base)),
+      ('soft-raised', t.accentSoftOn(t.raised)),
+      ('soft-sunken', t.accentSoftOn(t.sunken)),
+      ('wash', t.accentWashTop),
+    ]) {
+      out.add((name: '${a.code}/accentInk-on-$faceName', fg: t.accentInk, bg: face));
     }
   }
   return out;

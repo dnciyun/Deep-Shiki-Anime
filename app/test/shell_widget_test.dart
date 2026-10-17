@@ -319,6 +319,9 @@ QueueJobView _job(String id, JobState state, {int priority = 10, int? engineId})
 );
 
 /// 测试脚手架：假端口 + 内存存储 + 宿主主题。
+///
+/// [themeTokens] 默认白黑（多数用例断言的是白黑那套 token）；截图探针可以传
+/// `DsTokens.wOrange` 之类，让图里显示的是**该套外观自己的主题强调色**。
 Widget harness(
   Widget child, {
   SourcePort? source,
@@ -326,6 +329,7 @@ Widget harness(
   EnginePort? engine,
   LifecyclePort? lifecycle,
   AppSettings settings = const AppSettings(firstRunCompleted: true),
+  DsTokens themeTokens = DsTokens.whiteInk,
 }) {
   return ProviderScope(
     overrides: [
@@ -341,7 +345,7 @@ Widget harness(
       pickerPortProvider.overrideWithValue(const UnavailablePickerPort()),
     ],
     child: MaterialApp(
-      theme: buildDsanimaTheme(),
+      theme: buildDsanimaTheme(tokens: themeTokens),
       home: Scaffold(body: child),
     ),
   );

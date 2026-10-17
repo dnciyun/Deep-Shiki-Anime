@@ -75,8 +75,9 @@ void main() {
     final List<({String name, Color fg, Color bg})> pairs = dsContrastPairs();
     // 8 套 × 3 面 × {text, text2, text3, accent} + 8 个 onAccent + 8×3 语义色。
     // 第二十九轮扁平化：从「浅/深两套」扩到八套外观（规范 §5.3 / §12.1）。
-    // 第五十二轮：再 + 8 套 × 12 色相 × 2 面（在 raised 与自己的 12% 淡底上）。
-    expect(pairs, hasLength(8 * 3 * 4 + 8 + 8 * 3 + 8 * 12 * 2));
+    // 第五十三轮：色相收回主题色，改成 + 8 套 × 7 面「强调色文字档」（3 承载面 +
+    // 3 个 12% 淡底 + 页面洗色顶）。
+    expect(pairs, hasLength(8 * 3 * 4 + 8 + 8 * 3 + 8 * 7));
     for (final ({String name, Color fg, Color bg}) p in pairs) {
       final double ratio = dsContrastRatio(p.fg, p.bg);
       expect(
