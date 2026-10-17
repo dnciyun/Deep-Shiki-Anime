@@ -19,6 +19,7 @@ import 'package:dsanima/domain/bangumi.dart';
 import 'package:dsanima/domain/library_seed.dart';
 import 'package:dsanima/domain/models.dart';
 import 'package:dsanima/domain/ports.dart';
+import 'package:dsanima/domain/seed_language.dart';
 import 'package:dsanima/domain/seed_version.dart';
 import 'package:dsanima/domain/subtitle_groups.dart';
 import 'package:dsanima/domain/unavailable.dart';
@@ -901,6 +902,173 @@ void main() {
       expect(s.otherCount, 3);
       // 整池还在（勾选下载、手动锚点再合成要用它）：2 单集 + 1 合集 + 3 别的版本。
       expect(s.allItems, hasLength(6));
+    });
+
+    test('语言过滤：点一下只看简体、再点只看繁体、再点恢复（不重搜、整池不丢）', () async {
+      // 第四十八轮·补九（用户「加入按钮，点一次只显示简体，再点一次只显示繁体，再点一次恢复」）：
+      // 过滤只裁**显示的行**；版本归属、整池都不动（再点恢复靠整池重算）。
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:无职转生 第二季 ～到了异世界就拿出真本事～': <SourceItemView>[
+            _item(
+              1,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][简体内嵌]',
+              publishedAt: DateTime.utc(2024, 4, 10),
+            ),
+            _item(
+              2,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][繁体内嵌]',
+              publishedAt: DateTime.utc(2024, 4, 11),
+            ),
+            _item(
+              3,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][简繁内封]',
+              publishedAt: DateTime.utc(2024, 4, 12),
+            ),
+            _item(
+              4,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ - 02 [1080p][繁体内嵌]',
+              group: 'LoliHouse',
+              publishedAt: DateTime.utc(2024, 4, 13),
+            ),
+            _item(
+              5,
+              '[绿茶字幕组] 无职转生 第三季 ～到了异世界就拿出真本事～ - 14 [1080p][简体内嵌]',
+              group: '绿茶字幕组',
+              publishedAt: DateTime.utc(2026, 7, 10),
+            ),
+            _item(
+              6,
+              '[绿茶字幕组] 无职转生 第三季 ～到了异世界就拿出真本事～ - 15 [1080p][繁体内嵌]',
+              group: '绿茶字幕组',
+              publishedAt: DateTime.utc(2026, 7, 11),
+            ),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+      final LibrarySeedController controller = c.read(
+        librarySeedProvider.notifier,
+      );
+
+      await controller.resolve(
+        _subject(
+          nameCn: '无职转生 第二季 ～到了异世界就拿出真本事～',
+          name: '無職転生Ⅱ ～異世界行ったら本気だす～',
+          aliases: <String>['无职转生'],
+          platform: 'TV',
+          date: '2024-04-07',
+          eps: 12,
+        ),
+      );
+      final LibrarySeedState all = c.read(librarySeedProvider);
+      expect(all.language, SeedLanguage.all);
+      expect(all.episodes, hasLength(4));
+      expect(all.groups.map((SeedGroup g) => g.count), <int>[3, 1]);
+      expect(all.otherCount, 2);
+      expect(all.allItems, hasLength(6), reason: '整池');
+
+      // ① 只看简体：简体内嵌 + 简繁内封（没标的 LoliHouse 那条不算）。
+      controller.setSeedLanguage(SeedLanguage.simplified);
+      final LibrarySeedState simplified = c.read(librarySeedProvider);
+      expect(simplified.language, SeedLanguage.simplified);
+      expect(
+        simplified.episodes.map((SourceItemView i) => i.title),
+        <String>[
+          '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][简繁内封]',
+          '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][简体内嵌]',
+        ],
+      );
+      expect(simplified.groups.single.count, 2, reason: '段按过滤后的条目重算');
+      expect(
+        simplified.batchItems,
+        isEmpty,
+        reason: '补九前的那条合集没标语言 → 简档下不显示',
+      );
+      expect(
+        simplified.otherVersions.single.items.single.title,
+        contains('[简体内嵌]'),
+        reason: '别的版本也跟着过滤（第三季只剩简体那条）',
+      );
+      expect(simplified.allItems, hasLength(6), reason: '整池不动：再点恢复要靠它');
+
+      // ② 只看繁体：繁体内嵌 + 简繁内封（LoliHouse 那条也标了繁）。
+      controller.setSeedLanguage(SeedLanguage.traditional);
+      final LibrarySeedState traditional = c.read(librarySeedProvider);
+      expect(
+        traditional.episodes.map((SourceItemView i) => i.title),
+        <String>[
+          '无职转生 第二季 ～到了异世界就拿出真本事～ - 02 [1080p][繁体内嵌]',
+          '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][简繁内封]',
+          '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][繁体内嵌]',
+        ],
+      );
+      expect(traditional.groups.map((SeedGroup g) => g.count), <int>[2, 1]);
+      expect(traditional.otherCount, 1);
+
+      // ③ 恢复全部：条数 / 段 / 别的版本全回来（过滤不是"删数据"）。
+      controller.setSeedLanguage(SeedLanguage.all);
+      final LibrarySeedState restored = c.read(librarySeedProvider);
+      expect(restored.episodes, hasLength(4));
+      expect(restored.groups.map((SeedGroup g) => g.count), <int>[3, 1]);
+      expect(restored.otherCount, 2);
+      expect(restored.allItems, hasLength(6));
+    });
+
+    test('「重新搜一遍」不忘掉语言过滤；换一部番才回到「全部」', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:无职转生 第二季 ～到了异世界就拿出真本事～': <SourceItemView>[
+            _item(
+              1,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][简体内嵌]',
+              publishedAt: DateTime.utc(2024, 4, 10),
+            ),
+            _item(
+              2,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][繁体内嵌]',
+              publishedAt: DateTime.utc(2024, 4, 11),
+            ),
+          ],
+        },
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+      final LibrarySeedController controller = c.read(
+        librarySeedProvider.notifier,
+      );
+      final BangumiSubject subject = _subject(
+        nameCn: '无职转生 第二季 ～到了异世界就拿出真本事～',
+        name: '無職転生Ⅱ ～異世界行ったら本気だす～',
+        platform: 'TV',
+        date: '2024-04-07',
+        eps: 12,
+      );
+      await controller.resolve(subject);
+      controller.setSeedLanguage(SeedLanguage.simplified);
+      expect(c.read(librarySeedProvider).episodes, hasLength(1));
+
+      await controller.resolve(subject);
+      expect(
+        c.read(librarySeedProvider).language,
+        SeedLanguage.simplified,
+        reason: '重搜不该把用户挑的语言忘了',
+      );
+      expect(c.read(librarySeedProvider).episodes, hasLength(1));
+
+      await controller.resolve(_subject(id: 1, nameCn: '别的番', name: 'Other'));
+      expect(
+        c.read(librarySeedProvider).language,
+        SeedLanguage.all,
+        reason: '换一部番就从「全部」开始，不拿上一部的过滤去套新番',
+      );
     });
 
     test('本作一条都不剩时**不分**：整池还是本作，不许把页面弄空', () async {

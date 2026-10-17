@@ -25,6 +25,7 @@ import '../domain/queue_sort.dart';
 import '../domain/reveal_in_explorer.dart';
 import '../domain/recycle_bin.dart';
 import '../domain/library_seed.dart';
+import '../domain/seed_language.dart';
 import '../domain/seed_version.dart';
 import '../domain/settings_effect.dart';
 import '../domain/subtitle_groups.dart';
@@ -1798,6 +1799,7 @@ class LibrarySeedState {
     this.groups = const <SeedGroup>[],
     this.batchGroups = const <SeedGroup>[],
     this.otherVersions = const <SeedOtherBlock>[],
+    this.language = SeedLanguage.all,
     this.visibleGroups = kSeedVisibleGroups,
     this.problem = LibrarySeedProblem.none,
     this.failure,
@@ -1845,6 +1847,13 @@ class LibrarySeedState {
   ///
   /// 界面上是分页条上的一页一页（补七：「在字幕组上面加入分页」）—— 判错的条目也在里面，**不删**。
   final List<SeedOtherBlock> otherVersions;
+
+  /// 字幕语言过滤（第四十八轮·补九，用户「点一次只显示简体，再点一次只显示繁体，再点一次恢复」）。
+  ///
+  /// ⚠️ 它是**显示层**的过滤：[episodes] / [batchItems] / [groups] / [batchGroups] /
+  /// [otherVersions] 都是过滤后的视图；[allItems] 仍是**整池**（切换过滤不重打网络，
+  /// 只从整池重算视图，见 `LibrarySeedController.setSeedLanguage`）。
+  final SeedLanguage language;
 
   /// 现在露几段（「显示更多字幕组」加 [kSeedGroupsStep]）。
   final int visibleGroups;
@@ -1894,6 +1903,7 @@ class LibrarySeedState {
     List<SeedGroup>? groups,
     List<SeedGroup>? batchGroups,
     List<SeedOtherBlock>? otherVersions,
+    SeedLanguage? language,
     int? visibleGroups,
     LibrarySeedProblem? problem,
     DsFailure? failure,
@@ -1912,6 +1922,7 @@ class LibrarySeedState {
     groups: groups ?? this.groups,
     batchGroups: batchGroups ?? this.batchGroups,
     otherVersions: otherVersions ?? this.otherVersions,
+    language: language ?? this.language,
     visibleGroups: visibleGroups ?? this.visibleGroups,
     problem: problem ?? this.problem,
     failure: clearFailure ? null : (failure ?? this.failure),
@@ -1956,11 +1967,16 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     final MikanSeedBinding? anchor = service.bindingFor(subject.id);
     final List<String> names = _seedNamesOf(subject);
     final List<String> ladder = librarySeedQueries(subject);
+    // 「重新搜一遍」不该忘掉用户挑的字幕语言（补九）；换一部番才回到「全部」。
+    final SeedLanguage language = state.subjectId == subject.id
+        ? state.language
+        : SeedLanguage.all;
     state = LibrarySeedState(
       subjectId: subject.id,
       phase: LibrarySeedPhase.searching,
       query: anchor?.query ?? (ladder.isEmpty ? null : ladder.first),
       binding: anchor,
+      language: language,
     );
 
     final List<SourceOption> targets = seedSourceTargetsFor(
@@ -2138,6 +2154,40 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     state = state.copyWith(visibleGroups: kSeedVisibleGroups);
   }
 
+  /// 字幕语言过滤：点一下切一档（全部 → 简体 → 繁体 → 全部；第四十八轮·补九）。
+  ///
+  /// **不重打网络**：一条种子属于哪一版跟字幕语言无关，所以从 [LibrarySeedState.allItems]
+  /// （整池）重新分版本、再按语言裁各视图；段窗口退回首屏那 [kSeedVisibleGroups] 个
+  /// （列表变了，留着旧的"多露了 8 段"没有意义）。
+  void setSeedLanguage(SeedLanguage language) {
+    if (state.language == language) return;
+    final BangumiSubject? subject = _subject;
+    if (subject == null ||
+        state.phase != LibrarySeedPhase.ready ||
+        state.subjectId != subject.id) {
+      state = state.copyWith(language: language);
+      return;
+    }
+    final SeedVersionSplit split = _splitPool(state.allItems, subject);
+    final List<SourceItemView> episodes = filterSeedItemsByLanguage(
+      split.current,
+      language,
+    );
+    final List<SourceItemView> batch = filterSeedItemsByLanguage(
+      split.batch,
+      language,
+    );
+    state = state.copyWith(
+      language: language,
+      visibleGroups: kSeedVisibleGroups,
+      episodes: episodes,
+      batchItems: batch,
+      groups: groupSeedItems(episodes),
+      batchGroups: groupSeedItems(batch),
+      otherVersions: _filterOtherVersions(split.others, language),
+    );
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // 内部
   // ───────────────────────────────────────────────────────────────────────────
@@ -2307,6 +2357,44 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     ),
   );
 
+  /// 整池 → 版本分桶（判定逻辑见 `domain/seed_version.dart`；补六 / 补七 / 补八）。
+  SeedVersionSplit _splitPool(
+    List<SourceItemView> pool,
+    BangumiSubject subject,
+  ) => splitSeedVersions(
+    pool,
+    seedSignatureOf(
+      names: _seedNamesOf(subject),
+      platform: subject.platform,
+      date: subject.date,
+      eps: subject.eps,
+    ),
+  );
+
+  /// 别的版本的桶也按字幕语言裁一遍（补九）：空桶直接去掉，桶名 / 年份提示原样保留。
+  List<SeedOtherBlock> _filterOtherVersions(
+    List<SeedOtherBlock> blocks,
+    SeedLanguage language,
+  ) {
+    final List<SeedOtherBlock> out = <SeedOtherBlock>[];
+    for (final SeedOtherBlock block in blocks) {
+      final List<SourceItemView> items = filterSeedItemsByLanguage(
+        block.items,
+        language,
+      );
+      if (items.isEmpty) continue;
+      out.add(
+        SeedOtherBlock(
+          label: block.label,
+          hint: block.hint,
+          items: items,
+          groups: groupSeedItems(items),
+        ),
+      );
+    }
+    return out;
+  }
+
   /// 定稿：分版本 + 分段 + 判"有没有可下的"。**池子为空由调用方先说清是哪一种空**。
   void _publish(
     int run, {
@@ -2344,14 +2432,16 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     // 「这一条属于哪一版」（第四十八轮·补六，见 `domain/seed_version.dart`）：
     // 本作进列表，别的版本分桶；本作里的**合集**再单独切一页（补七）。
     // 判错的方向**宁多勿少** —— 最坏也只是把本作的一条挪进了别的页，那条不丢、翻得到。
-    final SeedVersionSplit split = splitSeedVersions(
-      pool,
-      seedSignatureOf(
-        names: _seedNamesOf(subject),
-        platform: subject.platform,
-        date: subject.date,
-        eps: subject.eps,
-      ),
+    final SeedVersionSplit split = _splitPool(pool, subject);
+    // 语言过滤（补九）在**分桶之后**：它只裁显示的行，不改变一条种子属于哪一版。
+    final SeedLanguage language = state.language;
+    final List<SourceItemView> episodes = filterSeedItemsByLanguage(
+      split.current,
+      language,
+    );
+    final List<SourceItemView> batch = filterSeedItemsByLanguage(
+      split.batch,
+      language,
     );
     final String banner = aggregateFailureBanner(results);
     final String note = <String>[
@@ -2364,12 +2454,13 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
       query: query,
       binding: binding,
       detail: detail,
-      episodes: split.current,
-      batchItems: split.batch,
+      language: language,
+      episodes: episodes,
+      batchItems: batch,
       allItems: pool,
-      groups: groupSeedItems(split.current),
-      batchGroups: groupSeedItems(split.batch),
-      otherVersions: split.others,
+      groups: groupSeedItems(episodes),
+      batchGroups: groupSeedItems(batch),
+      otherVersions: _filterOtherVersions(split.others, language),
       warning: note.isEmpty ? null : note,
     );
   }

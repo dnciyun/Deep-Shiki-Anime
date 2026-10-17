@@ -38,6 +38,12 @@
 ///   其他的不要」）：**本作里的整季批量种**（`isSeedBatch`）从本作里切出去，在组名列表
 ///   **上面**占一页「合集」——本作的条数 / 「这一组都入队」就不会被几条全集顶长；别的版本
 ///   **不做页**，仍旧收在底部那行折区里。分页条只在真有合集时才画（只剩本作一页时不出）；
+/// * **字幕语言过滤**（第四十八轮·补九，用户「加入按钮，点一次只显示简体，再点一次只显示
+///   繁体，再点一次恢复」）：结果下面那排多一颗 `语言：全部 / 简体 / 繁体` 按钮，点一下
+///   切一档、循环。判据是标题里的语言标记（`[简]`/`简体`/`GB`/`CHS`、`[繁]`/`繁体`/`BIG5`/
+///   `CHT`、两边都带的 `简繁`），**没标语言的（生肉 / BDMV / 只写"双语"）在简 / 繁两档下
+///   不显示**；过滤只裁显示的行，不重打网络、也不改一条种子属于哪一版（见
+///   `domain/seed_language.dart`）；
 /// * mikan 番剧页降级成**手动**口（「改搜索词 / 粘链接」里粘地址或 id）—— 它给的东西更完整
 ///   （整部剧集表 + 每组自己的 RSS），只是不该再当主力，见 `domain/library_seed.dart` 的库注释。
 library;
@@ -54,6 +60,7 @@ import '../../domain/error_text.dart';
 import '../../domain/following_subscription.dart';
 import '../../domain/library_seed.dart';
 import '../../domain/models.dart';
+import '../../domain/seed_language.dart';
 import '../../domain/seed_version.dart' show SeedOtherBlock, kSeedBatchLabel;
 import '../../domain/subtitle_groups.dart';
 import '../../state/playback.dart';
@@ -162,6 +169,16 @@ Key dsDetailSeedsOtherGroupMoreKey(String version, String key) =>
     ValueKey<String>('seed-other-more-$version-$key');
 Key dsDetailSeedsOtherGroupCollapseKey(String version, String key) =>
     ValueKey<String>('seed-other-collapse-$version-$key');
+
+/// 「语言：全部 / 简体 / 繁体」那颗过滤按钮（第四十八轮·补九；点一下切一档）。
+///
+/// 用户原话：「加入按钮，点一次只显示简体，再点一次只显示繁体，再点一次恢复」。
+const Key dsDetailSeedsLanguageKey = Key('library-detail-seeds-language');
+
+/// 语言过滤把这一页裁得一条不剩时那句提示（补九：说清"为什么空"与"去哪儿恢复"）。
+const Key dsDetailSeedsLanguageEmptyKey = Key(
+  'library-detail-seeds-language-empty',
+);
 
 /// 工具行（改搜索词 / 粘链接）。
 const Key dsDetailSeedsQueryFieldKey = Key('library-detail-seeds-query');
@@ -506,7 +523,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 结果下面那一排：多露一档字幕组（图标）/ 收起字幕组（图标）/ 改搜索词·粘链接。
+  /// 结果下面那一排：多露一档字幕组（图标）/ 收起字幕组（图标）/ 语言过滤 / 改搜索词·粘链接。
   ///
   /// 第四十八轮·补四第三版（用户原话「去掉展开这些文字，多加一个收起按钮，只需要矢量图」）：
   /// 组名列表这一对**只有矢量图标**，中文只留在悬停提示里；而且两颗**同时都在**——
@@ -556,6 +573,22 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             onPressed: wide ? controller.collapseGroups : null,
           ),
         ],
+        // 字幕语言过滤（补九）：点一下 全部 → 简体 → 繁体 → 全部。
+        // 它跟组名列表那两颗图标一样画在**结果下面**，而且每一页都在（过滤是全局的）。
+        NeoButton(
+          key: dsDetailSeedsLanguageKey,
+          label: '语言：${seedLanguageLabel(s.language)}',
+          icon: Icons.translate,
+          compact: true,
+          tooltip: _languageTooltip(s.language),
+          onPressed: () {
+            // 过滤一换，屏幕上那些勾可能已经看不到了 —— 清掉，免得"下载了没看见的"。
+            setState(_selected.clear);
+            ref
+                .read(librarySeedProvider.notifier)
+                .setSeedLanguage(nextSeedLanguage(s.language));
+          },
+        ),
         NeoButton(
           label: _tools ? '收起工具' : '改搜索词 / 粘链接',
           icon: Icons.tune,
@@ -565,6 +598,13 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
       ],
     );
   }
+
+  /// 语言按钮的悬停提示：三种状态各说清"这一下会切到哪一档"。
+  static String _languageTooltip(SeedLanguage language) => switch (language) {
+    SeedLanguage.all => '字幕语言：全部（点一下只看简体，再点只看繁体，再点恢复全部）',
+    SeedLanguage.simplified => '只看标了简体字幕的种子（再点只看繁体，再点恢复全部）',
+    SeedLanguage.traditional => '只看标了繁体字幕的种子（再点恢复全部）',
+  };
 
   /// 抬头右下角那两颗：重新搜一次 + 在搜索页打开。
   Widget _headerActions(LibrarySeedState s) {
@@ -683,6 +723,21 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: _categoryTabs(categories, categoryAt),
+          ),
+        // 语言过滤把这一页裁空了（补九）：说清"为什么空"与"去哪儿恢复"。
+        if (page.count == 0 && s.language != SeedLanguage.all)
+          Padding(
+            key: dsDetailSeedsLanguageEmptyKey,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              '这一页没有标「${seedLanguageLabel(s.language)}」字幕的种子 —— '
+              '点下面的「语言：${seedLanguageLabel(s.language)}」按钮恢复全部',
+              style: TextStyle(
+                color: t.text3,
+                fontSize: DsTypeScale.caption,
+                height: 1.6,
+              ),
+            ),
           ),
         for (int i = 0; i < shown.length; i++) ...<Widget>[
           _groupHeader(

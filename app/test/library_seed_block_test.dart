@@ -14,6 +14,8 @@
 ///   + 补八「只给合集最分页，其他的不要」）：页上只有 本作 / 合集，切页 = 换一组段；合集从
 ///   本作里切出去；第三季 / 更早的版本这些别的版本回到结果下面那行折区，不进分页条；
 /// * 补八还钉了一条：`[V2]`（修正版发布标签）不是第五季（用户「命运石之门没有第五季」）；
+/// * **语言过滤那颗按钮**（补九「点一次只显示简体，再点一次只显示繁体，再点一次恢复」）：
+///   `语言：全部 / 简体 / 繁体` 三档循环，段条数与副标题跟着变；裁空时有一句解释；
 /// * 每一段展开后的末尾还有一颗「收起这一组」；
 /// * 每段展开后先露 12 条（「本组还有 N 条」）、整块先露 4 段；
 /// * 右键 / 抬头那颗「这一组都入队」真的把这一段加进队列（跳过已看过的），
@@ -735,6 +737,130 @@ void main() {
     // 只有 S;G 0 那条在折区里，版本名是「第二季」。
     expect(find.textContaining('其他版本（1 条）'), findsOneWidget);
     expect(find.textContaining('第二季 1'), findsOneWidget);
+  });
+
+  testWidgets('语言：全部 → 简体 → 繁体 → 全部（点一次切一档，结果跟着变）', (
+    WidgetTester tester,
+  ) async {
+    // 第四十八轮·补九，用户原话「加入按钮，点一次只显示简体，再点一次只显示繁体，
+    // 再点一次恢复」：按钮画在结果下面那排（跟"改搜索词"同一排），每点一下切一档；
+    // 过滤只裁显示的行 —— 段条数、副标题、别的版本全都跟着走。
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[
+          _item(
+            1,
+            title: '葬送的芙莉莲 - 01 [1080p][简体内嵌]',
+            publishedAt: DateTime.utc(2026, 10, 1),
+          ),
+          _item(
+            2,
+            title: '葬送的芙莉莲 - 02 [1080p][繁体内嵌]',
+            publishedAt: DateTime.utc(2026, 10, 2),
+          ),
+          _item(
+            3,
+            title: '葬送的芙莉莲 - 03 [1080p][简繁内封]',
+            publishedAt: DateTime.utc(2026, 10, 3),
+          ),
+          _item(
+            4,
+            group: 'LoliHouse',
+            title: '葬送的芙莉莲 - 01 [1080p][繁体内嵌]',
+            publishedAt: DateTime.utc(2026, 10, 4),
+          ),
+          _item(
+            5,
+            group: 'LoliHouse',
+            title: '葬送的芙莉莲 - 04 [1080p]',
+            publishedAt: DateTime.utc(2026, 10, 5),
+          ),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+
+    // ① 默认「全部」：两家组、5 条都画。
+    expect(find.text('语言：全部'), findsOneWidget);
+    expect(find.text('桜都字幕组（3 条）'), findsOneWidget);
+    expect(find.text('LoliHouse（2 条）'), findsOneWidget);
+    expect(find.textContaining('2 个字幕组'), findsOneWidget);
+    expect(find.textContaining('共 5 条'), findsOneWidget);
+
+    // ② 点一下 = 只看简体：桜都只剩简体内嵌 + 简繁内封；LoliHouse 那两条都不是简体 → 整段不见。
+    await tester.tap(find.byKey(dsDetailSeedsLanguageKey));
+    await tester.pumpAndSettle();
+    expect(find.text('语言：简体'), findsOneWidget);
+    expect(find.text('桜都字幕组（2 条）'), findsOneWidget);
+    expect(find.text('LoliHouse（2 条）'), findsNothing);
+    expect(find.textContaining('1 个字幕组'), findsOneWidget);
+    expect(find.textContaining('共 2 条'), findsOneWidget);
+    await tester.tap(find.byKey(dsDetailSeedsGroupToggleKey('桜都')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('葬送的芙莉莲 - 01 [1080p][简体内嵌]'), findsOneWidget);
+    expect(find.textContaining('葬送的芙莉莲 - 03 [1080p][简繁内封]'), findsOneWidget);
+    expect(find.textContaining('葬送的芙莉莲 - 02'), findsNothing, reason: '繁体那条被裁掉');
+
+    // ③ 再点一下 = 只看繁体：桜都只剩繁体 + 简繁；LoliHouse 那条繁体回来。
+    await tester.tap(find.byKey(dsDetailSeedsLanguageKey));
+    await tester.pumpAndSettle();
+    expect(find.text('语言：繁体'), findsOneWidget);
+    expect(find.text('桜都字幕组（2 条）'), findsOneWidget);
+    expect(find.text('LoliHouse（1 条）'), findsOneWidget);
+    expect(find.textContaining('2 个字幕组'), findsOneWidget);
+    expect(find.textContaining('共 3 条'), findsOneWidget);
+
+    // ④ 再点一下 = 恢复全部：条数 / 段全回来（过滤不是删数据）。
+    await tester.tap(find.byKey(dsDetailSeedsLanguageKey));
+    await tester.pumpAndSettle();
+    expect(find.text('语言：全部'), findsOneWidget);
+    expect(find.text('桜都字幕组（3 条）'), findsOneWidget);
+    expect(find.text('LoliHouse（2 条）'), findsOneWidget);
+    expect(find.textContaining('共 5 条'), findsOneWidget);
+  });
+
+  testWidgets('语言过滤把这一页裁空时：说清"为什么空、去哪儿恢复"', (
+    WidgetTester tester,
+  ) async {
+    // 只有繁体行的池子：点一下（简体）会一条不剩 —— 不给一句解释，用户会以为搜坏了。
+    final _Harness h = _Harness(
+      source: _FakeSources(<String, List<SourceItemView>>{
+        'mikan:葬送的芙莉莲': <SourceItemView>[
+          _item(
+            1,
+            title: '葬送的芙莉莲 - 01 [1080p][繁体内嵌]',
+            publishedAt: DateTime.utc(2026, 10, 1),
+          ),
+          _item(
+            2,
+            group: 'LoliHouse',
+            title: '葬送的芙莉莲 - 02 [1080p][繁体内嵌]',
+            publishedAt: DateTime.utc(2026, 10, 2),
+          ),
+        ],
+      }),
+      schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      store: InMemoryKeyValueStore(),
+    );
+    await _pump(tester, h);
+    expect(find.text('桜都字幕组（1 条）'), findsOneWidget);
+
+    await tester.tap(find.byKey(dsDetailSeedsLanguageKey));
+    await tester.pumpAndSettle();
+    expect(find.text('语言：简体'), findsOneWidget);
+    expect(find.byKey(dsDetailSeedsLanguageEmptyKey), findsOneWidget);
+    expect(find.textContaining('没有标「简体」字幕的种子'), findsOneWidget);
+    expect(find.text('桜都字幕组（1 条）'), findsNothing);
+    expect(find.textContaining('0 个字幕组'), findsOneWidget);
+
+    // 再点一下（繁体）：行回来、提示消失。
+    await tester.tap(find.byKey(dsDetailSeedsLanguageKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(dsDetailSeedsLanguageEmptyKey), findsNothing);
+    expect(find.text('桜都字幕组（1 条）'), findsOneWidget);
+    expect(find.text('LoliHouse（1 条）'), findsOneWidget);
   });
 
   testWidgets('跨站同名合并成一条：行尾带「别的站也有」的小标记', (WidgetTester tester) async {
