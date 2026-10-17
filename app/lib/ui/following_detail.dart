@@ -11,6 +11,21 @@
 /// 3. 每一集旁边一个「已看过」的勾（`watchedMarksProvider`，与观看记录同一套键），
 ///    进度播到 90% 会自动打上（设置里可关「记录观看进度」）；
 /// 4. 「下载全部」**跳过已打勾的**，也可以单集下载 / 播放。
+///
+/// ## 第四十九轮：页头下面多一块「种子」（用户「优化下订阅，详细页订阅的也带有种子」）
+///
+/// 订阅详细页原来只能看到**订阅的那几组**的 RSS 剧集：想找别的组 / 别的站的版本，得退回
+/// 「正在追」、再进「动漫库」翻同一部番。现在这一页直接挂上动漫库详细页那块「种子」
+/// （`ui/widgets/library_seed_block.dart`，**同一个组件、同一套引擎**：主流站点关键字搜索、
+/// 按字幕组分段、合集单独一页、别的版本折在底部、语言过滤），位置在**封面/标题下面、
+/// 订阅字幕组上面** —— 一进这一页就看得见，不用先翻过几十集。
+///
+/// * 订阅区**一个字没动**：剧集列表、打勾、下载全部、刷新、规则、命中预览、取消订阅照旧；
+/// * 种子块的主体（搜什么词 / 怎么判版本 / 状态键）由 `domain/following_seed.dart` 从这条
+///   追番记录造一条**最小** Bangumi 条目：Bangumi 来的记录直接用 `bgmId`（和动漫库详细页
+///   共用同一份种子状态），主页来的只有 mikan 番剧 id 与番名 —— 不联网、不猜；
+/// * 「已看过」与观看记录按**这一部的 mikan 番剧 id** 归组（`LibrarySeedBlock.mikanBangumiId`）：
+///   订阅里打过的勾，种子块里也显示成「已看过」；在种子块里播的集也记到同一条观看记录上。
 library;
 
 import 'dart:async';
@@ -18,9 +33,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../domain/bangumi.dart';
 import '../domain/batch_download.dart';
 import '../domain/episodes.dart' show episodeNumber;
 import '../domain/error_text.dart';
+import '../domain/following_seed.dart';
 import '../domain/following_store.dart';
 import '../domain/following_subscription.dart';
 import '../domain/format.dart';
@@ -28,12 +45,14 @@ import '../domain/models.dart';
 import '../state/playback.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
+import 'home_page.dart' show openRecommendSearch;
 import 'widgets/cover.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/ds_spinner.dart';
 import 'widgets/feedback.dart';
 import 'widgets/follow_button.dart';
 import 'widgets/group_subscribe.dart';
+import 'widgets/library_seed_block.dart';
 import 'widgets/neo.dart';
 import 'widgets/neo_dropdown.dart';
 import 'widgets/state_views.dart';
@@ -108,6 +127,10 @@ class _FollowingDetailPageState extends ConsumerState<FollowingDetailPage> {
     final AsyncValue<BangumiDetailView>? detail = _bangumiId.isEmpty
         ? null
         : ref.watch(bangumiDetailProvider(_bangumiId));
+    // 种子块的主体（第四十九轮）：这条追番记录 → 一条最小的 Bangumi 条目
+    // （有 bgmId 就直接用它，和动漫库详细页共用同一份种子状态；否则按 mikan id / 番名
+    // 造一个稳定负数 id，见 `domain/following_seed.dart`）。
+    final BangumiSubject seedSubject = seedSubjectFromFollowing(widget.entry);
 
     return Scaffold(
       backgroundColor: t.base,
@@ -155,6 +178,22 @@ class _FollowingDetailPageState extends ConsumerState<FollowingDetailPage> {
               text: '还没有订阅任何字幕组：下面「这一部的字幕组」里点「订阅」，'
                   '这一组的剧集就会按组列在这里（可以逐集打勾、单集下载或下载全部）。',
             ),
+          // 第四十九轮（用户「优化下订阅，详细页订阅的也带有种子」）：订阅详细页也能直接看
+          // 全站种子 —— 与动漫库详细页是**同一个**种子块；放在页头下面、订阅字幕组上面，
+          // 一进这一页就看得见。订阅区一个字没动（见文件头）。
+          const SizedBox(height: 12),
+          LibrarySeedBlock(
+            subject: seedSubject,
+            // 这一部在 mikan 上的番剧 id：种子块的「已看过」/观看记录与订阅用同一套键。
+            mikanBangumiId: _bangumiId,
+            // 主页来的封面是 mikan 图床（不需要 Bangumi 的 Referer），传这一条自己的。
+            coverReferer: widget.entry.coverReferer,
+            onOpenSearchPage: () {
+              // 与动漫库详细页同一套：先关掉这一页，再去搜索页按番名搜（不叠两层路由）。
+              unawaited(Navigator.of(context).maybePop());
+              openRecommendSearch(ref, seedSubject);
+            },
+          ),
           for (final SubscriptionView sub in mine) ...<Widget>[
             const SizedBox(height: 12),
             _SubscriptionSection(

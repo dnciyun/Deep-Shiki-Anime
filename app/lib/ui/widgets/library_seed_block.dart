@@ -46,6 +46,19 @@
 ///   `domain/seed_language.dart`）；
 /// * mikan 番剧页降级成**手动**口（「改搜索词 / 粘链接」里粘地址或 id）—— 它给的东西更完整
 ///   （整部剧集表 + 每组自己的 RSS），只是不该再当主力，见 `domain/library_seed.dart` 的库注释。
+///
+/// ## 第四十九轮：这块也挂到「正在追」的订阅详细页（`ui/following_detail.dart`）
+///
+/// 用户原话：「优化下订阅，详细页订阅的也带有种子」。这一块**一个像素都没为那一页改**——
+/// 变化只有两处「数据口径」的构造参数：
+/// * [mikanBangumiId]：「正在追」知道这一部的 mikan 番剧 id，传进来之后「已看过」与观看记录
+///   按 `mikan:<id>` 归组 —— 订阅里打过的勾在种子块里也显示成「已看过」，在种子块里播的集
+///   也记到同一条观看记录上（动漫库详细页没有这个 id，留 null 就照旧按番名归组）；
+/// * [coverReferer]：播放时封面要带的 Referer（Bangumi 图床要 `https://bgm.tv/`，
+///   主页来的 mikan 封面不需要）—— 留 null 就是原来的默认口径。
+///
+/// 主体（搜什么词 / 怎么判版本 / 状态键）由 `domain/following_seed.dart` 从追番记录造一条
+/// **最小** Bangumi 条目：不联网、不猜，缺 `date` / `eps` 只是让版本判定少一条时间窗。
 library;
 
 import 'dart:async';
@@ -191,12 +204,24 @@ class LibrarySeedBlock extends ConsumerStatefulWidget {
     super.key,
     required this.subject,
     required this.onOpenSearchPage,
+    this.mikanBangumiId,
+    this.coverReferer,
   });
 
   final BangumiSubject subject;
 
   /// 「在搜索页打开」要干什么（由页面给：它已经 import 了 `openRecommendSearch`）。
   final VoidCallback onOpenSearchPage;
+
+  /// 这一部在 mikan 上的番剧 id（第四十九轮）：有它「已看过」与观看记录就按 `mikan:<id>`
+  /// 归组，和订阅里打过的勾是**同一套键**。
+  ///
+  /// 「正在追」点开层知道它（订阅本身就是按这个 id 建的）；动漫库详细页不知道，留 null。
+  final String? mikanBangumiId;
+
+  /// 播放时封面带的 Referer（第四十九轮）：Bangumi 图床要 `https://bgm.tv/`，
+  /// mikan 封面不需要 —— 留 null 就是原来的 `https://bgm.tv/`。
+  final String? coverReferer;
 
   @override
   ConsumerState<LibrarySeedBlock> createState() => _LibrarySeedBlockState();
@@ -229,6 +254,19 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   bool _showOther = false;
   bool _busyGroup = false;
   String? _busyItemId;
+
+  /// 这一页知道的 mikan 番剧 id（第四十九轮；去空白，没有就是 null）。
+  String? get _mikanId {
+    final String id = (widget.mikanBangumiId ?? '').trim();
+    return id.isEmpty ? null : id;
+  }
+
+  /// 「已看过」与观看记录按哪个番剧 id 归组：手动锚点 > 这一页给的 mikan id > 番名。
+  ///
+  /// 最后那一级是既有降级（`watch_history.dart` 对没有 id 的条目按番名归组）——
+  /// 动漫库详细页一直走的就是它，第四十九轮一个字没动。
+  String _watchBangumiId(LibrarySeedState s) =>
+      s.binding?.bangumiId ?? _mikanId ?? widget.subject.displayTitle;
 
   @override
   void initState() {
@@ -289,10 +327,11 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             playlist: queue,
             showTitle: showTitle,
             coverUrl: widget.subject.coverUrl,
-            coverReferer: 'https://bgm.tv/',
+            coverReferer: widget.coverReferer ?? 'https://bgm.tv/',
             // 手动锚过番剧页时把它带上（观看记录按 `mikan:<id>` 归组、缺链还能回那一页补）；
             // 没有锚点也没关系 —— `watch_history.dart` 会退回按番名归组。
-            mikanBangumiId: s.binding?.bangumiId,
+            // 第四十九轮：「正在追」点开层另外知道 mikan 番剧 id，也带上（见 [_mikanId]）。
+            mikanBangumiId: s.binding?.bangumiId ?? _mikanId,
           );
       final DsFailure? failure = ref.read(playbackProvider).failure;
       if (failure != null && mounted) showFailure(context, failure);
@@ -329,7 +368,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
         if (t.finished || t.progress >= 1) t.infoHash.toLowerCase(),
     };
     String keyOf(SourceItemView e) => subscriptionItemWatchKey(
-      bangumiId: s.binding?.bangumiId ?? widget.subject.displayTitle,
+      bangumiId: _watchBangumiId(s),
       title: showTitle,
       group: e.group ?? '',
       item: e,
@@ -393,7 +432,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   }) {
     final bool seen = watched.containsKey(
       subscriptionItemWatchKey(
-        bangumiId: s.binding?.bangumiId ?? widget.subject.displayTitle,
+        bangumiId: _watchBangumiId(s),
         title: showTitle,
         group: item.group ?? '',
         item: item,
