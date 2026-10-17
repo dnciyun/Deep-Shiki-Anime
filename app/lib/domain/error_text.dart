@@ -87,6 +87,31 @@ DsFailure _fromBangumi(BangumiException error) {
       hint: '多半是请求太密被限流：等一下再试；也可以在「设置 → 网络」调大请求间隔',
     );
   }
+  // 第五十一轮：429 是官方在限流（不是挂了）。
+  //
+  // 为什么文案要点名"别换 IP"：用户 2026-10-17 的原话是「能不能做多个虚拟 ip 访问」——
+  // 轮换出口 IP 只是把同一批请求摊到多个 IP 上，对 Bangumi 的公开接口属于滥用，
+  // 被发现会整段封；正确做法是降频（客户端已经把三个服务合到一条 1.1s 闸门上）。
+  if (code == 429) {
+    return const DsFailure(
+      'Bangumi 在限流（HTTP 429）',
+      hint: '请求太密、被官方限流了：DSAnima 已经把 Bangumi 请求排到每秒最多一次，'
+          '等一两分钟再试；不要用代理/多 IP 轮换去绕，官方会按滥用处理',
+    );
+  }
+  // 第五十一轮：Cloudflare 的 52x = **它自己连不上 Bangumi 的源站**（502 不算，
+  // 502 是通用的"上游挂了"，走下面 >=500 那一支）。实测 2026-10-17 当天
+  // api.bgm.tv / bgm.tv 整片 522，本机与第三方多地区监控同时复现 —— 与访客的
+  // IP、代理都无关，换 IP 没有任何用，所以这里必须把话说明白，别让用户去折腾代理。
+  if (code != null && code >= 520 && code <= 524) {
+    return DsFailure(
+      'Bangumi 官方接口现在连不上（HTTP $code）',
+      hint: 'Cloudflare 收到了请求、却连不上 Bangumi 自己的服务器 —— 是他们那边挂了，'
+          '不是你这边的问题，也不是你的 IP 被限（换 IP / 挂代理都没用）。'
+          '过几分钟再点一次；官方状态：https://bgm-status.ry.mk/',
+      detail: _short(error.message),
+    );
+  }
   if (code != null && code >= 500) {
     return DsFailure(
       'Bangumi 服务器出错（HTTP $code）',

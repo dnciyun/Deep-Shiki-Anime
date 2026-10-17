@@ -30,6 +30,7 @@ import 'package:shikiin/shikiin.dart' as shikiin;
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'domain/bangumi.dart' show BangumiClient;
 import 'domain/download_dir.dart' show effectiveDownloadDir;
 import 'domain/error_text.dart';
 import 'domain/models.dart';
@@ -259,6 +260,19 @@ Future<void> main(List<String> args) async {
       : bootSettings;
   final HostDataHolder hostData = HostDataHolder();
 
+  // 第五十一轮：**三个 Bangumi 服务共用同一个客户端**（今日推荐 / 动漫库 / 元数据）。
+  //
+  // 为什么（用户 2026-10-17：「动漫库 bangumi 接口返不回来了，能不能做多个虚拟 ip
+  // 访问」）：以前三个服务各 new 一个 `BangumiClient`，每条各有自己的 1.1s 限速闸门 ——
+  // 主页的推荐窗口与动漫库的翻页同时开跑时，出站节奏可以逼近 3 次/秒。Bangumi 的公开
+  // 接口对频率敏感（第三方监控 bgm-status.ry.mk 上 api.bgm.tv 的 down 记录里有相当一部分
+  // 是超时），把自家 IP 玩进限流后再去轮换出口 IP 只会更糟。共用一条闸门，全进程的
+  // Bangumi 请求按**每秒最多一次**排队，是"不给自己惹限流"的正解。
+  //
+  // 放在这里而不是某个 provider 里：三个服务在下面同一张 overrides 表里注入，
+  // 手工传同一个实例最直白；`BangumiClient` 只在 app 生命周期内使用，退出进程即回收。
+  final BangumiClient bangumiClient = BangumiClient();
+
   // 封面缓存：磁盘缓存 + **内存索引**（第三十七轮）。
   //
   // 为什么在这里建：`warmUp()` 必须在**启动清扫之后**跑（清扫会把过期文件删掉，
@@ -330,17 +344,24 @@ Future<void> main(List<String> args) async {
       // 详见下面 `_sweepCoverCacheAtStartup` 末尾那一步。
       coverCacheProvider.overrideWithValue(coverCache),
       // 今日推荐：Bangumi 全年代随机 5 部（结果按天缓存，封面走上面的磁盘缓存）。
-      recommendPortProvider.overrideWithValue(BangumiRecommendPort(store: appStore)),
+      // 第五十一轮：与动漫库/元数据共用 `bangumiClient`（同一条 1.1s 限速闸门）。
+      recommendPortProvider.overrideWithValue(
+        BangumiRecommendPort(store: appStore, client: bangumiClient),
+      ),
       // 动漫库（第三十三轮）：按筛选条件翻页浏览 Bangumi 全库 + 条目详情。
       // 页结果只在进程内缓存 10 分钟（浏览是"来回翻页"的动作，重复请求没有意义）；
       // 条目详情额外落盘（`dsanima.bangumi.subject.<id>`），重复点同一部不再等网络。
-      bangumiLibraryProvider.overrideWithValue(BangumiLibraryService(store: appStore)),
+      bangumiLibraryProvider.overrideWithValue(
+        BangumiLibraryService(store: appStore, client: bangumiClient),
+      ),
       // Bangumi 元数据服务（spec §7.8，7 天磁盘缓存，失败静默降级）。
       // ⚠️ 2026-10-12 起**没有任何页面读它**：番剧详情页去掉了「Bangumi 元数据」块
       //（用户：「首页点开的不要加载 bangumi 了，只用 mikan 的就好」）。
       // 注入保留着，是因为它同时也是 `bangumi_meta_test.dart` 与 spec §7.8 的实现；
       // 要是哪天再需要按番名匹配（例如追番页显示评分），直接用这个 provider，别再另起一套。
-      bangumiMetaProvider.overrideWithValue(BangumiMetaService(store: appStore)),
+      bangumiMetaProvider.overrideWithValue(
+        BangumiMetaService(store: appStore, client: bangumiClient),
+      ),
       // 桌面集成（真托盘 / 真通知）
       trayPortProvider.overrideWithValue(trayPort),
       notificationPortProvider.overrideWithValue(notifierPort),

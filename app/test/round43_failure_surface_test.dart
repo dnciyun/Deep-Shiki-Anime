@@ -244,6 +244,36 @@ void main() {
       expect(down.hint, contains('对面'));
     });
 
+    test('52x（Cloudflare 源站连不上）→ 点名"是他们那边挂了、换 IP 没用"', () {
+      // 第五十一轮：用户看到 "动漫库接口返不回来" 时第一反应就是"是不是封我 IP 了"，
+      // 实测当天 api.bgm.tv / bgm.tv 整片 522（第三方多地区监控同样复现）——
+      // 文案必须把这个误会一次说清，否则用户会去折腾代理/多 IP。
+      for (final int code in <int>[520, 521, 522, 523, 524]) {
+        final DsFailure f = describeFailure(BangumiException(
+          'error code: $code',
+          statusCode: code,
+          url: Uri.parse('https://api.bgm.tv/v0/subjects'),
+        ));
+        expect(f.message, contains('$code'));
+        expect(f.message, contains('连不上'));
+        expect(f.hint, contains('不是你这边'), reason: '不能把官方宕机说成用户的网络问题');
+        expect(f.hint, contains('换 IP'));
+      }
+
+      // 502 是通用「上游挂了」，不是 Cloudflare 的源站错误 —— 走原来那条文案。
+      final DsFailure gateway =
+          describeFailure(BangumiException('bad gateway', statusCode: 502));
+      expect(gateway.message, contains('服务器出错'));
+    });
+
+    test('429 → 说"被限流、等一会"，并明说别用多 IP 轮换', () {
+      final DsFailure f =
+          describeFailure(BangumiException('too many requests', statusCode: 429));
+      expect(f.message, contains('429'));
+      expect(f.hint, contains('限流'));
+      expect(f.hint, contains('轮换'), reason: '防呆：多 IP 轮换会被官方按滥用处理');
+    });
+
     test('未知异常：detail 里不出现本机绝对路径（堆栈被压成函数名）', () {
       final DsFailure f = describeFailure(
         StateError('boom'),

@@ -230,6 +230,8 @@ class DmhySource extends CachedSourceClient {
 /// 门户页没有它。所以：**骨架在而结果表不在 = 站点正常、这一页 0 条**；
 /// **骨架也不在 = 才说"结构可能已改版"**。两种都仍然报错（用户选定：0 条也要看得见），
 /// 但必须说成两件不同的事，否则用户会把"关键字没命中"当成"站点坏了"。
+/// 第五十一轮起「0 条」那一支抛的是 [SourceNoResultsException]（文案一字不改）——
+/// 宿主据此**换短名再问一次 DMHY**，而不是把整个源报成"没回来"。
 ///
 /// ⚠️ **第四十八轮·补三：骨架不在时再分两种**（用户又报了一次同样的文案，这次是
 /// 「1/7 个源没回来：动漫花园·季度全集(DMHY)」）。二十多个真机样本（`build/round48b/`）
@@ -267,7 +269,10 @@ class DmhyListParser {
       if (_looksLikeDmhyListPage(doc)) {
         final String why =
             keyword == null ? '这个分类下暂无内容' : '这个关键字在 dmhy 上没有命中';
-        throw SourceException(
+        // 第五十一轮：抛**专门**的「0 条」类型（文案一字不改）—— 宿主据此换短名补搜
+        // 再问一次 DMHY；而网络失败 / 超时不会被误当成"词不对"去补搜。见
+        // [SourceNoResultsException] 与 `build/round51/dmhy-kw-matrix.txt`（AND 匹配实测）。
+        throw SourceNoResultsException(
           '$head没有结果（0 条）：站点页面是正常的（它自己的分页工具条在），'
           '是$why —— 不是页面改版（HTTP 200）',
           sourceId: sourceId,

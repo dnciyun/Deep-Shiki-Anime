@@ -38,6 +38,15 @@ import 'subtitle_groups.dart';
 /// 一次解析最多试几个查询词（用户第四十五轮定的阶梯正好四级）。
 const int kMaxLibrarySeedQueries = 4;
 
+/// 「0 条」补搜最多用几个候选短名（第五十一轮）。
+///
+/// 每多一个候选就是**每个 0 条的源多一次网络请求**，而 DMHY 有 1.2s 的同站限速 ——
+/// 所以卡死在 2：实测用户报的两处（`无职转生第三季～…～` / `亡国のアキト 第2章「…」`）
+/// 都是第 1 个候选就命中，第 2 个只是给"中文短名在合集分区 0 条、日文短名有"那种情形兜底
+/// （证据 `build/round51/dmhy-shortname-batch.txt`：`亡国的阿基特` sid=31 → 0、
+/// `亡国のアキト` sid=31 → 1）。
+const int kMaxLibrarySeedShortQueries = 2;
+
 /// 种子块**不问**的源 id（第四十八轮·补，用户原话：「去除 acg.rip 源」）。
 ///
 /// 为什么只在这一块里删、搜索页照旧留着它：ACG.RIP 全站**不提供 magnet**（见
@@ -174,6 +183,88 @@ final RegExp _kSeasonSuffix = RegExp(
   r')\s*$',
   caseSensitive: false,
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 「0 条」补搜用的短名（第五十一轮）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 从一条番名派生**更短**的查询词；剥不出比原名短的东西就返回 null。
+///
+/// 为什么要有它（用户第五十一轮报「动漫库种子块 1/7、2/7 个源没回来」，全是 DMHY）：
+/// DMHY 的搜索不是模糊搜索，是关键字**整串 / 分词 AND 匹配** —— 名字里多一段副标题或
+/// 章节名就 0 条，而同一部番的短名有货。真机实测 2026-10-17
+/// （`build/round51/dmhy-kw-matrix.txt` / `dmhy-shortname-batch.txt`）：
+///
+/// | 名字 | DMHY `sort_id=2`（動畫） | `sort_id=31`（季度全集） |
+/// |---|---|---|
+/// | `无职转生第三季～到了异世界就拿出真本事～`（报错 1 用的全名） | 0 | 0 |
+/// | `无职转生` | 80 | 35 |
+/// | `コードギアス 亡国のアキト 第2章「引き裂かれし翼竜」`（报错 2） | 0 | 0 |
+/// | `コードギアス 亡国のアキト` | 3 | 1 |
+/// | `亡国のアキト` | 3 | 1 |
+/// | `无职转生 芙莉莲`（AND 语义验证：两个词都得在标题里） | 0 | — |
+///
+/// 而全局阶梯第 1 级就是全名：mikan 那种宽松源一次就命中，于是「命中即停」——
+/// DMHY 永远吃不到短名。补搜就靠这个函数派生的短名（见 `LibrarySeedController` 的
+/// `_seedFetchOne`）。
+///
+/// 逐轮剥（剥掉括号后可能才露出副标题，所以要循环到不再变化）：
+/// 1. 尾部**副标题**：`～…～` / `~…~`（`无职转生第三季～到了异世界…～` → `无职转生第三季`）；
+/// 2. 尾部**括号段**：`「」『』【】（）()[]`（`… 第2章「引き裂かれし翼竜」` → `… 第2章`）；
+/// 3. [dropSeasonSuffix] 剥季 / 部 / 章等尾缀（`第2章` / `第三季` → 基础名）；
+/// 4. 尾部标点与空白。
+String? shortenSeedQuery(String raw) {
+  String text = raw.trim();
+  if (text.isEmpty) return null;
+  for (int round = 0; round < 6; round++) {
+    final String before = text;
+    text = text.replaceFirst(_kTrailingSubtitle, '').trim();
+    text = text.replaceFirst(_kTrailingBracketSegment, '').trim();
+    text = dropSeasonSuffix(text) ?? text;
+    text = text.replaceFirst(_kTrailingPunctuation, '').trim();
+    if (text == before) break;
+  }
+  if (text.length < 2 || text == raw.trim()) return null;
+  return text;
+}
+
+/// 尾部副标题：`～到了异世界就拿出真本事～` / `~Isekai Ittara Honki Dasu~`。
+final RegExp _kTrailingSubtitle = RegExp(r'[～~][^～~]*[～~]\s*$');
+
+/// 尾部括号段：`「引き裂かれし翼竜」` / `（瑛斗）` / `[1080p]` / `【总集篇】`。
+final RegExp _kTrailingBracketSegment = RegExp(
+  r'[「『【（(\[][^「『【（()」』】）\]]*[」』】）)\]]\s*$',
+);
+
+/// 尾部标点 / 空白（`无职转生，` / `某番 - `）。
+final RegExp _kTrailingPunctuation = RegExp(r'[\s\-–—:：·,，.。!！?？、/|]+$');
+
+/// 一条番能用来「0 条补搜」的短名候选（最多 [kMaxLibrarySeedShortQueries] 个）。
+///
+/// 顺序与 [librarySeedQueries] 同源：中文名 → 原名 → 别名（命中率就是按这个序，见那个
+/// 函数的注释）。每个名字各走一遍 [shortenSeedQuery]；短名与原名一样
+/// （`葬送的芙莉莲` 这种）**不算候选** —— 少一个候选就是少一次网络请求，简单名字不该
+/// 因为这一层机制多打任何请求（`library_seed_test` 钉着）。
+///
+/// 候选与"这一轮实际用的词"是否相同**不在这里比**：调用方（`_seedFetchOne`）手里才有
+/// 那个词，而且同一批候选会在阶梯的每一级复用。
+List<String> librarySeedShortQueries(BangumiSubject subject) {
+  final List<String> out = <String>[];
+  void add(String? raw) {
+    final String? short = shortenSeedQuery(raw ?? '');
+    if (short == null || short.length < 2 || out.contains(short)) return;
+    out.add(short);
+  }
+
+  add(subject.nameCn);
+  add(subject.name);
+  for (final String alias in librarySeedAliases(subject)) {
+    add(alias);
+  }
+  return out.length <= kMaxLibrarySeedShortQueries
+      ? out
+      : out.sublist(0, kMaxLibrarySeedShortQueries);
+}
 
 /// 把名字/标题归一化成"可以互相比"的形态。
 ///

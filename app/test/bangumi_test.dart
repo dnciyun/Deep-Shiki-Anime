@@ -9,6 +9,8 @@ import 'dart:io';
 
 import 'package:dsanima/domain/bangumi.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 /// 实测过的 4 个真实 offset 的响应（`/v0/subjects?type=2&limit=20&offset=N`）。
 const List<int> fixtureOffsets = <int>[0, 5000, 15000, 28000];
@@ -536,6 +538,108 @@ void main() {
       expect(bareBack.collection, isNull);
       expect(bareBack.infobox, isEmpty);
       expect(bareBack.score, 7.0);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 第五十一轮：官方源站挂掉（Cloudflare 52x）时要「快速失败」，不要一次等 40s
+  // ───────────────────────────────────────────────────────────────────────────
+  //
+  // 真机实测（2026-10-17）：api.bgm.tv 的列表/搜索端点全部回 **522**，而 Cloudflare
+  // 要 ~19.8s 才吐这句错误；旧客户端把 5xx 一律当「抖动」再重试一次 ⇒ 一次失败 ~40s。
+  // 动漫库一页要打好几次请求，用户看到的就是「接口返不回来」。
+  group('BangumiClient：52x 不重试 + 熔断', () {
+    const String emptyPage = '{"total":0,"limit":1,"offset":0,"data":[]}';
+
+    BangumiClient clientThatCounts(
+      List<int> statuses, {
+      required void Function() onRequest,
+      DateTime Function()? clock,
+    }) {
+      int index = 0;
+      return BangumiClient(
+        minInterval: Duration.zero,
+        // 测试里没有真的 ~19.8s 可等：用状态码序列复现行为，重试/熔断逻辑与耗时无关。
+        client: MockClient((http.Request request) async {
+          onRequest();
+          final int code =
+              statuses[index < statuses.length ? index : statuses.length - 1];
+          index++;
+          return http.Response(code == 522 ? 'error code: 522' : emptyPage, code);
+        }),
+        clock: clock,
+      );
+    }
+
+    test('522 只打一次请求（不重试），错误码原样带出来', () async {
+      int requests = 0;
+      final BangumiClient client =
+          clientThatCounts(<int>[522], onRequest: () => requests++);
+      await expectLater(
+        client.subjects(limit: 1, offset: 0),
+        throwsA(isA<BangumiException>()
+            .having((BangumiException e) => e.statusCode, 'statusCode', 522)),
+      );
+      expect(requests, 1, reason: '52x 是源站连不上，重试只是把同一次 ~19.8s 的超时再等一遍');
+    });
+
+    test('一次 522 之后熔断：冷却窗口内的请求立刻失败，一个请求都不发', () async {
+      int requests = 0;
+      DateTime now = DateTime(2026, 10, 17, 12);
+      final BangumiClient client = clientThatCounts(
+        <int>[522, 200],
+        onRequest: () => requests++,
+        clock: () => now,
+      );
+
+      await expectLater(
+        client.subjects(limit: 1, offset: 0),
+        throwsA(isA<BangumiException>()),
+      );
+      expect(requests, 1);
+
+      // 熔断窗口（默认 60s）内：立即失败、不发请求 —— 页面「重试」不会再卡几十秒。
+      final Stopwatch watch = Stopwatch()..start();
+      now = now.add(const Duration(seconds: 10));
+      await expectLater(
+        client.subject(395378),
+        throwsA(isA<BangumiException>()
+            .having((BangumiException e) => e.statusCode, 'statusCode', 522)),
+      );
+      watch.stop();
+      expect(requests, 1, reason: '熔断期间不许真的发请求');
+      expect(watch.elapsed, lessThan(const Duration(seconds: 1)));
+    });
+
+    test('熔断会自己解除：窗口过后照常发，成功一条就清掉熔断', () async {
+      int requests = 0;
+      DateTime now = DateTime(2026, 10, 17, 12);
+      final BangumiClient client = clientThatCounts(
+        <int>[522, 200, 200],
+        onRequest: () => requests++,
+        clock: () => now,
+      );
+
+      await expectLater(
+        client.subjects(limit: 1, offset: 0),
+        throwsA(isA<BangumiException>()),
+      );
+      now = now.add(const Duration(seconds: 61));
+      final BangumiSubjectsPage page = await client.subjects(limit: 1, offset: 0);
+      expect(page.items, isEmpty);
+      expect(requests, 2, reason: '窗口过了要再试一次（不能永远熔断）');
+
+      // 成功之后熔断已清：下一次照样真的发（不会因为"上一次失败过"就被挡）。
+      await client.subjects(limit: 1, offset: 0);
+      expect(requests, 3);
+    });
+
+    test('502（通用 5xx，不是 Cloudflare）仍然重试一次 —— 原有语义不动', () async {
+      int requests = 0;
+      final BangumiClient client =
+          clientThatCounts(<int>[502, 200], onRequest: () => requests++);
+      await client.subjects(limit: 1, offset: 0);
+      expect(requests, 2, reason: '502 是真正的"抖动"，重试一次仍是对的');
     });
   });
 }

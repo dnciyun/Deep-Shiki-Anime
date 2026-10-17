@@ -197,6 +197,8 @@ void main() {
     // 现在用站点自己的 `div.nav_title`（所有列表/搜索页都有，包括零结果与不存在的分类）
     // 区分：骨架在 = 站点正常、这一页 0 条；骨架不在 = 才说可能改版。
     // 用户选定：**0 条也仍然报错**（要看得见），但必须说成两件不同的事。
+    // 第五十一轮又把类型分开：0 条抛 `SourceNoResultsException`（宿主据此**换短名补搜**，
+    // 证据 `build/round51/dmhy-kw-matrix.txt`）；网络失败 / 超时永远不是这个类型。
     test('搜索零结果（dmhy_search_empty.html，真机抓的）→ 报"0 条/没命中"，不说改版', () {
       expect(
         () => DmhyListParser.parse(
@@ -206,7 +208,7 @@ void main() {
           keyword: 'zzzzqqqqxyz',
         ),
         throwsA(
-          isA<SourceException>()
+          isA<SourceNoResultsException>()
               .having((SourceException e) => e.message, 'message',
                   contains('搜索「zzzzqqqqxyz」没有结果（0 条）'))
               .having((SourceException e) => e.message, 'message', contains('没有命中'))
@@ -224,11 +226,36 @@ void main() {
           clock: () => _now,
         ),
         throwsA(
-          isA<SourceException>().having(
+          isA<SourceNoResultsException>().having(
             (SourceException e) => e.message,
             'message',
             allOf(contains('这一页没有结果（0 条）'), isNot(contains('可能已改版'))),
           ),
+        ),
+      );
+    });
+
+    test('第五十一轮：「0 条」是新类型（宿主只对它换短名补搜），sourceId 照旧带出来', () {
+      // 真机实测（`build/round51/dmhy-kw-matrix.txt`）：DMHY 是**整串 AND 匹配** ——
+      // `无职转生第三季～到了异世界就拿出真本事～` 两个分区都 0 条，`无职转生` 有 80/35 条。
+      // 用户报的「1/7、2/7 个源没回来」就是这里被当成"源挂了"。
+      expect(
+        () => DmhyListParser.parse(
+          loadFixture('dmhy_search_empty.html'),
+          sourceId: 'dmhy-batch',
+          clock: () => _now,
+          keyword: '无职转生第三季～到了异世界就拿出真本事～',
+          pageUri: Uri.parse(
+            'https://share.dmhy.org/topics/list?keyword='
+            '%E6%97%A0%E8%81%8C%E8%BD%AC%E7%94%9F&sort_id=31',
+          ),
+        ),
+        throwsA(
+          isA<SourceNoResultsException>()
+              .having((SourceNoResultsException e) => e.sourceId, 'sourceId',
+                  'dmhy-batch')
+              .having((SourceException e) => e.url?.queryParameters['sort_id'],
+                  'url 上的分区', '31'),
         ),
       );
     });
@@ -350,8 +377,9 @@ void main() {
       );
       await expectLater(
         s.search('芙莉莲'),
-        throwsA(isA<SourceException>().having(
-          (SourceException e) => e.message,
+        // 第五十一轮：类型换成 SourceNoResultsException（宿主据此换短名补搜），文案一字未改。
+        throwsA(isA<SourceNoResultsException>().having(
+          (SourceNoResultsException e) => e.message,
           'message',
           allOf(contains('搜索「芙莉莲」没有结果（0 条）'), isNot(contains('可能已改版'))),
         )),
@@ -452,7 +480,11 @@ void main() {
         clock: () => _now,
       );
 
-      await expectLater(s.search('芙莉莲'), throwsA(isA<SourceException>()));
+      await expectLater(
+        s.search('芙莉莲'),
+        throwsA(isA<SourceNoResultsException>()),
+        reason: '0 条是结论（宿主会换短名补搜，不再重打同一个词）',
+      );
       expect(factory.requestedUris, hasLength(1));
     });
 

@@ -11,6 +11,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dsanima_core/sources/models.dart' show SourceNoResultsException;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -2204,6 +2205,11 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
   /// 原样带回去（[fallback]）—— 本地判据不该有权说"各站都没有"，那是用户报的那个毛病。
   ///
   /// [onlyQueries] 非空 = 用户手打了词：只试这一个，不静默换别的（第四十五轮的口径）。
+  ///
+  /// 第五十一轮（用户「种子块 1/7、2/7 个源没回来」，全是 DMHY）：**自动阶梯**这一路额外
+  /// 带上"短名候选"（[librarySeedShortQueries]），让某个源**正常回 0 条**时能换短名再问
+  /// 它一次（见 [_seedFetchOne]；DMHY 是整串 AND 匹配，全名 0 条、短名有货）。
+  /// 手打词那一路**不带**：用户要搜「Frieren」就不该悄悄改成别的词。
   Future<_SeedSearch> _searchNames(
     BangumiSubject subject,
     List<String> names,
@@ -2215,6 +2221,9 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
     final List<String> queries = onlyQueries ?? ladder;
     if (queries.isEmpty || targets.isEmpty) return const _SeedSearch();
     final SourcePort port = ref.read(sourcePortProvider);
+    final List<String> shortQueries = onlyQueries == null
+        ? librarySeedShortQueries(subject)
+        : const <String>[];
     List<AggregateSourceResult> last = const <AggregateSourceResult>[];
     List<SourceItemView> lastPool = const <SourceItemView>[];
     String? lastQuery;
@@ -2231,6 +2240,7 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
         port,
         targets,
         query,
+        shortQueries: shortQueries,
       );
       if (_stale(run)) return const _SeedSearch();
       last = results;
@@ -2559,11 +2569,14 @@ List<SourceOption> seedSourceTargetsFor(
     .toList(growable: false);
 
 /// 种子块的聚合兜底：把 [query] 在 [targets] 上搜一遍（并发与超时口径同搜索页）。
+///
+/// [shortQueries] 只透传给 [_seedFetchOne]：某个源**正常回 0 条**时才轮到它们（第五十一轮）。
 Future<List<AggregateSourceResult>> _seedFanOut(
   SourcePort port,
   List<SourceOption> targets,
-  String query,
-) async {
+  String query, {
+  List<String> shortQueries = const <String>[],
+}) async {
   final List<AggregateSourceResult> out = List<AggregateSourceResult>.filled(
     targets.length,
     const AggregateSourceResult(sourceId: '', displayName: ''),
@@ -2573,7 +2586,12 @@ Future<List<AggregateSourceResult>> _seedFanOut(
     while (true) {
       final int at = next++;
       if (at >= targets.length) return;
-      out[at] = await _seedFetchOne(port, targets[at], query);
+      out[at] = await _seedFetchOne(
+        port,
+        targets[at],
+        query,
+        shortQueries: shortQueries,
+      );
     }
   }
 
@@ -2587,7 +2605,54 @@ Future<List<AggregateSourceResult>> _seedFanOut(
 }
 
 /// 问一个源。**永不抛**（与搜索页的 `_fetchOneSource` 同一口径）。
+///
+/// 第五十一轮（用户「动漫库种子块 1/7、2/7 个源没回来」，全是 DMHY）：DMHY 的关键字搜索
+/// 是**整串 / 分词 AND 匹配**（实测表见 [shortenSeedQuery]），名字里多一段副标题或章节名
+/// 就 0 条，而同一部番的短名有货。所以这里对「这个源**正常**回 0 条」的情形，依次用
+/// [shortQueries] 里的短名补搜，命中即用（这个源就算回来了，不再是"没回来"）。
+///
+/// 三条边界（都有测试钉着）：
+/// * **只补「0 条」**：[SourceNoResultsException]，或"成功但 items 为空"。网络失败 / 超时
+///   **不补** —— 那说明站挂了，补搜只是再白等一轮；
+/// * 候选由调用方按「最多 [kMaxLibrarySeedShortQueries] 个」收窄，这里再跳过与本次查询
+///   相同的词和长度 < 2 的，所以**简单名字**（短名 == 原名）一个额外请求都不会有；
+/// * 全空时把"也试过哪些短名"写进失败文案 —— 否则用户看到"没回来"会以为是自己网络坏了。
 Future<AggregateSourceResult> _seedFetchOne(
+  SourcePort port,
+  SourceOption source,
+  String query, {
+  List<String> shortQueries = const <String>[],
+}) async {
+  final _SeedAsk first = await _seedAskOnce(port, source, query);
+  if (!first.noResults) return first.result;
+  final List<String> fallbacks = <String>[
+    for (final String candidate in shortQueries)
+      if (candidate != query && candidate.length >= 2) candidate,
+  ];
+  for (final String word in fallbacks) {
+    final _SeedAsk again = await _seedAskOnce(port, source, word);
+    if (again.result.items.isNotEmpty) return again.result;
+  }
+  final String? reason = first.result.failure;
+  if (reason == null || fallbacks.isEmpty) return first.result;
+  final String tried = fallbacks.map((String word) => '「$word」').join('、');
+  return AggregateSourceResult(
+    sourceId: first.result.sourceId,
+    displayName: first.result.displayName,
+    items: first.result.items,
+    hasNext: first.result.hasNext,
+    failure: '$reason（短名$tried 也试过，同样 0 条）',
+    fromCache: first.result.fromCache,
+    staleFallback: first.result.staleFallback,
+    fetchedAt: first.result.fetchedAt,
+  );
+}
+
+/// 问一个源**一次**。[_seedFetchOne] 的短名补搜就是拿它多问几次。
+///
+/// [noResults] 只表示"源站正常、这一轮 0 条"（唯一允许补搜的情形）：
+/// [SourceNoResultsException] 或者成功但条目为空；失败（网络 / 超时 / 坏页）一律 false。
+Future<_SeedAsk> _seedAskOnce(
   SourcePort port,
   SourceOption source,
   String query,
@@ -2596,28 +2661,57 @@ Future<AggregateSourceResult> _seedFetchOne(
     final SourcePageView page = await port
         .search(source.id, query)
         .timeout(kAggregateSourceTimeout);
-    return AggregateSourceResult(
-      sourceId: source.id,
-      displayName: source.displayName,
-      items: List<SourceItemView>.unmodifiable(page.items),
-      hasNext: page.hasNext,
-      fromCache: page.fromCache,
-      staleFallback: page.staleFallback,
-      fetchedAt: page.fetchedAt,
+    return _SeedAsk(
+      AggregateSourceResult(
+        sourceId: source.id,
+        displayName: source.displayName,
+        items: List<SourceItemView>.unmodifiable(page.items),
+        hasNext: page.hasNext,
+        fromCache: page.fromCache,
+        staleFallback: page.staleFallback,
+        fetchedAt: page.fetchedAt,
+      ),
+      noResults: page.items.isEmpty,
     );
   } on TimeoutException {
-    return AggregateSourceResult(
-      sourceId: source.id,
-      displayName: source.displayName,
-      failure: '${kAggregateSourceTimeout.inSeconds} 秒没回来',
+    return _SeedAsk(
+      AggregateSourceResult(
+        sourceId: source.id,
+        displayName: source.displayName,
+        failure: '${kAggregateSourceTimeout.inSeconds} 秒没回来',
+      ),
+    );
+  } on SourceNoResultsException catch (error) {
+    // 0 条不是"站挂了"：源站自己那句文案就说了"没有结果（0 条）"，原样给用户看。
+    return _SeedAsk(
+      AggregateSourceResult(
+        sourceId: source.id,
+        displayName: source.displayName,
+        failure: error.message,
+      ),
+      noResults: true,
     );
   } catch (error, stackTrace) {
-    return AggregateSourceResult(
-      sourceId: source.id,
-      displayName: source.displayName,
-      failure: describeFailure(error, stackTrace: stackTrace).message,
+    return _SeedAsk(
+      AggregateSourceResult(
+        sourceId: source.id,
+        displayName: source.displayName,
+        failure: describeFailure(error, stackTrace: stackTrace).message,
+      ),
     );
   }
+}
+
+/// 一个源**问一次**的结果 + 「这次算不算正常 0 条」。
+///
+/// 为什么把 0 条单独标出来（第五十一轮）：只有这一种情形值得换短名补搜；
+/// 网络失败 / 超时补搜只是白打一次请求。
+@immutable
+class _SeedAsk {
+  const _SeedAsk(this.result, {this.noResults = false});
+
+  final AggregateSourceResult result;
+  final bool noResults;
 }
 
 final NotifierProvider<LibrarySeedController, LibrarySeedState>

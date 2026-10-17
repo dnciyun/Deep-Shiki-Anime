@@ -1054,6 +1054,26 @@ int distinctWindowCount(
 ///    会读到同一个旧值、谁都不等就一起发。推荐那 4 个窗口现在是**并发**的，正好会踩到；
 ///    现在每个请求的**开始时刻**排在一条 Future 链上（至少隔 [minInterval]），
 ///    但互相不等响应。
+///
+/// ⚠️ **第五十一轮**（用户 2026-10-17：「动漫库 bangumi 接口返不回来了，能不能做多个
+/// 虚拟 ip 访问」）—— 那一次不是限流、也不是本机 IP 被封，是 **Bangumi 自己的源站挂了**：
+/// 真机实测当天 `api.bgm.tv` 的 `/v0/subjects`、`/calendar`、`/v0/search/subjects`
+/// 全部是 Cloudflare **522**（"连不上源站"，约 **19.8s** 才回一句纯文本错误），而
+/// `/v0/subjects/{id}` 因为 CF 缓存命中（`cf-cache-status: HIT`）仍然 200；`bgm.tv`
+/// 整站 522；第三方多地区监控 `bgm-status.ry.mk` 当天记到 api.bgm.tv **283 次 down**。
+/// 换成别的出口 IP / 代理也没有用（Cloudflare 边缘连不上它自己的源站，与访客 IP 无关）。
+///
+/// 所以这一轮在客户端做两件事（都是为了"失败要快、文案要说实话"）：
+/// 1. **52x 不重试**：旧实现把 5xx 一律当"抖动"重试一次 ⇒ 一次失败要等两遍 ~19.8s
+///    （~40s），动漫库一页要打好几次请求，用户看到的正是"返不回来"；
+/// 2. **[outageCooldown] 熔断**：一次 52x 之后的一段时间内不再真的发请求，直接返回同一条
+///    失败（状态码 522 与真打回来的一致）—— 页面上的「重试」不至于又把界面卡住几十秒；
+///    熔断不阻止恢复：窗口一过照常发，成功一条就立刻解除。
+///
+/// ⚠️ **共享一个实例**：`main.dart` 里三个 Bangumi 服务（今日推荐 / 动漫库 / 元数据）
+/// 现在共用**同一个** `BangumiClient`。以前各 new 一个 = 三条独立的 1.1s 闸门，主页与
+/// 动漫库同时加载时出站可以逼近 3 次/秒；共用之后全进程只有一条闸门。Bangumi 的公开
+/// 接口对频率敏感，这也是"别把自家 IP 玩进限流"的正解（而不是轮换 IP）。
 class BangumiClient {
   BangumiClient({
     http.Client? client,
@@ -1062,6 +1082,7 @@ class BangumiClient {
     this.timeout = const Duration(seconds: 45),
     this.retries = 1,
     this.retryBackoff = const Duration(milliseconds: 800),
+    this.outageCooldown = const Duration(seconds: 60),
     DateTime Function()? clock,
   })  : _client = client ?? http.Client(),
         _clock = clock ?? DateTime.now;
@@ -1076,9 +1097,16 @@ class BangumiClient {
 
   /// 两次尝试之间的等待。
   final Duration retryBackoff;
+
+  /// 第五十一轮：一次「Cloudflare 源站错误」之后的熔断窗口（见类注释）。
+  final Duration outageCooldown;
+
   final DateTime Function() _clock;
 
   DateTime? _lastRequestAt;
+
+  /// 熔断止点：非 null 且还没到 = 这段时间内不再真的发请求。
+  DateTime? _outageUntil;
 
   /// 「发车时刻」队列：见类注释第 3 条。
   Future<void> _gate = Future<void>.value();
@@ -1106,6 +1134,13 @@ class BangumiClient {
     return code == 429 || code >= 500;
   }
 
+  /// 第五十一轮：Cloudflare 的「源站连不上」系列（520–524）。
+  ///
+  /// 它们**不是**"抖动"：522 是 Cloudflare 边缘连不上 Bangumi 自己的服务器，
+  /// 同一时刻换任何出口 IP 都一样（实测当天 api.bgm.tv/bgm.tv 整片 522）。
+  /// 重试只是把同一次 ~19.8s 的超时再等一遍，所以这类既不重试、还要熔断一会儿。
+  static bool _isCloudflareOriginDown(int code) => code >= 520 && code <= 524;
+
   /// 取一次 JSON（失败按 [retries] 重试）。
   Future<String> _getJson(Uri url) => _json(url);
 
@@ -1113,7 +1148,7 @@ class BangumiClient {
   Future<String> _postJson(Uri url, Map<String, Object?> body) =>
       _json(url, body: jsonEncode(body));
 
-  /// GET/POST 共用的取数：限速闸门 → 请求 → 200 判定 → 抖动型失败重试。
+  /// GET/POST 共用的取数：熔断检查 → 限速闸门 → 请求 → 200 判定 → 抖动型失败重试。
   Future<String> _json(Uri url, {String? body}) async {
     const Map<String, String> headers = <String, String>{
       'User-Agent': bangumiUserAgent,
@@ -1122,17 +1157,32 @@ class BangumiClient {
     };
     BangumiException? last;
     for (int attempt = 0; attempt <= retries; attempt++) {
+      // 第五十一轮熔断：刚确认过"官方源站连不上"→ 这段时间内不再真的发请求。
+      // 抛的失败与真打回来的一模一样（522 + 同一条提示），调用方的重试/错误面板照旧。
+      final DateTime? until = _outageUntil;
+      if (until != null && _clock().isBefore(until)) {
+        throw BangumiException(
+          'Bangumi 官方源站还没恢复（Cloudflare 522），这次先不打了',
+          statusCode: 522,
+          url: url,
+        );
+      }
+
       await _throttle();
       late BangumiException failure;
+      int? statusCode;
       try {
         final http.Response res = await (body == null
                 ? _client.get(url, headers: headers)
                 : _client.post(url, headers: headers, body: body))
             .timeout(timeout);
         if (res.statusCode == 200) {
+          // 有一条真的通了 ⇒ 立刻解除熔断（下次不用再等窗口过期）。
+          _outageUntil = null;
           // 响应体是 UTF-8，按字节解（`res.body` 依赖响应头 charset）。
           return utf8.decode(res.bodyBytes, allowMalformed: true);
         }
+        statusCode = res.statusCode;
         failure = BangumiException(
           'Bangumi 返回了非 200${_whyNotOk(res)}',
           statusCode: res.statusCode,
@@ -1143,6 +1193,11 @@ class BangumiClient {
             url: url, cause: error);
       }
       last = failure;
+      // 第五十一轮：52x 是"官方源站连不上"，重试只是再等一次 ~19.8s 的 522。
+      if (statusCode != null && _isCloudflareOriginDown(statusCode)) {
+        _outageUntil = _clock().add(outageCooldown);
+        break;
+      }
       if (attempt >= retries || !_isTransient(failure)) break;
       await Future<void>.delayed(retryBackoff);
     }
@@ -1152,7 +1207,14 @@ class BangumiClient {
   /// 4xx 的响应体里有 Bangumi 自己的理由（实测形状：`{"title":"JSON Error",
   /// "description":"Unmarshal type error: expected=[]string, got=object, field=filter.rating"}`）。
   /// 把它带上 —— 少一次"参数写错了却只看到 HTTP 400"的猜谜。
+  ///
+  /// 第五十一轮：Cloudflare 的 52x 也在这里说一句（它们没有 JSON 响应体，正文就一行
+  /// `error code: 522`），否则 `BangumiException.toString()` 里只剩状态码，看不出是
+  /// "源站连不上"还是"接口参数错"。
   static String _whyNotOk(http.Response res) {
+    if (_isCloudflareOriginDown(res.statusCode)) {
+      return '（Cloudflare ${res.statusCode}：连不上 Bangumi 的源站）';
+    }
     if (res.statusCode < 400 || res.statusCode >= 500) return '';
     try {
       final Object? decoded = jsonDecode(utf8.decode(res.bodyBytes, allowMalformed: true));

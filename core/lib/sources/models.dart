@@ -252,6 +252,35 @@ class SourceException implements Exception {
   }
 }
 
+/// 源站**正常回应、但这一页 / 这个关键字 0 条**（不是网络失败，也不是页面改版）。
+///
+/// 为什么要单独一个类型（第五十一轮）：DMHY 的关键字搜索是**整串 / 分词 AND 匹配**，
+/// 名字里多一段副标题或章节名就 0 条，而同一部番的短名有货。真机实测
+/// （`build/round51/dmhy-kw-matrix.txt` / `dmhy-match-semantics.txt`，
+/// 脚本 `build/round51/probe_dmhy*.py`，2026-10-17）：
+///
+/// | 关键字 | `sort_id=2`（動畫） | `sort_id=31`（季度全集） |
+/// |---|---|---|
+/// | `无职转生第三季～到了异世界就拿出真本事～`（用户报的全名） | 0 | 0 |
+/// | `无职转生` | 80 | 35 |
+/// | `コードギアス 亡国のアキト 第2章「引き裂かれし翼竜」`（另一处报错） | 0 | 0 |
+/// | `コードギアス 亡国のアキト` | 3 | 1 |
+/// | `亡国のアキト` | 3 | 1 |
+/// | `无职转生 芙莉莲`（AND 语义验证：两个词都得在标题里） | 0 | — |
+///
+/// 宿主（种子块）拿到它就能做一件有用的事：**换短名补搜**；而网络失败 / 超时补搜只是
+/// 白打一次请求、多等一轮。两者在 [SourceException] 层长得一样（都是异常），
+/// 但后续动作完全不同 —— 所以「0 条」必须有自己的类型。
+class SourceNoResultsException extends SourceException {
+  SourceNoResultsException(
+    super.message, {
+    super.sourceId,
+    super.url,
+    super.statusCode,
+    super.cause,
+  });
+}
+
 Uri? _uriOrNull(Object? value) {
   if (value is Uri) return value;
   if (value is String && value.isNotEmpty) return Uri.tryParse(value);

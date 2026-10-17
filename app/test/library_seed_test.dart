@@ -10,6 +10,12 @@
 ///
 /// 真机口径的证据在 `build/round48/`：841 行 → 名字命中 841（用打分当判据会只剩 595，
 /// 丢掉 KissSub 一整套 01–12）→ 同名合并 835 → **54 段**，中位数 3 条/段、最多 93 条/段。
+///
+/// 第五十一轮（用户：「动漫库种子块 1/7、2/7 个源没回来」，全是 DMHY）：DMHY 的关键字搜索
+/// 是**整串 / 分词 AND 匹配**（`build/round51/dmhy-kw-matrix.txt`：全名 0 条、`无职转生`
+/// 80/35 条），而全局阶梯「命中即停」让 DMHY 永远吃不到短名。所以自动阶梯多了一层
+/// 「某个源**正常回 0 条** → 换短名补搜它一次」（`_FakeSources.noResultsSources` 模拟
+/// DMHY 的"0 条也抛异常"；短名派生见 [shortenSeedQuery]）。
 library;
 
 import 'dart:async';
@@ -25,6 +31,7 @@ import 'package:dsanima/domain/subtitle_groups.dart';
 import 'package:dsanima/domain/unavailable.dart';
 import 'package:dsanima/state/providers.dart';
 import 'package:dsanima_core/sources/kv.dart' show InMemoryKeyValueStore;
+import 'package:dsanima_core/sources/models.dart' show SourceNoResultsException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -33,7 +40,9 @@ import 'package:flutter_test/flutter_test.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// 假源表：`hits['源:词']` 里有东西才算搜到（复现 mikan"整串匹配、不分词"）；
-/// [failingSources] 里的源每次都抛（复现"某个站挂了"）。
+/// [failingSources] 里的源每次都抛（复现"某个站挂了"）；
+/// [noResultsSources] 里的源在没命中时抛 `SourceNoResultsException`（复现 DMHY 的
+/// 「0 条也报错」—— 第五十一轮的短名补搜要靠它区分"词不对"与"站挂了"）。
 class _FakeSources extends UnavailableSourcePort {
   _FakeSources({
     this.hits = const <String, List<SourceItemView>>{},
@@ -42,13 +51,15 @@ class _FakeSources extends UnavailableSourcePort {
       SourceOption(id: 'dmhy', displayName: '动漫花园（DMHY）'),
     ],
     this.failingSources = const <String>{},
+    this.noResultsSources = const <String>{},
   });
 
   final Map<String, List<SourceItemView>> hits;
   final List<SourceOption> options;
   final Set<String> failingSources;
+  final Set<String> noResultsSources;
 
-  /// 记录每次搜索（`源:词`）——"命中即停"与"阶梯试到哪一级"都靠它断言。
+  /// 记录每次搜索（`源:词`）——"命中即停"、阶梯试到哪一级、有没有补搜都靠它断言。
   final List<String> searched = <String>[];
 
   @override
@@ -73,8 +84,18 @@ class _FakeSources extends UnavailableSourcePort {
     if (failingSources.contains(sourceId)) {
       throw PortUnavailableException('源站 503', hint: '稍后重试');
     }
+    final List<SourceItemView>? hit = hits['$sourceId:$keyword'];
+    if (hit == null && noResultsSources.contains(sourceId)) {
+      // 真机 DMHY 的「这一页 0 条」是**抛异常**（core 的 SourceNoResultsException），
+      // 不是空列表 —— 第五十一轮补搜就是靠这个类型知道"该换短名再问一次"。
+      throw SourceNoResultsException(
+        '$sourceId 搜索「$keyword」没有结果（0 条）：'
+        '站点页面是正常的（测试替身，模拟 DMHY 的整串 AND 匹配）',
+        sourceId: sourceId,
+      );
+    }
     return SourcePageView(
-      items: hits['$sourceId:$keyword'] ?? const <SourceItemView>[],
+      items: hit ?? const <SourceItemView>[],
       page: page,
       hasNext: false,
       fetchedAt: DateTime(2026, 10, 16, 12),
@@ -263,6 +284,63 @@ void main() {
 
     test('没有季/部后缀时原样返回', () {
       expect(dropSeasonSuffix('葬送的芙莉莲'), '葬送的芙莉莲');
+    });
+  });
+
+  // ── 第五十一轮（用户：「动漫库种子块 1/7、2/7 个源没回来」，全是 DMHY）──────────
+
+  group('shortenSeedQuery：个别源「0 条」时补搜的短名', () {
+    // 真机实测（`build/round51/dmhy-kw-matrix.txt`）：DMHY 的搜索是**整串 / 分词 AND
+    // 匹配** —— 全名 0 条、短名有货。所以全名那一级要先能派生出短名。
+    test('剥尾部副标题：`无职转生第三季～到了异世界就拿出真本事～` → `无职转生`', () {
+      // 实测：全名在 sort_id=2 / 31 都是 0 条；`无职转生` 是 80 / 35 条。
+      expect(shortenSeedQuery('无职转生第三季～到了异世界就拿出真本事～'), '无职转生');
+      expect(shortenSeedQuery('无职转生第三季~到了异世界就拿出真本事~'), '无职转生');
+    });
+
+    test('剥尾部章节名 + 括号段：`…第2章「引き裂かれし翼竜」` → `コードギアス 亡国のアキト`', () {
+      // 实测：整串 0 条；`コードギアス 亡国のアキト` 是 3 / 1 条、`亡国のアキト` 是 3 / 1 条。
+      expect(
+        shortenSeedQuery('コードギアス 亡国のアキト 第2章「引き裂かれし翼竜」'),
+        'コードギアス 亡国のアキト',
+      );
+      expect(shortenSeedQuery('亡国のアキト 第2章'), '亡国のアキト');
+      expect(shortenSeedQuery('某剧场版（前篇）'), '某剧场版');
+    });
+
+    test('尾部标点 / 空格也剥（`无职转生 第二季，` → `无职转生`）', () {
+      expect(shortenSeedQuery('葬送的芙莉莲 第二季，'), '葬送的芙莉莲');
+      expect(shortenSeedQuery('某番 - '), '某番', reason: '尾部标点在 DMHY 的 AND 匹配里就是白送一个不命中的词');
+    });
+
+    test('简单名字（短名 == 原名）→ null：这一层机制不许多打任何请求', () {
+      expect(shortenSeedQuery('葬送的芙莉莲'), isNull);
+      expect(shortenSeedQuery('Frieren'), isNull);
+      expect(shortenSeedQuery(''), isNull);
+      expect(shortenSeedQuery('～副标题～'), isNull, reason: '剥空了就不能拿去搜');
+    });
+
+    test('候选最多 2 个、按 中文名 → 原名 → 别名 的顺序、去重', () {
+      final BangumiSubject subject = _subject(
+        nameCn: '无职转生 第二季 ～到了异世界就拿出真本事～',
+        name: '無職転生Ⅱ ～異世界行ったら本気だす～',
+        aliases: <String>['无职转生', 'Mushoku Tensei II'],
+      );
+      expect(librarySeedShortQueries(subject), <String>['无职转生', '無職転生Ⅱ'],
+          reason: '别名里的「无职转生」与中文名派生的同一个 → 去重；最多两个候选');
+    });
+
+    test('简单名字 / 没有长名的条目 → 空表（补搜一个请求都不发）', () {
+      expect(
+        librarySeedShortQueries(_subject(nameCn: '葬送的芙莉莲', name: '葬送的芙莉莲')),
+        isEmpty,
+      );
+      expect(
+        librarySeedShortQueries(
+          const BangumiSubject(id: 1, name: 'Frieren', nameCn: 'Frieren'),
+        ),
+        isEmpty,
+      );
     });
   });
 
@@ -1105,6 +1183,175 @@ void main() {
       expect(s.otherVersions, isEmpty, reason: '全判成别的版本时宁可不分');
       expect(s.episodes, hasLength(3));
       expect(s.groups, isNotEmpty);
+    });
+  });
+
+  // ── 第五十一轮（用户：「动漫库种子块 1/7、2/7 个源没回来」，全是 DMHY）──────────
+  //
+  // DMHY 的搜索是整串 AND 匹配：全名（带副标题/章节名）0 条、短名有货。全局阶梯是
+  // "命中即停"，mikan 全名就中了 ⇒ DMHY 永远吃不到短名 ⇒ 被报成"源没回来"。
+  // 修法：**只对回 0 条的源**、只用**自动阶梯**的轮次，换短名再问它一次。
+
+  group('LibrarySeedController：某个源「0 条」→ 短名补搜（第五十一轮）', () {
+    BangumiSubject uwSubject() => _subject(
+      nameCn: '无职转生 第二季 ～到了异世界就拿出真本事～',
+      name: '無職転生Ⅱ ～異世界行ったら本気だす～',
+      aliases: <String>['无职转生'],
+      platform: 'TV',
+      date: '2024-04-07',
+      eps: 12,
+    );
+
+    SourceItemView s2(
+      int n, {
+      String source = 'mikan',
+      String group = '桜都字幕组',
+    }) => _item(
+      n,
+      '无职转生 第二季 ～到了异世界就拿出真本事～ - 0$n [1080p]',
+      group: group,
+      source: source,
+      publishedAt: DateTime.utc(2024, 4, 10).add(Duration(days: n)),
+    );
+
+    test('mikan 全名命中、DMHY 全名 0 条但短名有货 → DMHY 不再算"没回来"', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:无职转生 第二季 ～到了异世界就拿出真本事～': <SourceItemView>[
+            s2(1),
+            s2(2),
+          ],
+          'dmhy:无职转生': <SourceItemView>[
+            s2(9, source: 'dmhy', group: 'LoliHouse'),
+          ],
+        },
+        noResultsSources: <String>{'dmhy'},
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(uwSubject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready);
+      expect(s.warning, isNull, reason: 'DMHY 用短名搜到了 → 不该再报"1/7 个源没回来"');
+      expect(s.groups.map((SeedGroup g) => g.label), contains('LoliHouse'));
+      expect(
+        source.searched.first,
+        'mikan:无职转生 第二季 ～到了异世界就拿出真本事～',
+        reason: '阶梯第 1 级仍是全名；补搜只发生在那个源第一次回 0 条之后',
+      );
+      expect(source.searched, contains('dmhy:无职转生'), reason: 'DMHY 换了短名再问一次');
+    });
+
+    test('短名也全空 → 结果照常给，失败文案说明"也试过哪些短名，同样 0 条"', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:无职转生 第二季 ～到了异世界就拿出真本事～': <SourceItemView>[s2(1)],
+        },
+        noResultsSources: <String>{'dmhy'},
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(uwSubject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready, reason: 'mikan 的结果照常给');
+      expect(s.warning, contains('短名'));
+      expect(s.warning, contains('「无职转生」'));
+      expect(s.warning, contains('同样 0 条'));
+      expect(
+        source.searched,
+        contains('dmhy:無職転生Ⅱ'),
+        reason: '两个候选都试过才放弃（第 2 个候选兜底中文短名在合集分区 0 条的情形）',
+      );
+    });
+
+    test('不抛异常、只回空页的源也一样补搜（「0 条」有两种表现）', () async {
+      final _FakeSources source = _FakeSources(
+        hits: <String, List<SourceItemView>>{
+          'mikan:无职转生 第二季 ～到了异世界就拿出真本事～': <SourceItemView>[s2(1)],
+          'dmhy:无职转生': <SourceItemView>[
+            s2(9, source: 'dmhy', group: 'LoliHouse'),
+          ],
+        },
+        // dmhy 不在 noResultsSources 里：全名那一轮回的是**空表**（nyaa 这类源就是这样），
+        // 不是异常 —— 第五十一轮把它和 DMHY 的「0 条异常」当成同一种情形处理。
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(uwSubject());
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(s.phase, LibrarySeedPhase.ready);
+      expect(s.warning, isNull);
+      expect(source.searched, contains('dmhy:无职转生'));
+      expect(s.groups.map((SeedGroup g) => g.label), contains('LoliHouse'));
+    });
+
+    test('网络失败 / 超时**不**补搜（那说明站挂了，不是词不对）', () async {
+      final _FakeSources source = _FakeSources(
+        failingSources: <String>{'dmhy'},
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(uwSubject());
+
+      expect(
+        source.searched.where((String q) => q.startsWith('dmhy:')),
+        hasLength(librarySeedQueries(uwSubject()).length),
+        reason: '阶梯有几级就问几次；失败的那一轮一次都没补搜',
+      );
+    });
+
+    test('手打的词不补搜（用户要搜的就是那个词，不静默换词）', () async {
+      final _FakeSources source = _FakeSources(
+        noResultsSources: <String>{'dmhy'},
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).useQuery(uwSubject(), 'Frieren');
+      final LibrarySeedState s = c.read(librarySeedProvider);
+
+      expect(source.searched, <String>['mikan:Frieren', 'dmhy:Frieren']);
+      expect(s.problem, LibrarySeedProblem.notFound);
+    });
+
+    test('简单名字（短名 == 原名）不多打任何请求', () async {
+      final _FakeSources source = _FakeSources(
+        noResultsSources: <String>{'dmhy'},
+      );
+      final ProviderContainer c = _container(
+        source: source,
+        schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
+      );
+      addTearDown(c.dispose);
+
+      await c.read(librarySeedProvider.notifier).resolve(
+        _subject(nameCn: '葬送的芙莉莲', name: '葬送的芙莉莲'),
+      );
+
+      expect(source.searched, <String>['mikan:葬送的芙莉莲', 'dmhy:葬送的芙莉莲'],
+          reason: '派生不出短名 → 一个额外请求都不发（阶梯只有一级）');
     });
   });
 
