@@ -215,7 +215,7 @@ class PlayerController {
     }
   }
 
-  // ── 原生命令（供 Anime4K 超分下发）──────────────────────────────────────────
+  // ── 原生命令（供 Anime4K / mpv 缩放器超分下发）─────────────────────────────
   /// 执行一条 libmpv 命令（如 change-list glsl-shaders set ...）。
   /// 返回 0=已下发，-1=抛异常被吞（调用方一般不关心）。
   Future<int> runMpvCommand(List<String> args) async {
@@ -225,6 +225,17 @@ class PlayerController {
     } catch (e, st) {
       diag.warn('player', 'mpv command ${args.isEmpty ? '?' : args.first} failed', e, st);
       return -1;
+    }
+  }
+
+  /// 读一个 mpv 属性（超分方案切到 mpv 缩放器时要存原值、离开时写回）。
+  /// 读不到返回空串：调用方据此决定**不恢复**，绝不写一个猜出来的默认值。
+  Future<String> readMpvProperty(String name) async {
+    try {
+      return await _native.getProperty(name);
+    } catch (e, st) {
+      diag.warn('player', 'mpv get property $name failed', e, st);
+      return '';
     }
   }
 

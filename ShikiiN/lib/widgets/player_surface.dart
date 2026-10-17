@@ -12,14 +12,13 @@ import '../controllers/anime4k_controller.dart';
 import '../controllers/playlist_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../infra/diagnostics/diag.dart';
-import '../models/anime4k_preset.dart';
-import '../models/episode_switch_notice.dart';
-import '../models/media_item.dart';
+import '../models/episode_switch_notice.dart';import '../models/media_item.dart';
 import '../models/player_action.dart';
 import '../models/player_keys.dart';
 import '../models/player_request.dart';
 import '../models/subtitle_style.dart';
 import '../models/theme_tokens.dart';
+import '../models/upscale_scheme.dart';
 import '../models/video_stats.dart';
 import 'context_menu.dart';
 import 'control_bar.dart';
@@ -993,7 +992,7 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
       case PlayerAction.openSubtitleFile:
         unawaited(_openSubtitleFile());
       case PlayerAction.toggleAnime4k:
-        unawaited(_cycleAnime4k());
+        unawaited(_cycleUpscale());
     }
   }
 
@@ -1145,15 +1144,20 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
     }
   }
 
-  Future<void> _setAnime4k(Anime4kPreset p) async {
-    await ref.read(anime4kProvider).setPreset(p);
-    await _settings.patch((s) => s..anime4kPreset = p);
+  /// 切换超分方案/档位（2026-10-17 方案制；Anime4K 仍是默认方案）。
+  Future<void> _setUpscale(UpscaleSelection selection) async {
+    await ref.read(anime4kProvider).setSelection(selection);
+    await _settings.patch((s) => s
+      ..upscaleSchemeId = selection.schemeId
+      ..anime4kPreset = selection.preset);
     if (mounted) setState(() {});
   }
 
-  /// 控制栏超分胶囊：关→轻→标→极→关。
-  Future<void> _cycleAnime4k() =>
-      _setAnime4k(ref.read(anime4kProvider).preset.cycled);
+  /// 控制栏超分胶囊：关 → Anime4K 轻/标/极 → 其他实时方案 → 关。
+  Future<void> _cycleUpscale() {
+    final Anime4kController a4k = ref.read(anime4kProvider);
+    return _setUpscale(a4k.selection.cycle(a4k.schemes));
+  }
 
   // ── 右键菜单（契约 §7）──────────────────────────────────────────────────────
 
@@ -1167,7 +1171,8 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
       audioItems: trackSubmenuItems(player.audioTracks, player.activeAudioId, noneLabel: '自动'),
       subtitleItems:
           trackSubmenuItems(player.subtitleTracks, player.activeSubtitleId, noneLabel: '关闭字幕'),
-      anime4k: a4k.preset,
+      upscale: a4k.selection,
+      upscaleSchemes: a4k.schemes,
       alwaysOnTop: _alwaysOnTop,
       fullscreen: fs,
       pip: _pip,
@@ -1191,8 +1196,8 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
 
   void _onSubmenuSelect(String elementId, SubmenuItem item) {
     final v = item.value;
-    if (v is Anime4kPreset) {
-      unawaited(_setAnime4k(v));
+    if (v is UpscaleSelection) {
+      unawaited(_setUpscale(v));
       return;
     }
     final player = ref.read(playerProvider);
@@ -1341,8 +1346,9 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
                           onPlaylist: hasGroup
                               ? () => setState(() => _playlistOpen = !_playlistOpen)
                               : null,
-                          anime4k: a4k?.preset,
-                          onCycleAnime4k: () => unawaited(_cycleAnime4k()),
+                          upscaleLabel: a4k?.selection.label(a4k.schemes),
+                          upscaleOn: a4k?.selection.isOff == false,
+                          onCycleUpscale: () => unawaited(_cycleUpscale()),
                         ),
                       ),
                     ),

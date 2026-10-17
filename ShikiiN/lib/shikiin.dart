@@ -58,7 +58,16 @@ export 'models/media_item.dart' show MediaItem;
 export 'models/episode_switch_notice.dart' show EpisodeSwitchNotice;
 export 'models/player_request.dart' show PlayerRequest, PlayerRequestNotifier;
 export 'models/app_settings.dart' show AppSettings;
-export 'models/anime4k_preset.dart' show Anime4kPreset;
+export 'models/anime4k_preset.dart' show Anime4kPreset, anime4kShaderChain, kAnime4kShaderFiles;
+export 'models/upscale_scheme.dart'
+    show
+        UpscaleScheme,
+        UpscaleSchemeKind,
+        UpscaleSelection,
+        UpscaleTier,
+        anime4kScheme,
+        builtinUpscaleSchemes,
+        kAnime4kSchemeId;
 export 'models/theme_tokens.dart' show ThemeTokens;
 export 'models/track.dart' show TrackInfo, TrackKind;
 

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shikiin/controllers/anime4k_controller.dart';
 import 'package:shikiin/models/anime4k_preset.dart';
+import 'package:shikiin/models/upscale_scheme.dart';
 
 void main() {
   late List<List<String>> sent;
@@ -155,6 +156,70 @@ void main() {
       await c.exitSwitchWindow(token);
       await c.exitSwitchWindow(token);
       expect(sent, hasLength(1)); // 只补发一次
+    });
+  });
+
+  group('mpv 内置缩放器方案（2026-10-17：其他实时超分）', () {
+    late List<List<String>> sent;
+    late Map<String, String> props;
+    late Anime4kController c;
+
+    setUp(() {
+      sent = [];
+      props = {'scale': 'bilinear'};
+      c = Anime4kController(
+        runner: (args) async => sent.add(args),
+        readProperty: (name) async => props[name] ?? '',
+      )..setShaderDir(r'C:\sh');
+    });
+
+    test('切到 mpv 方案：先 clr 掉 shader，再 set scale；不挂 shader', () async {
+      await c.setSelection(const UpscaleSelection(schemeId: 'mpv-ewa-lanczossharp'));
+      expect(sent, hasLength(2));
+      expect(sent[0].sublist(0, 3), ['change-list', 'glsl-shaders', 'clr']);
+      expect(sent[1], ['set', 'scale', 'ewa_lanczossharp']);
+      expect(c.isOff, isFalse);
+      expect(c.hasShaders, isFalse, reason: 'mpv 缩放器不挂 shader 链');
+      expect(c.hasEffect, isTrue);
+    });
+
+    test('关超分：clr + 把 scale 原值写回（media_kit 默认是 bilinear）', () async {
+      await c.setSelection(const UpscaleSelection(schemeId: 'mpv-ewa-lanczossharp'));
+      sent.clear();
+      await c.setSelection(UpscaleSelection.off);
+      expect(sent[0].sublist(0, 3), ['change-list', 'glsl-shaders', 'clr']);
+      expect(
+        sent.any((a) => a.length == 3 && a[0] == 'set' && a[1] == 'scale' && a[2] == 'bilinear'),
+        isTrue,
+        reason: '离开 mpv 方案要把原值写回（实际：$sent）',
+      );
+      expect(c.isOff, isTrue);
+    });
+
+    test('mpv 方案切回 Anime4K：先恢复原值，再挂链', () async {
+      await c.setSelection(const UpscaleSelection(schemeId: 'mpv-spline36'));
+      sent.clear();
+      await c.setSelection(const UpscaleSelection(preset: Anime4kPreset.standard));
+      expect(sent.first, ['set', 'scale', 'bilinear']);
+      expect(sent.last.sublist(0, 3), ['change-list', 'glsl-shaders', 'set']);
+      expect(sent.last[3].split(';').length, anime4kShaderChain(Anime4kPreset.standard).length);
+    });
+
+    test('换片窗口内切 mpv 方案被押下，exit 按最新选择补发', () async {
+      final token = c.enterSwitchWindow();
+      await c.setSelection(const UpscaleSelection(schemeId: 'mpv-ewa-lanczos'));
+      expect(sent, isEmpty, reason: '窗口内不碰渲染上下文');
+      await c.exitSwitchWindow(token);
+      expect(sent, hasLength(2));
+      expect(sent[1], ['set', 'scale', 'ewa_lanczos']);
+    });
+
+    test('读不到原值时不写猜的默认值（离开只 clr）', () async {
+      props.clear();
+      await c.setSelection(const UpscaleSelection(schemeId: 'mpv-bicubic'));
+      sent.clear();
+      await c.setSelection(UpscaleSelection.off);
+      expect(sent.where((a) => a.isNotEmpty && a.first == 'set'), isEmpty);
     });
   });
 }

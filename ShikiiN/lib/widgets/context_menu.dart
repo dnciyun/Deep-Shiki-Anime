@@ -3,6 +3,7 @@ import '../models/anime4k_preset.dart';
 import '../models/player_action.dart';
 import '../models/theme_tokens.dart';
 import '../models/track.dart';
+import '../models/upscale_scheme.dart';
 import 'context_submenu.dart';
 
 /// 子菜单项。`value` 由调用方解释（轨道 id / 超分档 / 画面适配模式）。
@@ -67,84 +68,111 @@ class ContextEntry {
 /// 加载字幕文件… / —— / 超分 ▸ / 视频数据。
 ///
 /// 不再读主题显隐配置：所有项恒显示，`elementId` 仅作稳定标识。
+///
+/// 2026-10-17（用户「模型我想多试试其他的」）：「超分」子菜单从固定四档扩成
+/// **方案 + 档位**：关 / Anime4K 三档 / 各 mpv 缩放器 / 已安装的 GLSL 包。
 List<ContextEntry> defaultContextEntries({
   List<SubmenuItem> audioItems = const [],
   List<SubmenuItem> subtitleItems = const [],
-  Anime4kPreset anime4k = Anime4kPreset.off,
+  UpscaleSelection upscale = UpscaleSelection.off,
+  List<UpscaleScheme>? upscaleSchemes,
   bool alwaysOnTop = false,
   bool fullscreen = false,
   bool pip = false,
-}) =>
-    [
-      ContextEntry.action(
-        PlayerAction.toggleFullscreen,
-        fullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
-        elementId: 'contextMenu.fullscreen',
-        label: fullscreen ? '退出全屏' : '全屏',
-      ),
-      ContextEntry.action(
-        PlayerAction.togglePip,
-        Icons.picture_in_picture_alt_rounded,
-        elementId: 'contextMenu.pip',
-        label: pip ? '退出画中画' : '画中画',
-      ),
-      ContextEntry.action(
-        PlayerAction.toggleAlwaysOnTop,
-        alwaysOnTop ? Icons.push_pin_rounded : Icons.push_pin_outlined,
-        elementId: 'contextMenu.alwaysOnTop',
-        label: alwaysOnTop ? '取消置顶' : '窗口置顶',
-      ),
-      const ContextEntry.divider(),
-      ContextEntry.submenu(
-        label: '音轨',
-        icon: Icons.audiotrack_rounded,
-        elementId: 'contextMenu.audioTrack',
-        children: audioItems,
-      ),
-      ContextEntry.submenu(
-        label: '字幕轨',
-        icon: Icons.subtitles_rounded,
-        elementId: 'contextMenu.subtitleTrack',
-        children: subtitleItems,
-      ),
-      ContextEntry.action(
-        PlayerAction.openSubtitleFile,
-        Icons.folder_open_rounded,
-        elementId: 'contextMenu.openSubtitleFile',
-        label: '加载字幕文件…',
-      ),
-      const ContextEntry.divider(),
-      ContextEntry.submenu(
-        label: '超分',
-        icon: Icons.auto_awesome_rounded,
-        elementId: 'contextMenu.anime4k',
-        children: [
-          for (final p in anime4kTiers)
-            SubmenuItem(label: anime4kLabel(p), checked: p == anime4k, value: p),
-        ],
-      ),
-      ContextEntry.action(
-        PlayerAction.toggleStats,
-        Icons.monitor_heart_outlined,
-        elementId: 'contextMenu.stats',
-        label: '视频数据',
-      ),
-    ];
+}) {
+  final List<UpscaleScheme> schemes = upscaleSchemes ?? builtinUpscaleSchemes();
+  return [
+    ContextEntry.action(
+      PlayerAction.toggleFullscreen,
+      fullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+      elementId: 'contextMenu.fullscreen',
+      label: fullscreen ? '退出全屏' : '全屏',
+    ),
+    ContextEntry.action(
+      PlayerAction.togglePip,
+      Icons.picture_in_picture_alt_rounded,
+      elementId: 'contextMenu.pip',
+      label: pip ? '退出画中画' : '画中画',
+    ),
+    ContextEntry.action(
+      PlayerAction.toggleAlwaysOnTop,
+      alwaysOnTop ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+      elementId: 'contextMenu.alwaysOnTop',
+      label: alwaysOnTop ? '取消置顶' : '窗口置顶',
+    ),
+    const ContextEntry.divider(),
+    ContextEntry.submenu(
+      label: '音轨',
+      icon: Icons.audiotrack_rounded,
+      elementId: 'contextMenu.audioTrack',
+      children: audioItems,
+    ),
+    ContextEntry.submenu(
+      label: '字幕轨',
+      icon: Icons.subtitles_rounded,
+      elementId: 'contextMenu.subtitleTrack',
+      children: subtitleItems,
+    ),
+    ContextEntry.action(
+      PlayerAction.openSubtitleFile,
+      Icons.folder_open_rounded,
+      elementId: 'contextMenu.openSubtitleFile',
+      label: '加载字幕文件…',
+    ),
+    const ContextEntry.divider(),
+    ContextEntry.submenu(
+      label: '超分',
+      icon: Icons.auto_awesome_rounded,
+      elementId: 'contextMenu.upscale',
+      children: upscaleSubmenuItems(upscale, schemes),
+    ),
+    ContextEntry.action(
+      PlayerAction.toggleStats,
+      Icons.monitor_heart_outlined,
+      elementId: 'contextMenu.stats',
+      label: '视频数据',
+    ),
+  ];
+}
 
-/// 四档超分（契约 §1：只留 3 档 + 关）。
-const List<Anime4kPreset> anime4kTiers = [
-  Anime4kPreset.off,
-  Anime4kPreset.light,
-  Anime4kPreset.standard,
-  Anime4kPreset.ultra,
-];
-
-String anime4kLabel(Anime4kPreset p) => switch (p) {
-      Anime4kPreset.off => '关',
-      Anime4kPreset.light => '轻',
-      Anime4kPreset.standard => '标',
-      Anime4kPreset.ultra => '极',
-    };
+/// 「超分」子菜单项：关 + Anime4K 三档 + 其他方案（mpv 缩放器 / GLSL 包）。
+List<SubmenuItem> upscaleSubmenuItems(
+  UpscaleSelection current,
+  List<UpscaleScheme> schemes,
+) {
+  final List<SubmenuItem> items = [
+    SubmenuItem(
+      label: '关',
+      checked: current.isOff,
+      value: UpscaleSelection.off,
+      elementId: 'upscale.off',
+    ),
+  ];
+  for (final UpscaleScheme scheme in schemes) {
+    if (scheme.isAnime4k) {
+      for (final UpscaleTier tier in scheme.tiers) {
+        final Anime4kPreset preset =
+            Anime4kPreset.values.asNameMap()[tier.id] ?? Anime4kPreset.off;
+        items.add(SubmenuItem(
+          label: 'Anime4K · ${tier.label}',
+          checked: current.schemeId == scheme.id && current.preset == preset,
+          value: UpscaleSelection(preset: preset),
+          hint: scheme.note,
+          elementId: 'upscale.${scheme.id}.${tier.id}',
+        ));
+      }
+    } else {
+      items.add(SubmenuItem(
+        label: scheme.name,
+        checked: current.schemeId == scheme.id,
+        value: UpscaleSelection(schemeId: scheme.id),
+        hint: scheme.note,
+        elementId: 'upscale.${scheme.id}',
+      ));
+    }
+  }
+  return items;
+}
 
 /// 轨道子菜单项：`value` 是 `int?` 轨道 id（null = 关闭字幕 / 自动选音轨）。
 List<SubmenuItem> trackSubmenuItems(List<TrackInfo> tracks, int? activeId,

@@ -15,6 +15,7 @@ import '../controllers/settings_controller.dart';
 import '../models/app_settings.dart';
 import '../models/player_request.dart';
 import '../models/theme_tokens.dart';
+import '../models/upscale_scheme.dart';
 import 'anime4k_assets.dart';
 import 'diagnostics/diag.dart';
 import 'diagnostics/error_hooks.dart';
@@ -270,6 +271,8 @@ Future<AppRuntime> bootstrapPlayer({
   late final AppRuntime runtime;
   final anime4k = Anime4kController(
     runner: (List<String> args) => runtime.player.runMpvCommand(args),
+    // mpv 缩放器方案要存原值、离开时写回（media_kit 默认把 scale 钉成 bilinear）。
+    readProperty: (String name) => runtime.player.readMpvProperty(name),
   );
   try {
     final shaderDir = await unpackAnime4kShaders(
@@ -279,6 +282,13 @@ Future<AppRuntime> bootstrapPlayer({
     anime4k.setShaderDir(shaderDir);
     diag.info('bootstrap', 'anime4k shaders ok');
     final savedSettings = AppSettings.fromMap(store.get('app_settings') as Map?);
+    // 方案清单：内置 Anime4K + mpv 缩放器（扩展安装的 GLSL 包在后续版本接进来）。
+    anime4k.setSchemes(builtinUpscaleSchemes());
+    final UpscaleSelection savedSelection = UpscaleSelection.fromSettings(
+      schemeId: savedSettings.upscaleSchemeId,
+      presetName: savedSettings.anime4kPreset.name,
+      schemes: anime4k.schemes,
+    );
     runtime = AppRuntime(
       supportDir: supportDir,
       store: store,
@@ -289,12 +299,13 @@ Future<AppRuntime> bootstrapPlayer({
       lazyPlayer: lazyPlayer,
     );
     if (lazyPlayer) {
-      // 只记档位：下发会经 runner 去建 mpv —— 而这正是要避免的那份实例。
-      anime4k.loadPreset(savedSettings.anime4kPreset);
+      // 只记选择：下发会经 runner 去建 mpv —— 而这正是要避免的那份实例。
+      anime4k.loadSelection(savedSelection);
     } else {
-      await anime4k.setPreset(savedSettings.anime4kPreset);
+      await anime4k.setSelection(savedSelection);
     }
-    diag.info('bootstrap', 'anime4k preset ok (lazy=$lazyPlayer)');
+    diag.info('bootstrap',
+        'anime4k selection ok (${savedSelection.schemeId}/${savedSelection.preset.name}, lazy=$lazyPlayer)');
     return runtime;
   } catch (e, st) {
     diag.warn('bootstrap', 'anime4k init failed (降级为关)', e, st);

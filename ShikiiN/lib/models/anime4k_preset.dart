@@ -61,7 +61,9 @@ List<String> anime4kShaderChain(Anime4kPreset p) {
       return const [_clamp, _restoreM, _upM, _downX2, _downX4, _upS];
     case Anime4kPreset.standard:
       return const [_clamp, _restoreVL, _upVL, _downX2, _downX4, _upM];
+    // 官方 v4.0.1 的 Mode A+A：第二遍 Restore 用 M 档（x4 之后），
+    // **不是**把 VL 用两次 —— 官方明确说同一 shader 重复挂会出 bug 且白掉性能。
     case Anime4kPreset.ultra:
-      return const [_clamp, _restoreVL, _upVL, _restoreVL, _downX2, _downX4, _upM];
+      return const [_clamp, _restoreVL, _upVL, _downX2, _downX4, _restoreM, _upM];
   }
 }

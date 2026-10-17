@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shikiin/models/anime4k_preset.dart';
 import 'package:shikiin/models/theme_tokens.dart';
+import 'package:shikiin/models/upscale_scheme.dart';
 import 'package:shikiin/widgets/control_bar.dart';
 import 'package:shikiin/widgets/seek_bar.dart';
 import 'package:shikiin/widgets/styled_track.dart';
@@ -22,24 +23,27 @@ ControlBar _bar({
   VoidCallback? onPrev,
   VoidCallback? onNext,
   VoidCallback? onCycle,
-  Anime4kPreset anime4k = Anime4kPreset.off,
+  UpscaleSelection upscale = UpscaleSelection.off,
   bool playing = false,
-}) =>
-    ControlBar(
-      tokens: tokens ?? ThemeTokens.fallback,
-      playing: playing,
-      position: Duration.zero,
-      duration: const Duration(seconds: 100),
-      volume: 100,
-      onPlayPause: onPlay ?? () {},
-      onFullscreen: () {},
-      onSeek: (_) {},
-      onVolume: (_) {},
-      onPrevious: onPrev,
-      onNext: onNext,
-      anime4k: anime4k,
-      onCycleAnime4k: onCycle ?? () {},
-    );
+}) {
+  final schemes = builtinUpscaleSchemes();
+  return ControlBar(
+    tokens: tokens ?? ThemeTokens.fallback,
+    playing: playing,
+    position: Duration.zero,
+    duration: const Duration(seconds: 100),
+    volume: 100,
+    onPlayPause: onPlay ?? () {},
+    onFullscreen: () {},
+    onSeek: (_) {},
+    onVolume: (_) {},
+    onPrevious: onPrev,
+    onNext: onNext,
+    upscaleLabel: upscale.label(schemes),
+    upscaleOn: !upscale.isOff,
+    onCycleUpscale: onCycle ?? () {},
+  );
+}
 
 Future<void> _pump(WidgetTester tester, ControlBar bar) =>
     tester.pumpWidget(MaterialApp(home: Scaffold(body: Column(mainAxisAlignment: MainAxisAlignment.end, children: [bar]))));
@@ -94,15 +98,21 @@ void main() {
     expect(track.accent, const Color(0xFF00C2FF));
   });
 
-  testWidgets('超分胶囊显示当前档，点一下循环切档', (tester) async {
+  testWidgets('超分胶囊显示当前方案/档，点一下循环', (tester) async {
     var cycled = 0;
-    await _pump(tester, _bar(anime4k: Anime4kPreset.standard, onCycle: () => cycled++));
+    await _pump(tester, _bar(
+      upscale: const UpscaleSelection(preset: Anime4kPreset.standard),
+      onCycle: () => cycled++,
+    ));
     expect(find.text('超分 标'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('anime4kPill')));
+    await tester.tap(find.byKey(const Key('upscalePill')));
     expect(cycled, 1);
 
-    await _pump(tester, _bar(anime4k: Anime4kPreset.off));
+    await _pump(tester, _bar());
     expect(find.text('超分 关'), findsOneWidget);
+
+    await _pump(tester, _bar(upscale: const UpscaleSelection(schemeId: 'mpv-ewa-lanczossharp')));
+    expect(find.text('超分 EWA锐'), findsOneWidget);
   });
 
   testWidgets('全屏按钮存在；时间文字在控制栏里', (tester) async {

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shikiin/models/anime4k_preset.dart';
 import 'package:shikiin/models/player_action.dart';
 import 'package:shikiin/models/theme_tokens.dart';
+import 'package:shikiin/models/upscale_scheme.dart';
 import 'package:shikiin/widgets/context_menu.dart';
 
 Widget _host(List<ContextEntry> entries, {ValueChanged<PlayerAction>? onAction}) => MaterialApp(
@@ -42,8 +43,10 @@ void main() {
     expect(find.text('取消置顶'), findsOneWidget);
   });
 
-  testWidgets('超分子菜单列出四档且勾选当前档', (tester) async {
-    await tester.pumpWidget(_host(defaultContextEntries(anime4k: Anime4kPreset.ultra)));
+  testWidgets('超分子菜单：关 + Anime4K 三档 + mpv 缩放器方案，勾选当前项', (tester) async {
+    await tester.pumpWidget(_host(defaultContextEntries(
+      upscale: const UpscaleSelection(preset: Anime4kPreset.ultra),
+    )));
     await tester.pumpAndSettle();
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer(location: Offset.zero);
@@ -51,12 +54,19 @@ void main() {
     await gesture.moveTo(tester.getCenter(find.text('超分')));
     await tester.pumpAndSettle();
     expect(find.text('关'), findsOneWidget);
-    expect(find.text('轻'), findsOneWidget);
-    expect(find.text('标'), findsOneWidget);
-    expect(find.text('极'), findsOneWidget);
+    expect(find.text('Anime4K · 轻量'), findsOneWidget);
+    expect(find.text('Anime4K · 标准'), findsOneWidget);
+    expect(find.text('Anime4K · 极致'), findsOneWidget);
+    expect(find.text('mpv · EWA Lanczos Sharp'), findsOneWidget);
+    // 当前是「极致」：Anime4K 三档里只有它被勾选，mpv 方案不带勾。
+    final items = defaultContextEntries(
+      upscale: const UpscaleSelection(preset: Anime4kPreset.ultra),
+    ).where((e) => e.elementId == 'contextMenu.upscale').single.children!;
+    expect(items.where((i) => i.checked).length, 1);
+    expect(items.firstWhere((i) => i.checked).label, 'Anime4K · 极致');
   });
 
-  testWidgets('子菜单选择回调带出 elementId 与 value', (tester) async {
+  testWidgets('子菜单选择回调带出 elementId 与 UpscaleSelection', (tester) async {
     String? gotId;
     Object? gotValue;
     await tester.pumpWidget(MaterialApp(
@@ -67,10 +77,17 @@ void main() {
             ContextEntry.submenu(
               label: '超分',
               icon: Icons.auto_awesome_rounded,
-              elementId: 'contextMenu.anime4k',
-              children: const [
-                SubmenuItem(label: '轻', value: Anime4kPreset.light),
-                SubmenuItem(label: '标', checked: true, value: Anime4kPreset.standard),
+              elementId: 'contextMenu.upscale',
+              children: [
+                SubmenuItem(
+                  label: 'Anime4K · 轻量',
+                  value: const UpscaleSelection(preset: Anime4kPreset.light),
+                ),
+                SubmenuItem(
+                  label: 'Anime4K · 标准',
+                  checked: true,
+                  value: const UpscaleSelection(preset: Anime4kPreset.standard),
+                ),
               ],
             ),
           ],
@@ -88,10 +105,10 @@ void main() {
     addTearDown(gesture.removePointer);
     await gesture.moveTo(tester.getCenter(find.text('超分')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('标'));
+    await tester.tap(find.text('Anime4K · 标准'));
     await tester.pumpAndSettle();
-    expect(gotId, 'contextMenu.anime4k');
-    expect(gotValue, Anime4kPreset.standard);
+    expect(gotId, 'contextMenu.upscale');
+    expect(gotValue, const UpscaleSelection(preset: Anime4kPreset.standard));
   });
 
   testWidgets('头尾与连续分隔线被清理（不留空杆）', (tester) async {

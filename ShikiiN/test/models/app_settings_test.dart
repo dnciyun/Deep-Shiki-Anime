@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shikiin/models/app_settings.dart';
 import 'package:shikiin/models/anime4k_preset.dart';
 import 'package:shikiin/models/subtitle_style.dart';
+import 'package:shikiin/models/upscale_scheme.dart';
 
 void main() {
   test('默认含中性字幕样式', () {
@@ -51,5 +52,21 @@ void main() {
 
   test('无法识别的 anime4kPreset 名称回退 off', () {
     expect(AppSettings.fromMap({'anime4kPreset': 'modeCHq'}).anime4kPreset, Anime4kPreset.off);
+  });
+
+  test('upscaleSchemeId：默认 anime4k、往返保留、空值回默认', () {
+    expect(AppSettings().upscaleSchemeId, kAnime4kSchemeId);
+
+    final s = AppSettings(upscaleSchemeId: 'mpv-ewa-lanczossharp');
+    expect(AppSettings.fromMap(s.toMap()).upscaleSchemeId, 'mpv-ewa-lanczossharp');
+
+    expect(AppSettings.fromMap({'upscaleSchemeId': '  '}).upscaleSchemeId, kAnime4kSchemeId);
+    expect(AppSettings.fromMap({'upscaleSchemeId': 42}).upscaleSchemeId, kAnime4kSchemeId);
+  });
+
+  test('旧数据（没有 upscaleSchemeId）→ 默认 anime4k，旧档位照读', () {
+    final back = AppSettings.fromMap({'anime4kPreset': 'ultra'});
+    expect(back.upscaleSchemeId, kAnime4kSchemeId);
+    expect(back.anime4kPreset, Anime4kPreset.ultra);
   });
 }

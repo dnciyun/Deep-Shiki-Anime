@@ -32,9 +32,23 @@ void main() {
     expect(anime4kShaderChain(Anime4kPreset.light), isNot(contains('Anime4K_Upscale_CNN_x2_VL.glsl')));
   });
 
-  test('极致档 = A+A：Restore_CNN_VL 出现两次', () {
-    final ultra = anime4kShaderChain(Anime4kPreset.ultra);
-    expect(ultra.where((f) => f == 'Anime4K_Restore_CNN_VL.glsl').length, 2);
+  test('极致档 = 官方 v4.0.1 的 A+A：第二遍 Restore 用 M，不是把 VL 用两次', () {
+    expect(anime4kShaderChain(Anime4kPreset.ultra), [
+      'Anime4K_Clamp_Highlights.glsl',
+      'Anime4K_Restore_CNN_VL.glsl',
+      'Anime4K_Upscale_CNN_x2_VL.glsl',
+      'Anime4K_AutoDownscalePre_x2.glsl',
+      'Anime4K_AutoDownscalePre_x4.glsl',
+      'Anime4K_Restore_CNN_M.glsl',
+      'Anime4K_Upscale_CNN_x2_M.glsl',
+    ]);
+  });
+
+  test('任一档位里同一个 shader 文件不重复（官方：同一文件挂两次会 bug 且掉性能）', () {
+    for (final p in Anime4kPreset.simpleTiers) {
+      final chain = anime4kShaderChain(p);
+      expect(chain.toSet().length, chain.length, reason: '$p 链里有重复文件：$chain');
+    }
   });
 
   test('三档互不相同，且 Clamp 每档只出现一次', () {

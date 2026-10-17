@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../models/anime4k_preset.dart';
 import '../models/theme_tokens.dart';
 import 'app_icon_button.dart';
 import 'seek_bar.dart';
@@ -35,12 +34,14 @@ class ControlBar extends StatelessWidget {
   /// 「我要的播放列表为什么没有」）。null = 没有组信息（单集播放）→ 按钮隐藏。
   final VoidCallback? onPlaylist;
 
-  /// 超分当前档（胶囊显示）。
-  /// 当前超分档位；null = 宿主未注入 nime4kProvider（此时不显示档位胶囊）。
-  final Anime4kPreset? anime4k;
+  /// 超分胶囊文案（如 `超分 标` / `超分 EWA锐`）。null = 宿主未注入超分 provider → 胶囊隐藏。
+  final String? upscaleLabel;
 
-  /// 点一下循环切档（关→轻→标→极→关）。
-  final VoidCallback onCycleAnime4k;
+  /// 胶囊是否处于开启态（只影响着色）。
+  final bool? upscaleOn;
+
+  /// 点一下循环切「关 → Anime4K 三档 → 其他实时方案 → 关」。
+  final VoidCallback onCycleUpscale;
 
   const ControlBar({
     super.key,
@@ -57,8 +58,9 @@ class ControlBar extends StatelessWidget {
     this.onPrevious,
     this.onNext,
     this.onPlaylist,
-    this.anime4k,
-    required this.onCycleAnime4k,
+    this.upscaleLabel,
+    this.upscaleOn,
+    required this.onCycleUpscale,
   });
 
   @override
@@ -144,8 +146,13 @@ class ControlBar extends StatelessWidget {
                 ),
               ),
               SizedBox(width: t.spacing),
-              if (anime4k case final Anime4kPreset p)
-                _Anime4kPill(tokens: t, preset: p, onTap: onCycleAnime4k),
+              if (upscaleLabel != null)
+                _UpscalePill(
+                  tokens: t,
+                  label: upscaleLabel!,
+                  on: upscaleOn ?? false,
+                  onTap: onCycleUpscale,
+                ),
               if (onPlaylist != null)
                 AppIconButton(
                   key: const Key('btn_playlist'),
@@ -175,31 +182,33 @@ class ControlBar extends StatelessWidget {
   }
 }
 
-/// 超分档位胶囊：点一下循环切档（关→轻→标→极→关）。
-class _Anime4kPill extends StatefulWidget {
+/// 超分胶囊：点一下循环切「关 → Anime4K 三档 → 其他实时方案 → 关」。
+///
+/// 2026-10-17 方案制：文案由调用方给（`超分 关` / `超分 标` / `超分 EWA锐`），
+/// 这里只管显示与点击，不再自己映射 Anime4K 档位。
+class _UpscalePill extends StatefulWidget {
   final ThemeTokens tokens;
-  final Anime4kPreset preset;
+  final String label;
+  final bool on;
   final VoidCallback onTap;
-  const _Anime4kPill({required this.tokens, required this.preset, required this.onTap});
+  const _UpscalePill({
+    required this.tokens,
+    required this.label,
+    required this.on,
+    required this.onTap,
+  });
 
   @override
-  State<_Anime4kPill> createState() => _Anime4kPillState();
+  State<_UpscalePill> createState() => _UpscalePillState();
 }
 
-class _Anime4kPillState extends State<_Anime4kPill> {
+class _UpscalePillState extends State<_UpscalePill> {
   bool _hover = false;
-
-  String get _label => switch (widget.preset) {
-        Anime4kPreset.off => '超分 关',
-        Anime4kPreset.light => '超分 轻',
-        Anime4kPreset.standard => '超分 标',
-        Anime4kPreset.ultra => '超分 极',
-      };
 
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
-    final on = widget.preset != Anime4kPreset.off;
+    final on = widget.on;
     final bg = on ? t.accent : t.sunken;
     final fg = on ? t.raised : t.text2;
     return MouseRegion(
@@ -209,7 +218,7 @@ class _Anime4kPillState extends State<_Anime4kPill> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          key: const Key('anime4kPill'),
+          key: const Key('upscalePill'),
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
           height: t.controlHeight * 0.72,
@@ -222,7 +231,7 @@ class _Anime4kPillState extends State<_Anime4kPill> {
             borderRadius: BorderRadius.circular(t.radiusPill),
           ),
           child: Text(
-            _label,
+            widget.label,
             maxLines: 1,
             softWrap: false,
             // 字号走 token（用户 2026-10-11 第六轮：「包括控件文字」）。
