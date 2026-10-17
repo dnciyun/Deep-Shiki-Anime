@@ -844,6 +844,12 @@ void main() {
               '无职转生 ～到了异世界就拿出真本事～ - 05',
               publishedAt: DateTime.utc(2021, 2, 8),
             ),
+            // 本作的**合集**（第四十八轮·补七：从本作单集里切出来，单独一页）。
+            _item(
+              6,
+              '无职转生 第二季 ～到了异世界就拿出真本事～ [01-12 合集][1080p]',
+              publishedAt: DateTime.utc(2024, 6, 20),
+            ),
           ],
         },
       );
@@ -869,16 +875,21 @@ void main() {
       final LibrarySeedState s = c.read(librarySeedProvider);
 
       expect(s.phase, LibrarySeedPhase.ready);
-      // 本作：只有 S2 那两条（S1 的行按时间窗判成"更早的版本"，S3 按季号判走）。
+      // 本作**单集**：只有 S2 那两条（S1 的行按时间窗判成"更早的版本"，S3 按季号判走）。
       // 池子里是**新→旧**排过的（`aggregateSort`），所以 02 在 01 前面。
       expect(s.episodes.map((SourceItemView i) => i.title), <String>[
         '无职转生 第二季 ～到了异世界就拿出真本事～ - 02',
         '无职转生 第二季 ～到了异世界就拿出真本事～ - 01',
       ]);
-      // 段也只算本作：「桜都字幕组（2 条）」不会把 S1 那条算进去。
+      // 段也只算本作单集：「桜都字幕组（2 条）」不会把 S1 那条、合集那条算进去。
       expect(s.groups, hasLength(1));
       expect(s.groups.single.label, contains('桜都'));
       expect(s.groups.single.count, 2);
+      // 本作的**合集**单独一页（补七）。
+      expect(s.batchItems, hasLength(1));
+      expect(s.batchItems.single.title, contains('合集'));
+      expect(s.batchGroups.single.label, contains('桜都'));
+      expect(s.batchGroups.single.count, 1);
       // 别的版本：按桶分好，桶里也按字幕组分段（界面直接画）。
       expect(s.otherVersions.map((SeedOtherBlock b) => b.label), <String>[
         '第三季',
@@ -888,8 +899,8 @@ void main() {
       expect(s.otherVersions.first.groups.single.label, contains('绿茶'));
       expect(s.otherVersions.last.count, 1);
       expect(s.otherCount, 3);
-      // 整池还在（勾选下载、手动锚点再合成要用它）。
-      expect(s.allItems, hasLength(5));
+      // 整池还在（勾选下载、手动锚点再合成要用它）：2 单集 + 1 合集 + 3 别的版本。
+      expect(s.allItems, hasLength(6));
     });
 
     test('本作一条都不剩时**不分**：整池还是本作，不许把页面弄空', () async {

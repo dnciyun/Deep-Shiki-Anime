@@ -1793,8 +1793,10 @@ class LibrarySeedState {
     this.binding,
     this.detail,
     this.episodes = const <SourceItemView>[],
+    this.batchItems = const <SourceItemView>[],
     this.allItems = const <SourceItemView>[],
     this.groups = const <SeedGroup>[],
+    this.batchGroups = const <SeedGroup>[],
     this.otherVersions = const <SeedOtherBlock>[],
     this.visibleGroups = kSeedVisibleGroups,
     this.problem = LibrarySeedProblem.none,
@@ -1818,24 +1820,30 @@ class LibrarySeedState {
   /// 有它才能画每个字幕组旁边那颗「订阅」（mikan 的组订阅靠番剧 id + 组 RSS 地址）。
   final BangumiDetailView? detail;
 
-  /// **本作**的条目（相关度筛过、跨站同名合并过、新→旧排过、**版本筛过**）。
+  /// **本作单集**的条目（相关度筛过、跨站同名合并过、新→旧排过、**版本筛过**）。
   ///
-  /// 播放列表与批量下载用它 —— 别的版本的条目**不在**这里，否则播完一集「下一集」会
-  /// 跳到另一季去（第四十八轮·补六）。
+  /// 播放列表与批量下载用它 —— 别的版本与**合集**都不在这里，否则播完一集「下一集」会
+  /// 跳到另一季、或者跳进一个整季文件（第四十八轮·补六 / 补七）。
   final List<SourceItemView> episodes;
 
-  /// **整池**（本作 + 别的版本；同名合并过、新→旧排过）。
+  /// 本作里的**合集**（整季一次发的批量种；第四十八轮·补七：分页里的「合集」那一页）。
+  final List<SourceItemView> batchItems;
+
+  /// **整池**（本作单集 + 合集 + 别的版本；同名合并过、新→旧排过）。
   ///
   /// 只给"合成 / 勾选下载"这类要拿到全量的地方用，界面本身不拿它画列表
-  /// （界面画的是 [groups] 与 [otherVersions]）。
+  /// （界面画的是 [groups] / [batchGroups] / [otherVersions]）。
   final List<SourceItemView> allItems;
 
-  /// **按字幕组分好的段**（界面按它渲染；顺序 = 条数多的在前，见 [groupSeedItems]）。
+  /// **按字幕组分好的段**（本作单集；顺序 = 条数多的在前，见 [groupSeedItems]）。
   final List<SeedGroup> groups;
+
+  /// 合集的段（按字幕组分；界面「合集」那一页按它画）。
+  final List<SeedGroup> batchGroups;
 
   /// **别的版本**（第四十八轮·补六）：按版本分好的桶（第三季 / 剧场版 / 更早的版本…）。
   ///
-  /// 界面上默认收在「其他版本（N 条）」那一行里 —— 判错的条目也在里面，**不删**。
+  /// 界面上是分页条上的一页一页（补七：「在字幕组上面加入分页」）—— 判错的条目也在里面，**不删**。
   final List<SeedOtherBlock> otherVersions;
 
   /// 现在露几段（「显示更多字幕组」加 [kSeedGroupsStep]）。
@@ -1881,8 +1889,10 @@ class LibrarySeedState {
     BangumiDetailView? detail,
     bool clearDetail = false,
     List<SourceItemView>? episodes,
+    List<SourceItemView>? batchItems,
     List<SourceItemView>? allItems,
     List<SeedGroup>? groups,
+    List<SeedGroup>? batchGroups,
     List<SeedOtherBlock>? otherVersions,
     int? visibleGroups,
     LibrarySeedProblem? problem,
@@ -1897,8 +1907,10 @@ class LibrarySeedState {
     binding: binding ?? this.binding,
     detail: clearDetail ? null : (detail ?? this.detail),
     episodes: episodes ?? this.episodes,
+    batchItems: batchItems ?? this.batchItems,
     allItems: allItems ?? this.allItems,
     groups: groups ?? this.groups,
+    batchGroups: batchGroups ?? this.batchGroups,
     otherVersions: otherVersions ?? this.otherVersions,
     visibleGroups: visibleGroups ?? this.visibleGroups,
     problem: problem ?? this.problem,
@@ -2320,6 +2332,8 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
         episodes: pool,
         allItems: pool,
         groups: groupSeedItems(pool),
+        batchItems: const <SourceItemView>[],
+        batchGroups: const <SeedGroup>[],
         otherVersions: const <SeedOtherBlock>[],
         visibleGroups: kSeedVisibleGroups,
         warning: warning,
@@ -2328,8 +2342,8 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
       return;
     }
     // 「这一条属于哪一版」（第四十八轮·补六，见 `domain/seed_version.dart`）：
-    // 本作进列表，别的版本收进 [otherVersions]。判错的方向**宁多勿少** —— 最坏也只是把
-    // 本作的一条挪进了「其他版本」，那条不丢、翻得到。
+    // 本作进列表，别的版本分桶；本作里的**合集**再单独切一页（补七）。
+    // 判错的方向**宁多勿少** —— 最坏也只是把本作的一条挪进了别的页，那条不丢、翻得到。
     final SeedVersionSplit split = splitSeedVersions(
       pool,
       seedSignatureOf(
@@ -2351,8 +2365,10 @@ class LibrarySeedController extends Notifier<LibrarySeedState> {
       binding: binding,
       detail: detail,
       episodes: split.current,
+      batchItems: split.batch,
       allItems: pool,
       groups: groupSeedItems(split.current),
+      batchGroups: groupSeedItems(split.batch),
       otherVersions: split.others,
       warning: note.isEmpty ? null : note,
     );

@@ -28,6 +28,12 @@
 ///   但下载时它就是同一季的后半（用户要的是整季）——所以「部」只解出来、不参与排除；
 /// * **「第Nクール」不能当季号**：S1 后半的官方名是 `無職転生 … 第2クール`（**没有 Ⅱ**）。
 ///   当成季 2 的话，它在 S1 的页面上会被判成"第二季"。
+///
+/// ── 第四十八轮·补七：分页 ─────────────────────────────────────────────────────
+/// 用户原话：「在字幕组上面加入分页，把合集分进去」——
+/// 每一版（本作 / 合集 / 第三季 / 更早的版本 / 剧场版…）变成组名列表**上面**那一排分页里的
+/// 一页，一页 = 这一版的字幕组段；**本作里的合集**（整季一次发的批量种，[isSeedBatch]）
+/// 也从本作里切出来单独一页。界面在 `library_seed_block.dart` 的 `_categoryTabs`。
 library;
 
 import 'dart:math' as math;
@@ -281,10 +287,17 @@ class SeedOtherBlock {
 /// 分开之后的两半。
 @immutable
 class SeedVersionSplit {
-  const SeedVersionSplit({required this.current, required this.others});
+  const SeedVersionSplit({
+    required this.current,
+    required this.others,
+    this.batch = const <SourceItemView>[],
+  });
 
-  /// 本作那些条目（**已经**是原来那个顺序）。
+  /// 本作**单集**那些条目（**已经**是原来那个顺序）。
   final List<SourceItemView> current;
+
+  /// 本作里的**合集**（整季/整部一次发的批量种）—— 界面上单独一页（第四十八轮·补七）。
+  final List<SourceItemView> batch;
 
   /// 别的版本（按条数从多到少）。
   final List<SeedOtherBlock> others;
@@ -298,10 +311,18 @@ class SeedVersionSplit {
   }
 }
 
-/// 把一池子条目分成"本作"和"别的版本"。
+/// 「合集」那一页的页名（界面 + 用例共用）。
+const String kSeedBatchLabel = '合集';
+
+/// 把一池子条目分成"本作单集 / 本作合集 / 别的版本"。
 ///
 /// ⚠️ 兜底：**如果一条都不剩本作，就不分了**（整池原样当本作）—— 判错方向宁可"多给"，
 /// 也不能让用户打开这一页看见个空列表。
+///
+/// 合集再单独切一层（第四十八轮·补七，用户「在字幕组上面加入分页，把合集分进去」）：
+/// 整季一次发的批量种混在单集里，会让「这一组都入队」把一整季当一个文件下、也让单集列表
+/// 被几条全集顶长。切出去之后「合集」是分页条上的一页 —— **不丢**，翻得到、也下得动。
+/// ⚠️ 同样兜底：本作单集一条都不剩时，合集并回本作（不许出现空的第一页）。
 SeedVersionSplit splitSeedVersions(
   List<SourceItemView> items,
   SeedSubjectSignature subject,
@@ -333,6 +354,14 @@ SeedVersionSplit splitSeedVersions(
       others: const <SeedOtherBlock>[],
     );
   }
+  // 本作里再分出"合集"。
+  final List<SourceItemView> plain = <SourceItemView>[];
+  final List<SourceItemView> batch = <SourceItemView>[];
+  for (final SourceItemView item in current) {
+    (isSeedBatch(item.title ?? '') ? batch : plain).add(item);
+  }
+  if (plain.isEmpty) batch.clear();
+  if (plain.isEmpty) plain.addAll(current);
   final List<SeedOtherBlock> others = <SeedOtherBlock>[
     for (final MapEntry<String, List<SourceItemView>> e in buckets.entries)
       SeedOtherBlock(
@@ -348,10 +377,56 @@ SeedVersionSplit splitSeedVersions(
     return byCount != 0 ? byCount : a.label.compareTo(b.label);
   });
   return SeedVersionSplit(
-    current: List<SourceItemView>.unmodifiable(current),
+    current: List<SourceItemView>.unmodifiable(plain),
+    batch: List<SourceItemView>.unmodifiable(
+      plain.isEmpty ? const <SourceItemView>[] : batch,
+    ),
     others: List<SeedOtherBlock>.unmodifiable(others),
   );
 }
+
+/// 这一条标题是不是**合集**（整季/整部一次发的批量种）。
+///
+/// 判据（都有真标题作证，见 `build/round48c/uw_titles_833.txt`）：
+/// * 明说：`合集` / `全集` / `合辑` / `全话` / `batch`（`[01-14 合集]`、`[00-24TV全集+特典映像]`；
+/// * 集号区间：`[01-26]`、`[12-23]` 这种一行就是一季的（`[VCB-Studio] … [01-12][BDRip]`）——
+///   单集不会有区间；
+/// * **BD 整季**：标了 `BDRip / BDMV / BD-box / 蓝光` 但标题里**没有集号**
+///   （`[H-Enc] … (BDRip 1080p HEVC FLAC)`、`[VCB-Studio] … BDRip [S2 Fin]`）；
+///   单集的 BDRip 一定带集号（`- 05` / `[05]` / `第5话`），所以这条不会误伤。
+///
+/// ⚠️ 只认"区间在方括号里、数字 1~3 位"：`[1080p]`、`[HEVC-10bit]`、`[简日双语内嵌]` 都不会命中。
+bool isSeedBatch(String title) {
+  if (title.trim().isEmpty) return false;
+  final String text = _halfWidth(title);
+  final String lower = text.toLowerCase();
+  if (_kBatchWords.hasMatch(lower)) return true;
+  if (_kEpisodeRange.hasMatch(text)) return true;
+  if (_kDiscBatchWords.hasMatch(lower) && !_kEpisodeNumber.hasMatch(text)) {
+    return true;
+  }
+  return false;
+}
+
+/// 合集词表（小写文本上匹配）。
+final RegExp _kBatchWords = RegExp(
+  r'合集|全集|合辑|合輯|全話|全话|全劇|全剧|batch|全\s*[0-9]{1,3}\s*[话話集]',
+);
+
+/// 方括号里的集号区间：`[01-26]` / `[1~12]`。
+final RegExp _kEpisodeRange = RegExp(
+  r'\[\s*[0-9]{1,3}\s*[-~–—]\s*[0-9]{1,3}\s*\]',
+);
+
+/// 整季盘的标记（`BDRip` / `BDMV` / `BD-box` / 蓝光）—— 要配合"没有集号"才当合集。
+final RegExp _kDiscBatchWords = RegExp(
+  r'bdr|bdmv|bd[\s_-]?box|blu-ray|蓝光|藍光',
+);
+
+/// 标题里"这一行是第几集"的痕迹：`- 05` / `[05]` / `第5话`。
+final RegExp _kEpisodeNumber = RegExp(
+  r'[-–—]\s*[0-9]{1,3}(?![0-9])|\[\s*[0-9]{1,3}\s*\]|第\s*[0-9]{1,3}\s*[话話集]',
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 解析（词表）

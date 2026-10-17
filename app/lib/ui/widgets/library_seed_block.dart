@@ -50,7 +50,7 @@ import '../../domain/error_text.dart';
 import '../../domain/following_subscription.dart';
 import '../../domain/library_seed.dart';
 import '../../domain/models.dart';
-import '../../domain/seed_version.dart' show SeedOtherBlock;
+import '../../domain/seed_version.dart' show SeedOtherBlock, kSeedBatchLabel;
 import '../../domain/subtitle_groups.dart';
 import '../../state/playback.dart';
 import '../../state/providers.dart';
@@ -101,25 +101,48 @@ Key dsDetailSeedsGroupCollapseKey(String key) =>
 Key dsDetailSeedsGroupMoreKey(String key) =>
     ValueKey<String>('seed-group-more-$key');
 
-/// 「其他版本（N 条）」那一行（第四十八轮·补六；点它 = 展开 / 收起别的版本）。
-const Key dsDetailSeedsOtherKey = Key('library-detail-seeds-other');
+/// 「本作」那一页的页名（分页条第一页；界面 + 用例共用）。
+const String kSeedCurrentLabel = '本作';
 
-/// 其他版本里的版本小节（例如「第三季」那一块）。
-Key dsDetailSeedsOtherBlockKey(String version) =>
-    ValueKey<String>('seed-other-block-$version');
+/// 分页条上的一页（第四十八轮·补七）：一个版本 + 它的字号组段 + 条目。
+///
+/// 页 = 版本（本作 / 合集 / 第三季 / 剧场版 / 更早的版本…）。界面上点哪页就画哪页的段。
+@immutable
+class _SeedCategory {
+  const _SeedCategory({
+    required this.label,
+    required this.groups,
+    required this.items,
+  });
 
-/// 其他版本里某一段字幕组的抬头（[version] = 版本标签，[key] = 归一化组名）。
+  final String label;
+  final List<SeedGroup> groups;
+  final List<SourceItemView> items;
+
+  int get count => items.length;
+
+  bool get isCurrent => label == kSeedCurrentLabel;
+
+  String get tooltip => isCurrent
+      ? '本作这一版（${groups.length} 个字幕组 · $count 条）'
+      : '$label（${groups.length} 个字幕组 · $count 条）';
+}
+
+/// 分页条上一页的按钮（点它 = 切到那一版；第四十八轮·补七）。
+Key dsDetailSeedsCategoryKey(String label) =>
+    ValueKey<String>('seed-category-$label');
+
+/// 「合集」那一页里某一段字幕组的抬头（[key] = 归一化组名）。
+///
+/// `version` 传页名（`合集` / `第三季` / `更早的版本`…）—— 同一家组在不同页各有一段。
 Key dsDetailSeedsOtherGroupKey(String version, String key) =>
     ValueKey<String>('seed-other-group-$version-$key');
 
-/// 其他版本里某一段的抬头开关。
+/// 分页里（非本作页）某一段的抬头开关。
 Key dsDetailSeedsOtherGroupToggleKey(String version, String key) =>
     ValueKey<String>('seed-other-toggle-$version-$key');
 
-/// 「其他版本（N 条）」那一行本身（点它 = 展开 / 收起）。
-const Key dsDetailSeedsOtherToggleKey = Key('library-detail-seeds-other-toggle');
-
-/// 其他版本里某一段末尾的「本组还有 N 条」/「收起这一组」。
+/// 分页里（非本作页）某一段末尾的「本组还有 N 条」/「收起这一组」。
 Key dsDetailSeedsOtherGroupMoreKey(String version, String key) =>
     ValueKey<String>('seed-other-more-$version-$key');
 Key dsDetailSeedsOtherGroupCollapseKey(String version, String key) =>
@@ -165,8 +188,10 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   final TextEditingController _raw = TextEditingController();
   bool _tools = false;
 
-  /// 「其他版本（N 条）」那一行点开了没有（第四十八轮·补六；默认收起）。
-  bool _showOther = false;
+  /// 分页条上当前选中的页名（null = 本作；第四十八轮·补七）。
+  ///
+  /// 存**页名**而不是下标：重新搜一次之后页会变（比如合集没了），存下标会指到别的页上。
+  String? _categoryLabel;
   bool _busyGroup = false;
   String? _busyItemId;
 
@@ -196,7 +221,7 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     _selected.clear();
     _openGroups.clear();
     _fullGroups.clear();
-    _showOther = false;
+    _categoryLabel = null;
     _ensureSoon();
   }
 
@@ -406,6 +431,13 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
     final String showTitle =
         (s.detail?.displayTitle ?? widget.subject.displayTitle).trim();
+    // 分页（第四十八轮·补七，用户「在字幕组上面加入分页，把合集分进去」）：
+    // 一页一版 —— 本作 / 合集 / 第三季 / 更早的版本 / 剧场版…（只列有内容的）。
+    final List<_SeedCategory> categories = _categories(s);
+    final int categoryAt = _categoryIndex(categories);
+    final _SeedCategory? category =
+        categories.isEmpty ? null : categories[categoryAt];
+    final bool currentPage = category == null || category.isCurrent;
 
     return Container(
       key: dsDetailSeedsKey,
@@ -416,26 +448,31 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
         children: <Widget>[
           NeoSectionHeader(
             title: '种子',
-            subtitle: _subtitle(s),
+            subtitle: _subtitle(s, category),
             padding: const EdgeInsets.only(bottom: 10),
             trailing: _headerActions(s),
           ),
-          _body(context, s, showTitle, marks, jobs, torrents),
+          _body(
+            context,
+            s,
+            category,
+            categories,
+            categoryAt,
+            showTitle,
+            marks,
+            jobs,
+            torrents,
+          ),
           if (_tools) ...<Widget>[const SizedBox(height: 10), _toolsRow(s)],
           if (s.phase == LibrarySeedPhase.ready) ...<Widget>[
             const SizedBox(height: 8),
             // ⚠️ 这一排跟着结果走，画在结果**下面** —— 第四十八轮·补四用户退回过
             // "挪到上面"那一版：「这些位置也不应该在上面」。
+            // （分页条在**组名列表上面**，那是补七用户点名要的；这一排没动。）
             Align(
               alignment: Alignment.centerLeft,
-              child: _controls(s),
+              child: _controls(s, currentPage: currentPage),
             ),
-          ],
-          // 别的版本（第四十八轮·补六）：默认折一行，点开才按版本分小节 —— 判错的条目
-          // 也在这区里，不删（见 `domain/seed_version.dart` 头部的取舍）。
-          if (s.phase == LibrarySeedPhase.ready && s.otherVersions.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 4),
-            _otherVersions(s, showTitle, marks, jobs, torrents),
           ],
         ],
       ),
@@ -454,12 +491,16 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
   /// 不再一次把几十段全铺出来；还剩几个、这一次会多露几个，都写在悬停提示里。
   ///
   /// ⚠️ 它们只动**段窗口**（露几个组名），不碰每段自己的开合。
-  Widget _controls(LibrarySeedState s) {
+  ///
+  /// 补七起：这两颗**只在「本作」那一页**出现 —— 别的页（合集 / 第三季 / …）都是那一版的
+  /// 全量段，没有"首屏 4 段"这回事，画出来反而是两颗灰的。
+  Widget _controls(LibrarySeedState s, {required bool currentPage}) {
     final LibrarySeedController controller = ref.read(
       librarySeedProvider.notifier,
     );
     // 段数没超过首屏那几个：没有"宽窄"可调，两颗都不画（画了也是两颗灰的）。
-    final bool toggleable = s.groups.length > kSeedVisibleGroups;
+    final bool toggleable =
+        currentPage && s.groups.length > kSeedVisibleGroups;
     final int remaining = s.remainingGroups;
     final bool wide = s.visibleGroups > kSeedVisibleGroups;
     // 展开那颗的悬停提示：这一下会多露几个 + 还剩几个（最后一档就是"剩下这些"）。
@@ -531,30 +572,38 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 抬头那行小字：说清"这批种子是怎么来的、用的是哪个词"。
-  String _subtitle(LibrarySeedState s) => switch (s.phase) {
-    LibrarySeedPhase.idle ||
-    LibrarySeedPhase.searching => s.word == null
-        ? '正在各站找这一部…'
-        : '正在各站搜「${s.word}」…',
-    LibrarySeedPhase.fetching => '正在取这张 mikan 番剧页…',
-    LibrarySeedPhase.failed => switch (s.problem) {
-      LibrarySeedProblem.notFound => '各站都没搜到这一部',
-      LibrarySeedProblem.noMagnet => '搜到了条目，但没有可下的种子',
-      LibrarySeedProblem.network => '这一轮没取回来',
-      LibrarySeedProblem.badInput => '这串里没有番剧 id',
-      LibrarySeedProblem.none => '没找到',
-    },
-    LibrarySeedPhase.ready => <String>[
-      '${s.groups.length} 个字幕组',
-      '共 ${s.episodes.length} 条',
-      if (s.word case final String word) '用的是「$word」',
-    ].join(' · '),
-  };
+  /// 抬头那行小字：说清"这一页是哪一版、几个组、几条、用的是哪个词"。
+  ///
+  /// 分页（补七）之后要跟着**当前页**走：切到「合集 / 第三季」时这里的组数与条数必须是那一页的，
+  /// 否则用户会拿本作的数字去对别的页。
+  String _subtitle(LibrarySeedState s, _SeedCategory? category) =>
+      switch (s.phase) {
+        LibrarySeedPhase.idle ||
+        LibrarySeedPhase.searching => s.word == null
+            ? '正在各站找这一部…'
+            : '正在各站搜「${s.word}」…',
+        LibrarySeedPhase.fetching => '正在取这张 mikan 番剧页…',
+        LibrarySeedPhase.failed => switch (s.problem) {
+          LibrarySeedProblem.notFound => '各站都没搜到这一部',
+          LibrarySeedProblem.noMagnet => '搜到了条目，但没有可下的种子',
+          LibrarySeedProblem.network => '这一轮没取回来',
+          LibrarySeedProblem.badInput => '这串里没有番剧 id',
+          LibrarySeedProblem.none => '没找到',
+        },
+        LibrarySeedPhase.ready => <String>[
+          if (category != null && !category.isCurrent) category.label,
+          '${category?.groups.length ?? s.groups.length} 个字幕组',
+          '共 ${category?.count ?? s.episodes.length} 条',
+          if (s.word case final String word) '用的是「$word」',
+        ].join(' · '),
+      };
 
   Widget _body(
     BuildContext context,
     LibrarySeedState s,
+    _SeedCategory? category,
+    List<_SeedCategory> categories,
+    int categoryAt,
     String showTitle,
     Map<String, DateTime> marks,
     List<QueueJobView> jobs,
@@ -572,17 +621,25 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     }
     if (s.phase == LibrarySeedPhase.failed) return _failure(context, s);
 
-    final List<SeedGroup> shown = s.shownGroups;
+    final _SeedCategory page = category ??
+        _SeedCategory(label: kSeedCurrentLabel, groups: s.groups, items: s.episodes);
+    final bool currentPage = page.isCurrent;
+    final List<SeedGroup> shown = currentPage ? s.shownGroups : page.groups;
+    // 段 id：本作页就用归一化组名；别的页带页名前缀（同一家组在不同页各有一段）。
+    String? openKeyOf(SeedGroup group) =>
+        currentPage ? null : _categoryOpenKey(page.label, group.key);
+    String effectiveKey(SeedGroup group) => openKeyOf(group) ?? group.key;
     // 「全选本页」说的是**现在真看得见**的那些条目：收起着的段一行都没画，
     // 把它算进去就会变成"勾选了一批看不见的东西"（第四十五轮那条纪律的延续）。
     final List<SourceItemView> scope = <SourceItemView>[
       for (final SeedGroup group in shown)
-        if (_openGroups.contains(group.key)) ..._visibleItems(group),
+        if (_openGroups.contains(effectiveKey(group)))
+          ..._visibleItems(group, openKey: openKeyOf(group)),
     ];
     // 表头（番名 / 大小 / 状态 / 操作 + 全选）只在**第一张展开出来的**表上画一次：
     // 默认全都收着时一张表都没有，也就不该有一条孤零零的表头。
     final int headerAt = shown.indexWhere(
-      (SeedGroup g) => _openGroups.contains(g.key),
+      (SeedGroup g) => _openGroups.contains(effectiveKey(g)),
     );
 
     return Column(
@@ -594,9 +651,25 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
             padding: const EdgeInsets.only(bottom: 8),
             child: DsBanner(kind: DsBannerKind.warning, text: warning),
           ),
+        // 分页条：**组名列表上面**（第四十八轮·补七用户原话「在字幕组上面加入分页」）。
+        if (categories.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: _categoryTabs(categories, categoryAt),
+          ),
         for (int i = 0; i < shown.length; i++) ...<Widget>[
-          _groupHeader(context, s, shown[i], showTitle, marks, jobs, torrents),
-          if (_openGroups.contains(shown[i].key)) ...<Widget>[
+          _groupHeader(
+            context,
+            s,
+            shown[i],
+            showTitle,
+            marks,
+            jobs,
+            torrents,
+            openKey: openKeyOf(shown[i]),
+            versionLabel: currentPage ? null : page.label,
+          ),
+          if (_openGroups.contains(effectiveKey(shown[i]))) ...<Widget>[
             _groupTable(
               context,
               s,
@@ -607,9 +680,15 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
               torrents,
               showHeader: i == headerAt,
               scope: scope,
-              playlist: s.episodes,
+              playlist: currentPage ? s.episodes : page.items,
+              openKey: openKeyOf(shown[i]),
             ),
-            _groupFoot(shown[i], t),
+            _groupFoot(
+              shown[i],
+              t,
+              openKey: openKeyOf(shown[i]),
+              versionLabel: currentPage ? null : page.label,
+            ),
           ],
         ],
         if (_selected.isNotEmpty) ...<Widget>[
@@ -625,8 +704,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
                 onPressed: _busyGroup
                     ? null
                     : () async {
-                        // ⚠️ 用**整池**找勾中的条目：勾选可以在「其他版本」区里发生，
-                        // 只扫 `episodes`（本作）会点了没反应（第四十八轮·补六）。
+                        // ⚠️ 用**整池**找勾中的条目：勾选可以发生在任何一页（合集 / 别的版本），
+                        // 只扫 `episodes`（本作单集）会点了没反应（第四十八轮·补六/补七）。
                         final List<SourceItemView> picked = <SourceItemView>[
                           for (final SourceItemView item in s.allItems)
                             if (_selected.contains(item.id)) item,
@@ -738,8 +817,8 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
 
   /// 这一段现在该画几条（收起着的段一条都不画；展开了先露 [kSeedGroupVisibleStep] 条）。
   ///
-  /// [openKey]：同一家字幕组可能在「本作区」与「其他版本区」各出现一次，段 id 要能区分
-  /// （见 [_otherKey]）。
+  /// [openKey]：同一家字幕组可能在「本作」「合集」「第三季」各出现一次，段 id 要能区分
+  /// （见 [_categoryOpenKey]）。
   List<SourceItemView> _visibleItems(SeedGroup group, {String? openKey}) {
     final String key = openKey ?? group.key;
     if (_fullGroups.contains(key) || group.count <= kSeedGroupVisibleStep) {
@@ -910,142 +989,98 @@ class _LibrarySeedBlockState extends ConsumerState<LibrarySeedBlock> {
     );
   }
 
-  /// 其他版本的段 id：`版本标签\u0000归一化组名`。
+  /// 分页里某一段的 id：`页名\u0000归一化组名`。
   ///
-  /// 同一家字幕组（`桜都`）在本作区和「第三季」区各有一段，两个 Set 不能撞。
-  static String _otherKey(String version, String groupKey) =>
-      '$version\u0000$groupKey';
+  /// 同一家字幕组（`桜都`）在本作页、「合集」页、「第三季」页各有一段，三个 Set 不能撞。
+  static String _categoryOpenKey(String label, String groupKey) =>
+      '$label\u0000$groupKey';
 
-  /// 结果下面那行「其他版本（N 条）」+ 展开后的版本小节（第四十八轮·补六）。
+  /// 当前有哪些页（第四十八轮·补七）：本作 / 合集 / 别的版本各一页，只列有内容的。
   ///
-  /// 为什么默认收起：主列表要干净（用户要的是"打开就看到本作"）；但被判成"别的版本"的
-  /// 条目**一条都不能丢** —— 判据是标题里的版本标记 + 放送时间窗，必然会有判错的时候
-  /// （见 `domain/seed_version.dart` 头部），折在这里用户随时翻得到、还能直接入队。
-  Widget _otherVersions(
-    LibrarySeedState s,
-    String showTitle,
-    Map<String, DateTime> marks,
-    List<QueueJobView> jobs,
-    List<EngineTorrentView> torrents,
-  ) {
+  /// 顺序就是界面上的顺序：本作永远第一页（用户打开这一页先看这个），
+  /// 合集第二（本作的批量种），别的版本按条数从多到少（`splitSeedVersions` 已经排好）。
+  List<_SeedCategory> _categories(LibrarySeedState s) {
+    if (s.phase != LibrarySeedPhase.ready) return const <_SeedCategory>[];
+    final List<_SeedCategory> all = <_SeedCategory>[
+      _SeedCategory(
+        label: kSeedCurrentLabel,
+        groups: s.groups,
+        items: s.episodes,
+      ),
+      if (s.batchGroups.isNotEmpty)
+        _SeedCategory(
+          label: kSeedBatchLabel,
+          groups: s.batchGroups,
+          items: s.batchItems,
+        ),
+      for (final SeedOtherBlock block in s.otherVersions)
+        _SeedCategory(
+          label: block.label,
+          groups: block.groups,
+          items: block.items,
+        ),
+    ];
+    return <_SeedCategory>[
+      for (final _SeedCategory category in all)
+        if (category.count > 0) category,
+    ];
+  }
+
+  /// 当前选中的是第几页（选中的页没了就退回第一页 —— 重新搜一次之后页会变）。
+  int _categoryIndex(List<_SeedCategory> categories) {
+    final String? picked = _categoryLabel;
+    if (picked == null || categories.isEmpty) return 0;
+    final int at = categories.indexWhere(
+      (_SeedCategory c) => c.label == picked,
+    );
+    return at < 0 ? 0 : at;
+  }
+
+  /// 分页条：一页一版（`本作 332` / `合集 120` / `第三季 266` / `更早的版本 229`…）。
+  ///
+  /// 位置在**组名列表上面**（用户补七原话「在字幕组上面加入分页，把合集分进去」）。
+  /// 横向滚动：页数可能不少（一部番 S1/S1后半/S2/S2后半/S3… + 剧场版 + 番外）。
+  Widget _categoryTabs(List<_SeedCategory> categories, int selected) {
     final DsTokens t = context.ds;
-    final int total = s.otherCount;
-    final String summary = s.otherVersions
-        .map((SeedOtherBlock b) => '${b.label} ${b.count}')
-        .join(' · ');
-    return Column(
-      key: dsDetailSeedsOtherKey,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Tooltip(
-          message: _showOther ? '收起其他版本' : '展开其他版本（$total 条）',
-          child: InkWell(
-            key: dsDetailSeedsOtherToggleKey,
-            onTap: () => setState(() => _showOther = !_showOther),
-            borderRadius: BorderRadius.circular(t.radiusControl),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
-              child: Row(
-                children: <Widget>[
-                  Icon(
-                    _showOther
-                        ? Icons.keyboard_arrow_down
-                        : Icons.keyboard_arrow_right,
-                    size: 16,
-                    color: t.text3,
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(Icons.layers, size: 13, color: t.text3),
-                  const SizedBox(width: 4),
-                  Expanded(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: <Widget>[
+          for (int i = 0; i < categories.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Tooltip(
+                message: categories[i].tooltip,
+                child: InkWell(
+                  key: dsDetailSeedsCategoryKey(categories[i].label),
+                  onTap: () =>
+                      setState(() => _categoryLabel = categories[i].label),
+                  borderRadius: BorderRadius.circular(t.radiusPill),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: i == selected ? t.accent : t.base,
+                      borderRadius: BorderRadius.circular(t.radiusPill),
+                      // 描边只用 token 颜色（规范 §7；守卫测试按行查 `t.`，所以写一行里）。
+                      border: Border.all(color: i == selected ? t.accent : t.line),
+                    ),
                     child: Text(
-                      '其他版本（$total 条）：$summary',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      '${categories[i].label} ${categories[i].count}',
                       style: TextStyle(
-                        color: t.text2,
+                        color: i == selected ? t.onAccent : t.text2,
                         fontSize: DsTypeScale.caption,
+                        fontWeight: i == selected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        if (_showOther)
-          for (final SeedOtherBlock block in s.otherVersions) ...<Widget>[
-            _otherBlockHeader(block),
-            for (final SeedGroup group in block.groups) ...<Widget>[
-              _groupHeader(
-                context,
-                s,
-                group,
-                showTitle,
-                marks,
-                jobs,
-                torrents,
-                openKey: _otherKey(block.label, group.key),
-                versionLabel: block.label,
-              ),
-              if (_openGroups.contains(_otherKey(block.label, group.key))) ...<Widget>[
-                _groupTable(
-                  context,
-                  s,
-                  group,
-                  showTitle,
-                  marks,
-                  jobs,
-                  torrents,
-                  // 表头只在最上面那张画一次；这里是展开区，不重复画。
-                  showHeader: false,
-                  scope: block.items,
-                  playlist: block.items,
-                  openKey: _otherKey(block.label, group.key),
                 ),
-                _groupFoot(
-                  group,
-                  t,
-                  openKey: _otherKey(block.label, group.key),
-                  versionLabel: block.label,
-                ),
-              ],
-            ],
-          ],
-      ],
-    );
-  }
-
-  /// 其他版本里一个小节的头：版本标签（`第三季` / `剧场版` / `更早的版本（2021）`）+ 条数。
-  Widget _otherBlockHeader(SeedOtherBlock block) {
-    final DsTokens t = context.ds;
-    return Padding(
-      key: dsDetailSeedsOtherBlockKey(block.label),
-      padding: const EdgeInsets.only(top: 10, bottom: 2),
-      child: Row(
-        children: <Widget>[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: t.accentSoft,
-              borderRadius: BorderRadius.circular(t.radiusPill),
-            ),
-            child: Text(
-              block.label,
-              style: TextStyle(
-                color: t.accent,
-                fontSize: DsTypeScale.caption,
-                fontWeight: FontWeight.w600,
               ),
             ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            block.hint == null
-                ? '${block.count} 条'
-                : '${block.hint} · ${block.count} 条',
-            style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
-          ),
         ],
       ),
     );

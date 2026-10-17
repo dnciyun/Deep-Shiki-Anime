@@ -10,6 +10,8 @@
 ///   （第四十八轮·补四，三个方向都是用户退回过的）；
 /// * 展开那颗**一次只多露一档**（8 个）—— 第四十八轮·补五「展开一些加回来」，不是一次全露；
 /// * 这一排画在结果**下面**（「这些位置也不应该在上面」）；
+/// * **分页条画在组名列表上面**（第四十八轮·补七「在字幕组上面加入分页，把合集分进去」）：
+///   一页一版（本作 / 合集 / 第三季 / 更早的版本…），切页 = 换一组段；合集从本作里切出去；
 /// * 每一段展开后的末尾还有一颗「收起这一组」；
 /// * 每段展开后先露 12 条（「本组还有 N 条」）、整块先露 4 段；
 /// * 右键 / 抬头那颗「这一组都入队」真的把这一段加进队列（跳过已看过的），
@@ -517,12 +519,14 @@ void main() {
     expect(find.byTooltip('展开更多字幕组（一次 8 个，还有 16 个）'), findsOneWidget);
   });
 
-  testWidgets('别的版本默认收在「其他版本」那一行里（真标题：无职转生）', (
+  testWidgets('分页：本作 / 合集 / 第三季 / 更早的版本，点哪页画哪页（真标题：无职转生）', (
     WidgetTester tester,
   ) async {
-    // 第四十八轮·补六：用户「详细页会搜到其他版本的，比如第二季 剧场版 番外等等」。
-    // 本作（S2）照旧按字幕组分段；S3 与"没标季号的 S1 行"（靠放送时间窗判）收进底部
-    // 那一行 —— **判错也不丢**：点开按版本分小节，还能直接入队。
+    // 第四十八轮·补七，用户原话「在字幕组上面加入分页，把合集分进去」：
+    // * 分页条在**组名列表上面**，一页一版（本作 / 合集 / 第三季 / 更早的版本）；
+    // * **合集**（整季一次发的批量种）从本作里切出去，单独一页 —— 本作的条数/组队入队
+    //   不会再被几条全集顶长；
+    // * 判成别的版本的条目**一条都不丢**，就是另一页（还能直接入队）。
     final _Harness h = _Harness(
       subject: _subject(
         id: 444557,
@@ -571,6 +575,13 @@ void main() {
             title: '无职转生 ～到了异世界就拿出真本事～ - 05',
             publishedAt: DateTime.utc(2021, 2, 8),
           ),
+          // 本作的**合集**：整季一次发（`[01-12]` 区间 + 合集）。
+          _item(
+            7,
+            group: '桜都字幕组',
+            title: '无职转生 第二季 ～到了异世界就拿出真本事～ [01-12 合集][1080p]',
+            publishedAt: DateTime.utc(2024, 6, 20),
+          ),
         ],
       }),
       schedule: _FakeSchedule(const <String, BangumiDetailView>{}),
@@ -578,56 +589,67 @@ void main() {
     );
     await _pump(tester, h);
 
-    // 本作区：只有 S2 的那两家组；S1 / S3 的条目**不许**混进段的条数里。
-    expect(find.text('桜都字幕组（2 条）'), findsOneWidget, reason: 'S1 那条（更早的版本）不算进来');
+    // ① 分页条在**组名列表上面**，四页都在。
+    for (final String label in <String>['本作', '合集', '第三季', '更早的版本']) {
+      expect(
+        find.byKey(dsDetailSeedsCategoryKey(label)),
+        findsOneWidget,
+        reason: '分页条上应该有「$label」这一页',
+      );
+    }
+    expect(
+      tester
+          .getTopLeft(find.byKey(dsDetailSeedsCategoryKey('本作')))
+          .dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(dsDetailSeedsGroupKey('桜都'))).dy,
+      ),
+      reason: '分页条画在组名列表上面（用户「在字幕组上面加入分页」）',
+    );
+    expect(find.textContaining('其他版本（'), findsNothing, reason: '底部那一行折区已经改成上面的分页条');
+
+    // ② 默认第一页 = 本作：只有 S2 的两家组，且**不含合集那条**。
+    expect(find.text('桜都字幕组（2 条）'), findsOneWidget);
     expect(find.text('LoliHouse（1 条）'), findsOneWidget);
-    expect(find.text('绿茶字幕组（2 条）'), findsNothing, reason: '第三季不进本作区');
+    expect(find.text('绿茶字幕组（2 条）'), findsNothing, reason: '第三季在另一页');
     expect(find.textContaining('2 个字幕组'), findsOneWidget);
-    expect(find.textContaining('共 3 条'), findsOneWidget, reason: '本作的条数（不是整池 6 条）');
-    // 底部那一行：说清有几条、都是哪几个版本。
-    expect(find.textContaining('其他版本（3 条）'), findsOneWidget);
-    expect(find.textContaining('第三季 2'), findsOneWidget);
-    expect(find.textContaining('更早的版本 1'), findsOneWidget);
-    expect(
-      find.byKey(dsDetailSeedsOtherGroupKey('第三季', '绿茶')),
-      findsNothing,
-      reason: '默认收着：别的版本的段一个都不画',
-    );
+    expect(find.textContaining('共 3 条'), findsOneWidget, reason: '本作 3 条 = 单集 2 + LoliHouse 1');
+    expect(find.textContaining('合集 1'), findsOneWidget, reason: '分页条上合集那页的条数');
 
-    await tester.tap(find.byKey(dsDetailSeedsOtherToggleKey));
+    // ③ 切到「合集」页：整套种子的那一组在这里，本作那些单集不再画。
+    await tester.tap(find.byKey(dsDetailSeedsCategoryKey('合集')));
     await tester.pumpAndSettle();
-
-    // 展开：按版本分小节，小节里还是按字幕组分段；本作区原样不动。
-    expect(find.byKey(dsDetailSeedsOtherBlockKey('第三季')), findsOneWidget);
-    expect(find.byKey(dsDetailSeedsOtherBlockKey('更早的版本')), findsOneWidget);
-    expect(find.byKey(dsDetailSeedsOtherGroupKey('第三季', '绿茶')), findsOneWidget);
+    expect(find.text('桜都字幕组（1 条）'), findsOneWidget);
+    expect(find.text('LoliHouse（1 条）'), findsNothing, reason: '切页了，本作那些组不画');
+    expect(find.textContaining('合集 · 1 个字幕组'), findsOneWidget);
+    // 合集页里的段也能展开（真的能下，不是摆设）。
+    await tester.tap(find.byKey(dsDetailSeedsOtherGroupToggleKey('合集', '桜都')));
+    await tester.pumpAndSettle();
     expect(
-      find.byKey(dsDetailSeedsOtherGroupKey('更早的版本', '桜都')),
+      find.byKey(dsDetailSeedsOtherGroupCollapseKey('合集', '桜都')),
       findsOneWidget,
-    );
-    expect(find.text('桜都字幕组（2 条）'), findsOneWidget, reason: '本作区没被别的版本改动');
-    expect(find.text('桜都字幕组（1 条）'), findsOneWidget, reason: '更早的版本里那一条');
-    expect(
-      find.byKey(dsDetailSeedsOtherGroupToggleKey('第三季', '绿茶')),
-      findsOneWidget,
+      reason: '展开后末尾有「本组还有 N 条 / 收起这一组」',
     );
 
-    // 别的版本里的段也能展开看条目（真的是能下的，不是摆设）。
+    // ④ 切到「第三季」页：另一边版本的组在这里。
+    await tester.tap(find.byKey(dsDetailSeedsCategoryKey('第三季')));
+    await tester.pumpAndSettle();
+    expect(find.text('绿茶字幕组（2 条）'), findsOneWidget);
+    expect(find.textContaining('第三季 · 1 个字幕组'), findsOneWidget);
     await tester.tap(find.byKey(dsDetailSeedsOtherGroupToggleKey('第三季', '绿茶')));
     await tester.pumpAndSettle();
     expect(
       find.byKey(dsDetailSeedsOtherGroupCollapseKey('第三季', '绿茶')),
       findsOneWidget,
-      reason: '展开后末尾会有「本组还有 N 条 / 收起这一组」',
     );
 
-    await tester.tap(find.byKey(dsDetailSeedsOtherGroupToggleKey('第三季', '绿茶')));
+    // ⑤ 切回本作：原样（段窗口 / 条数都没被别的页改动）。
+    await tester.tap(find.byKey(dsDetailSeedsCategoryKey('本作')));
     await tester.pumpAndSettle();
-    expect(
-      find.byKey(dsDetailSeedsOtherGroupCollapseKey('第三季', '绿茶')),
-      findsNothing,
-      reason: '再点抬头就收起来',
-    );
+    expect(find.text('桜都字幕组（2 条）'), findsOneWidget);
+    expect(find.textContaining('2 个字幕组'), findsOneWidget);
+    // 那一排工具按钮在每一页都在（它不属于某一页）。
+    expect(find.text('改搜索词 / 粘链接'), findsOneWidget);
   });
 
   testWidgets('跨站同名合并成一条：行尾带「别的站也有」的小标记', (WidgetTester tester) async {

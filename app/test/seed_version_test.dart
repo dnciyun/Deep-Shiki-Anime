@@ -9,7 +9,6 @@ library;
 import 'package:dsanima/domain/seed_version.dart';
 import 'package:dsanima/domain/models.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 真数据：无职转生（Bangumi 实测 6 个动画条目）
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,11 +331,49 @@ void main() {
     });
   });
 
+  group('isSeedBatch：合集（整季一次发）', () {
+    test('真标题：合集 / 全集 / 集号区间 / 无集号的整季 BDRip 都算', () {
+      for (final String title in <String>[
+        '[LoliHouse] 无职转生 3期 / Mushoku Tensei S3 [01-14 合集][WebRip 1080p]',
+        '[Rev][DBD-Raws][无职转生～到了异世界就拿出真本事～ 第二季/Mushoku Tensei II]'
+            '[00-24TV全集+特典映像][1080P][BDRip]',
+        '[VCB-Studio] 无职转生 2期 ～到了异世界就拿出真本事～ [01-12][BDRip][1080p]',
+        '无职转生 第二季 [1~12][简繁内封]',
+        // 整季 BDRip：没有集号（单集的 BDRip 一定带集号）。
+        '[VCB-Studio] 无职转生 2期～到了异世界就拿出真本事～ / '
+            'Mushoku Tensei S2 ~Isekai Ittara Honki Dasu~ 10-bit 1080p AVC BDRip [S2 Fin]',
+        '[H-Enc] 无职转生Ⅱ ～到了异世界就拿出真本事～ / '
+            'Mushoku Tensei II Isekai Ittara Honki Dasu (BDRip 1080p HEVC FLAC)',
+      ]) {
+        expect(isSeedBatch(title), isTrue, reason: title);
+      }
+    });
+
+    test('单集 / 技术标签不算（`[1080p]`、`[HEVC-10bit]`、带集号的 BDRip 不能误伤）', () {
+      for (final String title in <String>[
+        '无职转生 第二季 ～到了异世界就拿出真本事～ - 01 [1080p][HEVC-10bit]',
+        '[ANi] 無職転生Ⅱ ～異世界行ったら本気だす～ - 13 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]',
+        '无职转生 第二季 第2部分 - 05 [Ma10p_1080p]',
+        // 单集的 BDRip 带集号 ⇒ 不是合集。
+        '[VCB-Studio] 无职转生 2期 - 05 [BDRip 1080p HEVC]',
+        '[VCB-Studio] 无职转生 2期 [05][BDRip 1080p HEVC]',
+        '无职转生 第二季 第5话 [BDRip][1080P]',
+        '',
+      ]) {
+        expect(isSeedBatch(title), isFalse, reason: title);
+      }
+    });
+  });
+
   group('split：整池分开', () {
-    test('本作进 current、别的版本按标签分桶（桶按条数从多到少）', () {
+    test('本作进 current、本作里的合集切进 batch、别的版本按标签分桶', () {
       final List<SourceItemView> pool = <SourceItemView>[
         _item('无职转生 第二季 ～到了异世界就拿出真本事～ - 01', DateTime.utc(2024, 4, 10)),
         _item('无职转生 第二季 ～到了异世界就拿出真本事～ - 02', DateTime.utc(2024, 4, 17)),
+        _item(
+          '无职转生 第二季 ～到了异世界就拿出真本事～ [01-12 合集][1080p]',
+          DateTime.utc(2024, 6, 20),
+        ),
         _item('無職転生Ⅲ ～異世界行ったら本気だす～ - 01', DateTime.utc(2026, 7, 10)),
         _item('無職転生 ～異世界行ったら本気だす～ - 05', DateTime.utc(2021, 2, 8)),
       ];
@@ -344,6 +381,9 @@ void main() {
       expect(split.current.map((SourceItemView i) => i.title), <String>[
         '无职转生 第二季 ～到了异世界就拿出真本事～ - 01',
         '无职转生 第二季 ～到了异世界就拿出真本事～ - 02',
+      ]);
+      expect(split.batch.map((SourceItemView i) => i.title), <String>[
+        '无职转生 第二季 ～到了异世界就拿出真本事～ [01-12 合集][1080p]',
       ]);
       expect(split.others.map((SeedOtherBlock b) => b.label), <String>[
         '更早的版本',
@@ -355,6 +395,16 @@ void main() {
       expect(split.others.last.hint, isNull, reason: '第三季是标题里解出来的，不需要年份说明');
       // 桶里也按字幕组分好段（界面直接用）。
       expect(split.others.every((SeedOtherBlock b) => b.groups.isNotEmpty), isTrue);
+    });
+
+    test('兜底：本作只剩合集时不分（合集并回本作，不许出现空的第一页）', () {
+      final List<SourceItemView> pool = <SourceItemView>[
+        _item('无职转生 第二季 ～到了异世界就拿出真本事～ [01-12 合集]', DateTime.utc(2024, 6, 20)),
+        _item('无职转生 第二季 ～到了异世界就拿出真本事～ [13-24 合集]', DateTime.utc(2024, 9, 20)),
+      ];
+      final SeedVersionSplit split = splitSeedVersions(pool, _s2Part2);
+      expect(split.batch, isEmpty);
+      expect(split.current, hasLength(2));
     });
 
     test('时间窗的年份跨年头时 hint 是个区间（`2021–2022`），桶还是同一个', () {
