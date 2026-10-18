@@ -59,6 +59,71 @@ core.ExtensionManifest _manifest({
   return parsed.manifest!;
 }
 
+/// 画面调节包夹具：三个预设（`设置` 按钮只给"有预设的包"）。
+core.ExtensionManifest _pictureManifest({
+  String id = 'picture-demo',
+  String name = '画面调节演示',
+  List<String> presetIds = const <String>['crisp', 'soft', 'warm'],
+}) {
+  final core.ManifestParseResult parsed = core.parseExtensionManifest(<String, Object?>{
+    'schema': 1,
+    'id': id,
+    'name': name,
+    'version': '1.1.0',
+    'kind': 'picture-pack',
+    'files': <Object?>[
+      <String, Object?>{'path': 'shaders/picture.glsl', 'size': 12, 'sha256': 'b' * 64},
+    ],
+    'payload': <String, Object?>{
+      'picture': <String, Object?>{
+        'template': 'shaders/picture.glsl',
+        // 包的一句说明：只在扩展页「设置」里显示（用户 2026-10-18：
+        // 「右键菜单内不要有太多介绍，全在扩展内就好了」）。
+        'hint': '演示包的说明：默认不改画面。',
+        'params': <Object?>[
+          <String, Object?>{
+            'key': 'sharpen',
+            'label': '锐度',
+            'min': 0,
+            'max': 2,
+            'step': 0.05,
+            'default': 0.0,
+          },
+        ],
+        'presets': <Object?>[
+          for (final String pid in presetIds)
+            <String, Object?>{
+              'id': pid,
+              'name': pid == 'crisp'
+                  ? '清晰'
+                  : pid == 'soft'
+                      ? '柔和'
+                      : '暖色',
+              'description': pid == 'crisp' ? '推荐：线条细而实，不糊。' : '',
+              'values': <String, Object?>{'sharpen': 1.0},
+            },
+        ],
+      },
+    },
+  }, currentAppVersion: '1.1.0');
+  expect(parsed.ok, isTrue, reason: '画面调节夹具本身必须合法：${parsed.issues}');
+  return parsed.manifest!;
+}
+
+InstalledExtension _installedPicture({
+  String id = 'picture-demo',
+  String name = '画面调节演示',
+  bool enabled = true,
+  List<String> presetIds = const <String>['crisp', 'soft', 'warm'],
+}) =>
+    InstalledExtension(
+      manifest: _pictureManifest(id: id, name: name, presetIds: presetIds),
+      enabled: enabled,
+      installedAt: DateTime(2026, 10, 18),
+      origin: ExtensionOrigin.localZip,
+      bytes: 4096,
+    );
+
 InstalledExtension _installed({
   String id = 'demo-pack',
   String name = '演示包',
@@ -106,6 +171,9 @@ class _FakeExtensionsPort implements ExtensionsPort {
   Object? scanError;
   Object? installError;
   List<core.CatalogEntry> catalog = <core.CatalogEntry>[];
+
+  /// 拉过哪些目录地址（「官方插件库」按钮钉的是"用的是哪个地址"）。
+  final List<Uri> catalogUrls = <Uri>[];
 
   final List<ExtensionInstallRequest> installRequests = <ExtensionInstallRequest>[];
   final List<String> removedIds = <String>[];
@@ -176,7 +244,10 @@ class _FakeExtensionsPort implements ExtensionsPort {
   }
 
   @override
-  Future<List<core.CatalogEntry>> fetchCatalog(Uri url) async => catalog;
+  Future<List<core.CatalogEntry>> fetchCatalog(Uri url) async {
+    catalogUrls.add(url);
+    return catalog;
+  }
 
   @override
   Future<void> openDirectory() async {
@@ -231,6 +302,10 @@ DsTokens _tokens(WidgetTester tester) =>
 
 String _textOf(WidgetTester tester, Key key) =>
     tester.widget<Text>(find.byKey(key)).data ?? '';
+
+/// notice 落在 NeoBanner 上（不是 Text），单读一下它的文案。
+String _noticeText(WidgetTester tester) =>
+    tester.widget<NeoBanner>(find.byKey(dsExtensionsNoticeKey)).text;
 
 void main() {
   group('空态与统计', () {
@@ -552,6 +627,95 @@ void main() {
 
       expect(find.textContaining('未提供哈希'), findsOneWidget);
       expect(find.textContaining('size 未知'), findsNothing);
+    });
+  });
+
+  group('扩展设置（画面调节包的预设开关）', () {
+    testWidgets('只有"有设置项"的扩展才显示「设置」按钮', (WidgetTester tester) async {
+      final _FakeExtensionsPort port = _FakeExtensionsPort()
+        ..installed = <InstalledExtension>[_installed(), _installedPicture()];
+      await _pump(tester, port);
+
+      expect(find.byKey(dsExtensionSettingsKey('picture-demo')), findsOneWidget);
+      expect(find.byKey(dsExtensionSettingsKey('demo-pack')), findsNothing,
+          reason: 'shader-pack 没有可设置的项，不许放一个点进去空白的入口');
+    });
+
+    testWidgets('设置对话框：关掉一个预设 → 保存 → 提示说清关了几个；再打开勾选状态还在',
+        (WidgetTester tester) async {
+      final _FakeExtensionsPort port = _FakeExtensionsPort()
+        ..installed = <InstalledExtension>[_installedPicture()];
+      await _pump(tester, port);
+
+      await tester.tap(find.byKey(dsExtensionSettingsKey('picture-demo')));
+      await tester.pumpAndSettle();
+      // 三个预设都在（默认全开）
+      expect(find.text('清晰'), findsWidgets);
+      expect(find.text('柔和'), findsWidgets);
+      expect(find.text('暖色'), findsWidgets);
+
+      // 关掉「柔揉」…（按 key 点，避免撞上页面别处的同名文字）
+      await tester.tap(find.byKey(dsExtensionPresetToggleKey('picture-demo', 'soft')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(dsExtensionSettingsSaveKey));
+      await tester.pumpAndSettle();
+
+      expect(_noticeText(tester), contains('关掉了 1 个预设'));
+
+      // 重新打开：勾选状态被记住（读的是 provider 里的设置）
+      await tester.tap(find.byKey(dsExtensionSettingsKey('picture-demo')));
+      await tester.pumpAndSettle();
+      final CheckboxListTile soft = tester.widget<CheckboxListTile>(
+        find.byKey(dsExtensionPresetToggleKey('picture-demo', 'soft')),
+      );
+      expect(soft.value, isFalse);
+      final CheckboxListTile crisp = tester.widget<CheckboxListTile>(
+        find.byKey(dsExtensionPresetToggleKey('picture-demo', 'crisp')),
+      );
+      expect(crisp.value, isTrue);
+    });
+
+    testWidgets('设置对话框：说明文字都在扩展页里（包一句 + 每档预设一行）',
+        (WidgetTester tester) async {
+      final _FakeExtensionsPort port = _FakeExtensionsPort()
+        ..installed = <InstalledExtension>[_installedPicture()];
+      await _pump(tester, port);
+
+      await tester.tap(find.byKey(dsExtensionSettingsKey('picture-demo')));
+      await tester.pumpAndSettle();
+
+      // 用户 2026-10-18：「右键菜单内不要有太多介绍，全在扩展内就好了」——
+      // 说明从播放器右键菜单搬到了这里，就必须真的在这里看得见。
+      expect(
+        find.text('演示包的说明：默认不改画面。'),
+        findsOneWidget,
+        reason: '包的一句说明（payload.picture.hint）要在设置对话框顶部',
+      );
+      expect(
+        find.text('推荐：线条细而实，不糊。'),
+        findsOneWidget,
+        reason: '每档预设的说明要挂在它自己那一行下（subtitle）',
+      );
+    });
+
+    testWidgets('官方插件库：出厂就指向 dnciyun/DSAnima-plungin（用户不用先粘地址）',
+        (WidgetTester tester) async {
+      final _FakeExtensionsPort port = _FakeExtensionsPort()
+        ..catalog = <core.CatalogEntry>[_catalogEntry()];
+      await _pump(tester, port);
+
+      await tester.tap(find.byKey(dsExtensionsOfficialKey));
+      await tester.pumpAndSettle();
+
+      // 用户 2026-10-18 给了插件仓库地址：这一键从"提示先配地址"变成"直接拉"。
+      expect(port.catalogUrls.single.toString(), kOfficialExtensionsCatalogUrl);
+      expect(_noticeText(tester), contains('目录已加载'));
+      // 输入框里也填着它：用户能看见官方库在哪儿，也能复制去浏览器核对。
+      final TextField field = tester.widget<TextField>(
+        find.byKey(dsExtensionsCatalogFieldKey),
+      );
+      expect(field.controller?.text, kOfficialExtensionsCatalogUrl);
+      expect(find.byKey(dsExtensionsProblemKey), findsNothing);
     });
   });
 }

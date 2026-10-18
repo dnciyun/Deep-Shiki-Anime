@@ -39,6 +39,7 @@ export 'app.dart'
         anime4kProvider,
         episodeGroupProvider,
         episodeSelectProvider,
+        pictureMenuProvider,
         playerProvider,
         playerRequestProvider,
         storeProvider,
@@ -71,6 +72,12 @@ export 'models/upscale_scheme.dart'
         kAnime4kSchemeId;
 export 'models/theme_tokens.dart' show ThemeTokens;
 export 'models/track.dart' show TrackInfo, TrackKind;
+export 'models/picture_menu.dart'
+    show
+        PictureMenu,
+        PictureMenuSelection,
+        PictureParamInfo,
+        PicturePresetInfo;
 
 // ── 基础设施（宿主需要复用键值存储抽象与诊断）────────────────────────────────
 export 'infra/persistence.dart' show HiveStore, KeyValueStore;

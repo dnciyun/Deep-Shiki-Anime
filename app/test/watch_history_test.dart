@@ -252,4 +252,56 @@ void main() {
       expect(noId.mikanBangumiId, isNull);
     });
   });
+
+  // 用户 2026-10-18：「发现bug继续观看回不到上一次的观看位置」。
+  // 续播的位置只能有一个口径 —— 观看记录里那条 `positionMs`（按番剧+字幕组+集数记，
+  // 跨重启有效）。这两个函数就是"任何入口点开一集"都该走的那条查表路径。
+  group('续播查表（从任何入口点播都接着上次的位置）', () {
+    test('按记录键查：命中就给位置；已看完 / 没进度 → null（从头）', () {
+      final List<WatchRecord> records = <WatchRecord>[
+        _record(id: 'a|G|e1', positionMs: 754000, durationMs: 1440000),
+        _record(id: 'a|G|e2', positionMs: 1400000, durationMs: 1440000),
+        _record(id: 'a|G|e3'),
+      ];
+      expect(resumePositionForRecord(records, 'a|G|e1'), 754000);
+      expect(
+        resumePositionForRecord(records, 'a|G|e2'),
+        isNull,
+        reason: '看到 97% 算看完 —— 「继续播放」不该把人扔到片尾',
+      );
+      expect(resumePositionForRecord(records, 'a|G|e3'), isNull, reason: '本来就没有进度');
+      expect(resumePositionForRecord(records, 'a|G|e9'), isNull, reason: '没这条记录 → 从头');
+    });
+
+    test('按引擎坐标查：infoHash + 文件序号都要对上（不猜"大概是这集"）', () {
+      final List<WatchRecord> records = <WatchRecord>[
+        _record(id: 'k1', infoHash: 'h1', fileIndex: 0, positionMs: 300000, durationMs: 1440000),
+        _record(id: 'k2', infoHash: 'h1', fileIndex: 1, positionMs: 600000, durationMs: 1440000),
+      ];
+      expect(resumePositionForFile(records, infoHash: 'h1', fileIndex: 1), 600000);
+      expect(resumePositionForFile(records, infoHash: 'h1', fileIndex: 0), 300000);
+      expect(
+        resumePositionForFile(records, infoHash: 'h1', fileIndex: 2),
+        isNull,
+        reason: '同一个种子的别的文件没有记录 → 从头，不许借别的集的位置',
+      );
+      expect(
+        resumePositionForFile(records, infoHash: 'h2', fileIndex: 1),
+        isNull,
+        reason: '换了种子（infohash 不同）就不是同一集',
+      );
+      expect(resumePositionForFile(records, infoHash: null, fileIndex: 1), isNull);
+      expect(resumePositionForFile(records, infoHash: '   ', fileIndex: 1), isNull);
+    });
+
+    test('同一坐标有多条记录时取最近看的那条', () {
+      final List<WatchRecord> records = <WatchRecord>[
+        _record(id: 'old', infoHash: 'h1', fileIndex: 0, positionMs: 100000,
+            durationMs: 1440000, at: DateTime(2026, 9, 1)),
+        _record(id: 'new', infoHash: 'h1', fileIndex: 0, positionMs: 900000,
+            durationMs: 1440000, at: DateTime(2026, 10, 1)),
+      ];
+      expect(resumePositionForFile(records, infoHash: 'h1', fileIndex: 0), 900000);
+    });
+  });
 }

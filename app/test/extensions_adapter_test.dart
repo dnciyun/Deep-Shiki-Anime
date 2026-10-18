@@ -897,4 +897,121 @@ void main() {
     expect(installed.bytes, onDisk);
     expect((await harness.adapter.scan()).single.bytes, onDisk);
   });
+
+  // ── GitHub 地址识别（用户 2026-10-18：「识别 github 上面的」）──────────────
+  group('GitHub 地址换算', () {
+    List<int> catalogBody(_Fixture fixture) => utf8.encode(jsonEncode(<String, Object?>{
+          'schema': 1,
+          'extensions': <Object?>[
+            <String, Object?>{'url': 'pkg.zip', 'manifest': fixture.manifest},
+          ],
+        }));
+
+    test('贴仓库网页地址：按 main/根目录 → main/extensions 依次试，命中的那个算数', () async {
+      final Directory root = _tempDir('dsanima_ext_gh_');
+      final _Fixture fixture = _fixture();
+      final List<int> body = catalogBody(fixture);
+      final List<Uri> tried = <Uri>[];
+      final _Harness harness = _Harness(
+        root,
+        reply: (http.BaseRequest request) async {
+          tried.add(request.url);
+          // 第一个候选（main/catalog.json）故意 404：作者把目录放在 extensions/ 下。
+          if (request.url.path.endsWith('/main/catalog.json')) {
+            return http.StreamedResponse(Stream<List<int>>.value(const <int>[]), 404,
+                contentLength: 0);
+          }
+          return http.StreamedResponse(Stream<List<int>>.value(body), 200,
+              contentLength: body.length);
+        },
+      );
+
+      final List<core.CatalogEntry> entries =
+          await harness.adapter.fetchCatalog(Uri.parse('https://github.com/o/r'));
+      expect(entries, hasLength(1));
+      // 相对 url 按**命中的那份 catalog** 补全（目录在 extensions/ 下 → zip 也在下面），
+      // 这条语义来自 `parseExtensionCatalog(baseUrl:)`，不是这里猜的。
+      expect(entries.single.url.toString(),
+          'https://raw.githubusercontent.com/o/r/main/extensions/pkg.zip');
+      expect(tried.first.toString(),
+          'https://raw.githubusercontent.com/o/r/main/catalog.json');
+      expect(tried[1].toString(),
+          'https://raw.githubusercontent.com/o/r/main/extensions/catalog.json');
+    });
+
+    test('地址返回网页（200 + text/html）→ 明确说"这是网页不是 catalog"，不装成空目录', () async {
+      final Directory root = _tempDir('dsanima_ext_gh_html_');
+      final List<Uri> tried = <Uri>[];
+      final _Harness harness = _Harness(
+        root,
+        reply: (http.BaseRequest request) async {
+          tried.add(request.url);
+          return http.StreamedResponse(
+            Stream<List<int>>.value(utf8.encode('<!doctype html><html></html>')),
+            200,
+            contentLength: 30,
+            headers: <String, String>{'content-type': 'text/html; charset=utf-8'},
+          );
+        },
+      );
+      await expectLater(
+        harness.adapter.fetchCatalog(Uri.parse('https://github.com/o/r')),
+        throwsA(isA<ExtensionFailure>()
+            .having((ExtensionFailure e) => e.message, 'message', contains('网页'))),
+      );
+      expect(tried.length, greaterThan(1), reason: '几个候选都要试一遍');
+    });
+
+    test('安装 zip：GitHub 的 blob 网页地址自动换成 raw（不能下 HTML 当 zip）', () async {
+      final Directory root = _tempDir('dsanima_ext_gh_zip_');
+      final _Fixture fixture = _fixture();
+      final List<int> zip = fixture.zip();
+      final List<Uri> tried = <Uri>[];
+      final _Harness harness = _Harness(
+        root,
+        reply: (http.BaseRequest request) async {
+          tried.add(request.url);
+          return _zipResponse(zip);
+        },
+      );
+      final ExtensionInstallRequest request = _urlRequest(
+        zip,
+        url: 'https://github.com/o/r/blob/main/packs/pkg-1.0.0.zip',
+      );
+      final InstalledExtension installed = await harness.adapter.install(request);
+      expect(installed.id, 'demo-pack');
+      expect(tried.single.toString(),
+          'https://raw.githubusercontent.com/o/r/main/packs/pkg-1.0.0.zip');
+    });
+
+    test('官方插件库还没推内容（候选全 404）→ 明说是"仓库里还没有 catalog.json"', () async {
+      final Directory root = _tempDir('dsanima_ext_gh_official_');
+      final List<Uri> tried = <Uri>[];
+      final _Harness harness = _Harness(
+        root,
+        reply: (http.BaseRequest request) async {
+          tried.add(request.url);
+          return http.StreamedResponse(Stream<List<int>>.value(const <int>[]), 404,
+              contentLength: 0);
+        },
+      );
+
+      // 用户 2026-10-18 给的仓库刚建好（空仓库）：点「官方插件库」必然全 404。
+      // 这时不能让用户对着"HTTP 404"猜 —— 提示要说清"把 catalog.json 推上去就好了"。
+      await expectLater(
+        harness.adapter.fetchCatalog(Uri.parse(kOfficialExtensionsCatalogUrl)),
+        throwsA(isA<ExtensionFailure>()
+            .having((ExtensionFailure e) => e.message, 'message', contains('官方插件库'))
+            .having((ExtensionFailure e) => e.message, 'message', contains('还没有内容'))
+            .having((ExtensionFailure e) => e.hint ?? '', 'hint', contains('推上去'))),
+      );
+      expect(tried, isNotEmpty);
+      expect(
+        tried.first.toString(),
+        'https://raw.githubusercontent.com/dnciyun/DSAnima-plungin/main/catalog.json',
+        reason: '仓库地址先按 main / 根目录试',
+      );
+      expect(tried.length, greaterThan(1), reason: 'main/master × 根/extensions 都要试');
+    });
+  });
 }

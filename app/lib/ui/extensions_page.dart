@@ -21,12 +21,15 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dsanima_core/dsanima_core.dart' as core;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/extensions.dart';
+import '../state/extension_settings.dart';
+import '../state/infra.dart' show supportDirProvider;
 import '../domain/format.dart';
 import '../state/extensions.dart';
 import '../theme/tokens.dart';
@@ -59,6 +62,22 @@ Key dsExtensionToggleKey(String id) => ValueKey<String>('ds-extension-toggle-$id
 Key dsExtensionRemoveKey(String id) => ValueKey<String>('ds-extension-remove-$id');
 Key dsExtensionUseHintKey(String id) => ValueKey<String>('ds-extension-use-$id');
 Key dsExtensionsCatalogRowKey(String id) => ValueKey<String>('ds-extensions-catalog-$id');
+
+/// 「官方插件库」一键拉取（用户 2026-10-18：「加入官方插件库，可以直接下载我加进去的插件」）。
+const Key dsExtensionsOfficialKey = ValueKey<String>('ds-extensions-official');
+
+/// 某一行的「设置」按钮（只给**有设置项**的扩展：目前是画面调节包的预设开关）。
+Key dsExtensionSettingsKey(String id) => ValueKey<String>('ds-extension-settings-$id');
+
+/// 设置对话框里某个预设的勾选框（勾上 = 该预设出现在播放器右键菜单里）。
+Key dsExtensionPresetToggleKey(String id, String presetId) =>
+    ValueKey<String>('ds-extension-preset-$id-$presetId');
+
+/// 设置对话框：全部开启 / 全部关闭 / 保存 / 取消。
+const Key dsExtensionSettingsAllKey = ValueKey<String>('ds-extension-settings-all');
+const Key dsExtensionSettingsNoneKey = ValueKey<String>('ds-extension-settings-none');
+const Key dsExtensionSettingsSaveKey = ValueKey<String>('ds-extension-settings-save');
+const Key dsExtensionSettingsCancelKey = ValueKey<String>('ds-extension-settings-cancel');
 Key dsExtensionsCatalogInstallKey(String id) =>
     ValueKey<String>('ds-extensions-catalog-install-$id');
 
@@ -93,6 +112,7 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(ref.read(extensionsProvider.notifier).ensureLoaded());
+      unawaited(_loadUserSettings());
     });
   }
 
@@ -146,6 +166,182 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
     );
     if (ok != true || !mounted) return;
     await _controller.remove(item.id);
+  }
+
+  /// 扩展用户设置（关掉的预设 / 上次的目录地址）：进页面读一次，顺手把输入框填上。
+  ///
+  /// 读盘失败只当"没有设置"（`loadExtensionUserSettings` 永不抛）：这一页的第一职责
+  /// 是让用户看见装了什么，不该因为一份偏好文件把页面卡住。
+  Future<void> _loadUserSettings() async {
+    final Directory? dir = ref.read(supportDirProvider);
+    if (dir == null) return; // 装配问题：设置页/首启向导会报，这里静默
+    await ref.read(extensionUserSettingsProvider.notifier).ensureLoaded(dir);
+    if (!mounted) return;
+    final String? saved = ref.read(extensionUserSettingsProvider).catalogUrl;
+    if (saved != null && saved.trim().isNotEmpty && _catalog.text.trim().isEmpty) {
+      _catalog.text = saved;
+    }
+  }
+
+  /// 拉一份在线目录，成功后**把地址记下来**（「官方插件库」按钮一键重载要用）。
+  Future<void> _fetchCatalog(String rawUrl) async {
+    final String url = rawUrl.trim();
+    await _controller.addCatalog(url);
+    final ExtensionsState s = ref.read(extensionsProvider);
+    if (s.catalogUri != null && s.phase == ExtensionsPhase.ready && s.catalog.isNotEmpty) {
+      await ref.read(extensionUserSettingsProvider.notifier).rememberCatalogUrl(url);
+    }
+  }
+
+  /// 「官方插件库」：用上次成功拉取的地址（没有就用出厂常量）再拉一次。
+  ///
+  /// 两个来源的分工（用户 2026-10-18 给了仓库：<https://github.com/dnciyun/DSAnima-plungin>）：
+  /// * **出厂常量** `kOfficialExtensionsCatalogUrl` —— 开箱即用，不用先粘地址；
+  /// * **上次成功拉过的地址**（`extension-settings.json` 的 `catalogUrl`）优先 ——
+  ///   换仓库时用户只要重新粘一次，不用等发版改代码。代价是"换仓库后旧地址还会被用"，
+  ///   所以交付说明里写了怎么回到出厂地址（清空输入框粘一次）。
+  /// 下面 `url.isEmpty` 那条分支只是兜底（常量若被改回空串/还没配），不参与正常路径。
+  Future<void> _loadOfficialCatalog() async {
+    // 先把设置读进来：进页面那一次是 postFrame 里异步读的，用户手快时可能还没读完，
+    // 不补这一步会把"上次拉过的地址"误判成"还没配地址"。
+    await _loadUserSettings();
+    if (!mounted) return;
+    final core.ExtensionUserSettings settings = ref.read(extensionUserSettingsProvider);
+    final String saved = (settings.catalogUrl ?? '').trim();
+    final String url = saved.isNotEmpty ? saved : kOfficialExtensionsCatalogUrl;
+    if (url.isEmpty) {
+      _controller.note(
+        '还没有官方插件库地址：把插件仓库的网页地址（https://github.com/作者/仓库）粘到上面'
+        '「拉取在线目录」框里拉一次，之后这里就能一键重载',
+      );
+      return;
+    }
+    _catalog.text = url;
+    await _fetchCatalog(url);
+  }
+
+  /// 这个扩展有没有可设置的项。
+  ///
+  /// 用户 2026-10-18：「在扩展页，一些扩展有设置按钮」—— **有设置项的才有按钮**，
+  /// 没有的别放一个点进去空白的入口。目前有设置的是画面调节包（预设开关）。
+  bool _hasSettings(core.ExtensionManifest manifest) =>
+      manifest.kind == core.ExtensionKind.picturePack &&
+      (manifest.picture?.presets.isNotEmpty ?? false);
+
+  /// 「设置」对话框：画面调节包的预设开关（关掉的预设不进播放器右键菜单）。
+  Future<void> _openSettings(InstalledExtension item) async {
+    final core.PictureSpec? spec = item.manifest.picture;
+    final List<core.PicturePreset> presets = spec?.presets ?? const <core.PicturePreset>[];
+    if (presets.isEmpty) return;
+    final core.ExtensionUserSettings settings = ref.read(extensionUserSettingsProvider);
+    final Set<String> draft = <String>{...settings.hiddenPresetsOf(item.id)};
+    final bool? saved = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setLocal) => AlertDialog(
+          title: Text('「${item.name}」设置'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  // 用户 2026-10-18：「右键菜单内不要有太多介绍，全在扩展内就好了」——
+                  // 包自己的说明（`payload.picture.hint`）和每档预设的 `description`
+                  // 都放这里（预设说明是下面每一项的 subtitle），播放器菜单只留名称。
+                  if ((spec?.chainHint ?? '').trim().isNotEmpty) ...<Widget>[
+                    Text(
+                      spec!.chainHint,
+                      style: TextStyle(
+                        color: context.ds.text2,
+                        fontSize: DsTypeScale.caption,
+                        height: 1.6,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Text(
+                    '取消勾选的预设不会再出现在播放器右键菜单里（「调节…」滑杆面板不受影响）。'
+                    '保存后，已经打开的播放窗口会重试一次；没重试过来的话重开播放窗口即可。',
+                    style: TextStyle(
+                      color: context.ds.text3,
+                      fontSize: DsTypeScale.caption,
+                      height: 1.6,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  for (final core.PicturePreset preset in presets)
+                    CheckboxListTile(
+                      key: dsExtensionPresetToggleKey(item.id, preset.id),
+                      value: !draft.contains(preset.id),
+                      onChanged: (bool? on) => setLocal(() {
+                        if (on == true) {
+                          draft.remove(preset.id);
+                        } else {
+                          draft.add(preset.id);
+                        }
+                      }),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: Text(
+                        preset.name,
+                        style: TextStyle(
+                          color: context.ds.text,
+                          fontSize: DsTypeScale.secondary,
+                        ),
+                      ),
+                      subtitle: preset.description.isEmpty
+                          ? null
+                          : Text(
+                              preset.description,
+                              style: TextStyle(
+                                color: context.ds.text3,
+                                fontSize: DsTypeScale.caption,
+                              ),
+                            ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              key: dsExtensionSettingsAllKey,
+              onPressed: () => setLocal(draft.clear),
+              child: const Text('全部开启'),
+            ),
+            TextButton(
+              key: dsExtensionSettingsNoneKey,
+              onPressed: () => setLocal(() => draft.addAll(presets.map((core.PicturePreset p) => p.id))),
+              child: const Text('全部关闭'),
+            ),
+            TextButton(
+              key: dsExtensionSettingsCancelKey,
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              key: dsExtensionSettingsSaveKey,
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true || !mounted) return;
+    await ref.read(extensionUserSettingsProvider.notifier).setHiddenPresets(item.id, draft);
+    if (!mounted) return;
+    // 立刻让已打开的播放窗口重扫（走同一条"扩展变了"的通道）：预设开关存在
+    // 数据根里，子窗口收到通知后自己读 —— 用户不用关掉播放器再看。
+    _controller.bumpRevision();
+    _controller.note(
+      draft.isEmpty
+          ? '已保存「${item.name}」：全部预设在播放器菜单里'
+          : '已保存「${item.name}」：关掉了 ${draft.length} 个预设',
+    );
   }
 
   @override
@@ -238,12 +434,33 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
               fieldKey: dsExtensionsCatalogFieldKey,
               buttonKey: dsExtensionsCatalogFetchKey,
               controller: _catalog,
-              label: '拉取在线目录（catalog.json 地址）',
-              hint: 'https://…/catalog.json',
+              // 用户 2026-10-18：「识别 github 上面的」—— 贴仓库网页地址就行，
+              // 换算成 raw 的规则在 `core/lib/extensions/urls.dart`（main/master、根/子目录都试）。
+              label: '拉取在线目录（catalog.json 或 GitHub 仓库地址）',
+              hint: 'https://github.com/作者/仓库',
               buttonLabel: '拉取在线目录',
               buttonIcon: Icons.cloud_download_outlined,
               busy: busy,
-              onPressed: () => unawaited(_controller.addCatalog(_catalog.text)),
+              onPressed: () => unawaited(_fetchCatalog(_catalog.text)),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                NeoButton(
+                  key: dsExtensionsOfficialKey,
+                  label: '官方插件库',
+                  icon: Icons.public,
+                  compact: true,
+                  onPressed: busy ? null : () => unawaited(_loadOfficialCatalog()),
+                ),
+                Text(
+                  '出厂就指向官方插件库（dnciyun/DSAnima-plungin）；拉过一次的地址会被记住，换仓库不用改代码。',
+                  style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption),
+                ),
+              ],
             ),
           ],
         ),
@@ -442,7 +659,8 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
     } else {
       text = '还没有安装任何扩展。\n'
           '扩展是资源包（着色器 / 数据等静态内容），不是运行时代码；'
-          '本版本支持着色器包（shader-pack）：装好后出现在播放器的「超分」菜单里；'
+          '本版本支持着色器包（shader-pack，装好后出现在播放器的「超分」菜单里）'
+          '与画面调节包（picture-pack，锐度/线条/调色预设）；'
           '其他类型本版本只做安装/管理。\n'
           '点「本地导入 zip…」选一个包，或填地址安装。';
     }
@@ -522,9 +740,10 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
                   // 可用性链路见 `state/extension_schemes.dart`：扩展目录里的 shader-pack
                   // 会被翻成播放器的超分方案；装/卸/启停成功后主窗口会通知已打开的
                   // 播放窗口重扫（1.1.0 第六十四轮），没开窗时下次开窗扫描兜底。
-                  usable
-                      ? '可在播放器的「超分」菜单里选用'
-                      : '本版本不接运行时（数据包装得上、用不上，暂时不会有新功能）',
+                  // "用在哪儿"由 `domain/extensions.dart` 的 `extensionUseHint` 统一给：
+                  // shader-pack 进「超分」菜单，picture-pack 是画面调节 —— 指错菜单
+                  // 比不显示更糟（用户点进去找不到）。
+                  extensionUseHint(item.manifest),
                   key: dsExtensionUseHintKey(item.id),
                   style: TextStyle(
                     color: usable ? t.success : t.text3,
@@ -534,6 +753,16 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
                 ),
               ),
               const SizedBox(width: 8),
+              if (_hasSettings(item.manifest)) ...<Widget>[
+                NeoButton(
+                  key: dsExtensionSettingsKey(item.id),
+                  label: '设置',
+                  icon: Icons.tune,
+                  compact: true,
+                  onPressed: busy ? null : () => unawaited(_openSettings(item)),
+                ),
+                const SizedBox(width: 6),
+              ],
               NeoButton(
                 key: dsExtensionToggleKey(item.id),
                 label: item.enabled ? '禁用' : '启用',

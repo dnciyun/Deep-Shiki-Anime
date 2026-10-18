@@ -12,13 +12,17 @@ import '../controllers/anime4k_controller.dart';
 import '../controllers/playlist_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../infra/diagnostics/diag.dart';
-import '../models/episode_switch_notice.dart';import '../models/media_item.dart';
+import '../models/episode_switch_notice.dart';
+import '../models/media_item.dart';
+import '../models/picture_menu.dart';
 import '../models/player_action.dart';
 import '../models/player_keys.dart';
 import '../models/player_request.dart';
 import '../models/subtitle_style.dart';
 import '../models/theme_tokens.dart';
 import '../models/upscale_scheme.dart';
+
+import 'picture_panel.dart';
 import '../models/video_stats.dart';
 import 'context_menu.dart';
 import 'control_bar.dart';
@@ -1173,6 +1177,7 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
           trackSubmenuItems(player.subtitleTracks, player.activeSubtitleId, noneLabel: '关闭字幕'),
       upscale: a4k.selection,
       upscaleSchemes: a4k.schemes,
+      pictureMenu: ref.read(pictureMenuProvider),
       alwaysOnTop: _alwaysOnTop,
       fullscreen: fs,
       pip: _pip,
@@ -1194,10 +1199,44 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
     overlay.insert(entry);
   }
 
+  /// 弹出「画面调节」滑杆面板（点面板外的透明命中面关闭）。
+  ///
+  /// 用 Overlay 而不是弹 Dialog：播放面是全屏自绘的，Dialog 会带路由动画和
+  /// 一层系统遮罩，观感上像"跳出去"了；这里只是画面上浮一块。
+  ///
+  /// ⚠️ 浮层里**不许铺遮罩色**（用户 2026-10-18：「打开滑杆面板时画面有层透明白色」）：
+  /// 面板的用途就是看着画面调，任何压暗/提亮都会让判断失真。理由与测试见
+  /// [PicturePanelLayer]。
+  void _openPicturePanel(PictureMenu menu) {
+    final OverlayState overlay = Overlay.of(context, rootOverlay: true);
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (BuildContext ctx) => PicturePanelLayer(
+        menu: menu,
+        tokens: ref.read(tokensProvider),
+        onClose: () {
+          if (entry.mounted) entry.remove();
+        },
+      ),
+    );
+    overlay.insert(entry);
+  }
+
   void _onSubmenuSelect(String elementId, SubmenuItem item) {
     final v = item.value;
     if (v is UpscaleSelection) {
       unawaited(_setUpscale(v));
+      return;
+    }
+    if (v is PictureMenuSelection) {
+      final PictureMenu? menu = ref.read(pictureMenuProvider);
+      if (menu != null) {
+        if (v.openPanel) {
+          _openPicturePanel(menu);
+        } else {
+          unawaited(menu.selectPreset(v.presetId));
+        }
+      }
       return;
     }
     final player = ref.read(playerProvider);

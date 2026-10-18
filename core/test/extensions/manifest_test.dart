@@ -792,10 +792,12 @@ void main() {
         const ManifestIssue('files[0].path', '路径不可用').toString(),
         'files[0].path: 路径不可用',
       );
-      expect(ExtensionKind.labels, hasLength(2));
+      expect(ExtensionKind.labels, hasLength(3));
       expect(ExtensionKind.labels[ExtensionKind.shaderPack], '着色器包');
       expect(ExtensionKind.labelOf(ExtensionKind.dataPack), '数据包');
+      expect(ExtensionKind.labelOf(ExtensionKind.picturePack), '画面调节包');
       expect(ExtensionKind.isKnown(ExtensionKind.shaderPack), isTrue);
+      expect(ExtensionKind.isKnown(ExtensionKind.picturePack), isTrue);
       expect(ExtensionKind.isKnown('future-pack'), isFalse);
     });
 

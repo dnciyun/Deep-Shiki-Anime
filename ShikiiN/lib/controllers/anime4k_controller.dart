@@ -10,6 +10,11 @@ import '../infra/diagnostics/diag.dart';
 /// （不再改 `scale` 属性、不再存/还原属性原值）。现在只有一条通路：
 /// **一串 GLSL 文件 → `change-list glsl-shaders set <paths>`**。
 ///
+/// 除了「方案」之外还有一层**叠加链**（[setExtraChain]）：宿主把「画面调节」扩展包
+/// 按当前滑块取值渲染成 .glsl 之后塞进来，它永远挂在方案链**后面**（先超分、再调色），
+/// 而且与方案正交 —— 选「关超分」时画面调节照样生效（很多片源用 Anime4K 反而更软，
+/// 这个组合是实测过的）。
+///
 /// [runner] 注入「下发一条 mpv 命令」（生产接 PlayerController.runMpvCommand）；
 /// [readProperty] 注入「读一个 mpv 属性」—— 只用于诊断：apply 时把硬解状态、
 /// 像素格式、片源/输出尺寸写进日志（真机排查用，不做任何自动降级动作）。
@@ -47,11 +52,44 @@ class Anime4kController {
 
   bool get isOff => _selection.isOff;
 
-  /// 是否有实际生效的超分（任何方案）；换片窗口据此决定要不要补发。
-  bool get hasEffect => !isOff;
+  /// 画面调节扩展包渲染出来的 shader（**绝对路径**，按挂载顺序，通常只有一个文件）。
+  ///
+  /// 为什么是绝对路径而不是「文件名 + 目录」：它不在任何一个 shader 包里，而是宿主
+  /// 按当前参数生成到缓存目录的临时产物，和方案的 [UpscaleScheme.dir] 没有关系。
+  List<String> _extraChain = const <String>[];
 
-  /// 当前是否有文件链要挂（任何非关方案都有；关 → false）。
-  bool get hasShaders => _chainOf(_resolve()).isNotEmpty;
+  List<String> get extraChain => _extraChain;
+
+  /// 只记状态、**不下发**：调用方改完它紧接着会 [reapply] 或 [setSelection]，
+  /// 一次操作只应该产生一条 mpv 命令（下发两次会在两次 set 之间闪一帧无 shader）。
+  void setExtraChain(List<String> absolutePaths) {
+    _extraChain = List<String>.unmodifiable(
+      absolutePaths.where((String path) => path.trim().isNotEmpty),
+    );
+  }
+
+  /// 是否有实际生效的画面处理（任何方案，或只有画面调节）。
+  /// 换片窗口据此决定要不要补发。
+  bool get hasEffect => !isOff || _extraChain.isNotEmpty;
+
+  /// 当前是否有文件链要挂（任何非关方案都有；只有画面调节时也为 true）。
+  bool get hasShaders => _absoluteChain().isNotEmpty;
+
+  /// 方案链 + 叠加链，已经拼成绝对路径（下发前最后一步）。
+  List<String> _absoluteChain() {
+    final List<String> out = <String>[];
+    if (!isOff) {
+      final UpscaleScheme scheme = _resolve();
+      final String? dir = scheme.dir ?? _shaderDir;
+      if (dir != null) {
+        for (final String file in _chainOf(scheme)) {
+          out.add(p.join(dir, file));
+        }
+      }
+    }
+    out.addAll(_extraChain);
+    return out;
+  }
 
   /// 只记选择、**不下发**（主窗口不播时用：下发会经 runner 凭空建 mpv 实例）。
   void loadSelection(UpscaleSelection selection) {
@@ -136,7 +174,8 @@ class Anime4kController {
 
   Future<void> _apply() async {
     final UpscaleScheme scheme = _resolve();
-    if (_selection.isOff) {
+    // 「关超分」但开着画面调节时**不能** clr：那会把画面调节一起清掉。
+    if (_selection.isOff && _extraChain.isEmpty) {
       await _deactivate();
       return;
     }
@@ -150,12 +189,13 @@ class Anime4kController {
   }
 
   Future<void> _activate(UpscaleScheme scheme) async {
+    // scheme 只用于「要不要挂方案链」的判断（在 _absoluteChain 里），这里保留参数
+    // 是为了让调用点读起来还是「按这个方案下发」。
     final String where = '${_selection.schemeId}/${_selection.preset.name}';
     await diag.breadcrumbFlushed('anime4k:_apply $where${await _playbackContext()}');
     try {
-      final List<String> chain = _chainOf(scheme);
-      final String? dir = scheme.dir ?? _shaderDir;
-      if (dir == null || chain.isEmpty) {
+      final List<String> chain = _absoluteChain();
+      if (chain.isEmpty) {
         // 没有可用的 shader 文件：安全降级为关，绝不假装生效。
         await _clearShaders();
         diag.warn('anime4k', 'apply $where skipped: no shader dir/chain');
@@ -166,8 +206,7 @@ class Anime4kController {
         _pendingApply = true;
         return;
       }
-      final String paths = chain.map((String f) => p.join(dir, f)).join(';');
-      await runner(['change-list', 'glsl-shaders', 'set', paths]);
+      await runner(['change-list', 'glsl-shaders', 'set', chain.join(';')]);
       await diag.breadcrumbFlushed('anime4k:_apply done $where');
     } catch (e, st) {
       diag.warn('anime4k', 'apply $where failed', e, st);

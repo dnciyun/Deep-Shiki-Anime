@@ -228,6 +228,53 @@ String watchRecordId({
   return '$show|$g|$ep';
 }
 
+/// 「这一集该从哪儿接着播」—— 续播的唯一口径（用户 2026-10-18：
+/// 「发现bug继续观看回不到上一次的观看位置」）。
+///
+/// 为什么要有这个函数：`resumePositionMs` 之前只在两处被用到 —— 「观看记录」页点
+/// 「继续播放」、以及重启后侧栏那行「继续播放」。其它点播入口（正在追/今日更新点开层、
+/// 已完成页、播放列表切集）**一律从 0 开始**；而子窗口自己那份续播记忆是按
+/// **串流 URL** 存的（`ShikiiN` 的 `SettingsController.resumeKey` = md5(URL|size)），
+/// URL 里带着边车 token，重启一次就换了 ⇒ 那份记忆必然 miss。
+/// 观看记录里的位置才是按「番剧 + 字幕组 + 集数」记的，跨重启仍然有效。
+///
+/// 规则与 [WatchRecord.resumePositionMs] 完全一致（已看完 / 没进度 → null = 从头），
+/// 所以「看了 95% 算看完」这条不会再从别的入口漏一遍。
+int? resumePositionForRecord(Iterable<WatchRecord> records, String recordId) {
+  for (final WatchRecord r in records) {
+    if (r.id == recordId) return r.resumePositionMs;
+  }
+  return null;
+}
+
+/// 同上，但按**引擎坐标**查（[infoHash] + [fileIndex]）。
+///
+/// 「已完成」页点播没有番剧/集号上下文，手上只有 torrent 与文件序号；那两样恰好也
+/// 记在观看记录里（[WatchRecord.infoHash] / [WatchRecord.fileIndex]），所以能对上。
+///
+/// 同 infoHash 可能有多条（不同文件）：`fileIndex` 必须严格相等，缺省时只匹配同样
+/// 缺省的老记录 —— **不猜**「大概是这一集」。命中多条时取最近看的那条。
+int? resumePositionForFile(
+  Iterable<WatchRecord> records, {
+  String? infoHash,
+  int? fileIndex,
+}) {
+  final String hash = (infoHash ?? '').trim();
+  if (hash.isEmpty) return null;
+  int? best;
+  DateTime? bestAt;
+  for (final WatchRecord r in records) {
+    if ((r.infoHash ?? '').trim() != hash) continue;
+    if (r.fileIndex != fileIndex) continue;
+    final int? ms = r.resumePositionMs;
+    if (ms == null) continue;
+    if (bestAt != null && !r.watchedAt.isAfter(bestAt)) continue;
+    best = ms;
+    bestAt = r.watchedAt;
+  }
+  return best;
+}
+
 /// 按保留天数丢掉过期的记录（纯函数）。
 ///
 /// [retentionDays] <= 0 表示**永不删除**（用户可选项）；判据是 [WatchRecord.watchedAt]

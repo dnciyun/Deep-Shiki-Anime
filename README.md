@@ -20,7 +20,7 @@ rqbit 引擎边车）。
 
 ## 下载 / 安装
 
-到 [Releases](https://github.com/ciciyouxihao-source/DSAnima/releases/latest) 下载最新的
+到 [Releases](https://github.com/dnciyun/Deep-Shiki-Anime/releases/latest) 下载最新的
 `DSAnima-<日期>-win-x64.zip`，**解压**后双击里面的 `dsanima.exe`。
 
 > ⚠️ 别把 exe 单独拖出来：`data/`、`flutter_windows.dll`、`rqbit-engine.exe` 必须和它在一起。
@@ -28,9 +28,13 @@ rqbit 引擎边车）。
 ## 更新
 
 程序内：**设置 → 更新 · 版本** → 直接点「检查更新」。更新源**已内置**
-（`ciciyouxihao-source/DSAnima` —— 那一格留空就用它，只有想换成自己的仓库才需要填）
+（`dnciyun/Deep-Shiki-Anime` —— 那一格留空就用它，只有想换成自己的仓库才需要填）
 → 发现新版本后「下载更新包」→「立即重启并更新」。程序会正常退出（先落盘、再停边车），
 几秒后以新版本重新打开；设置与观看记录都在 `DSAnima-data` 里，不受影响。
+
+> 2026-10-18：仓库从旧的 `ciciyouxihao-source/DSAnima` 换到这里 —— 旧地址被 GitHub
+> 限制可见性，匿名访问（也就是程序里那条检查更新）一律 404。源码与发布包现在都在
+> Deep-Shiki-Anime 这个仓库；想在程序里绑别的仓库，把「更新源」那一格填上即可。
 
 * 检查更新与下载走 GitHub 的**公开接口（匿名）**，匿名额度 60 次/小时 —— 所以检查是手动点的；
 * 匿名读不到发布信息时（私有仓库、或账号对未登录访客不可见），在同一组里填一个**只读访问令牌**：

@@ -222,7 +222,8 @@ void main() {
     });
 
     test('内置更新源（第四十一轮）：留空就用它，填了就用填的', () {
-      expect(kBuiltinUpdateRepo, 'ciciyouxihao-source/DSAnima');
+      // 2026-10-18 第七十五轮换到公开的新仓库（旧账号被 GitHub 限制可见性，匿名 404）。
+      expect(kBuiltinUpdateRepo, 'dnciyun/Deep-Shiki-Anime');
       expect(
         normalizeRepoSlug(kBuiltinUpdateRepo),
         kBuiltinUpdateRepo,
@@ -234,7 +235,7 @@ void main() {
       // 留空 → 内置 → 请求地址：设置页显示的就是这条。
       expect(
         releaseApiUrl(normalizeRepoSlug(effectiveUpdateRepo(''))!),
-        'https://api.github.com/repos/ciciyouxihao-source/DSAnima/releases/latest',
+        'https://api.github.com/repos/dnciyun/Deep-Shiki-Anime/releases/latest',
       );
     });
   });

@@ -260,7 +260,14 @@ String? normalizeRepoSlug(String? raw) {
 String releaseApiUrl(String slug) => 'https://api.github.com/repos/$slug/releases/latest';
 
 /// **内置的更新源**（第四十一轮）：这一格留空就用它 —— 用户不用去仓库页面抄那两段。
-const String kBuiltinUpdateRepo = 'ciciyouxihao-source/DSAnima';
+///
+/// 2026-10-18（第七十五轮）换了仓库：`ciciyouxihao-source/DSAnima` → `dnciyun/Deep-Shiki-Anime`。
+/// 原因：旧账号被 GitHub 限制可见性（匿名 / 未登录访客 404，程序里检查更新永远失败），
+/// 新仓库是公开的、匿名能读；源码与发布包都放它下面。
+///
+/// ⚠️ 这个值必须和**实际发 Release 的仓库**一致（`tool/release_github.ps1` 会读这里校验）：
+/// 发到别处而这里不改，用户那边的「检查更新」就会一直显示"已是最新"。
+const String kBuiltinUpdateRepo = 'dnciyun/Deep-Shiki-Anime';
 
 /// 真正拿去请求的那个 slug：填了就用填的，留空（或只有空白）就用 [kBuiltinUpdateRepo]。
 ///

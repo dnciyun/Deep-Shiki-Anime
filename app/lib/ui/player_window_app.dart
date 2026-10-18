@@ -185,6 +185,15 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
         '扩展变更：方案 ${refresh.schemes.length} 个（选中 ${refresh.selection.schemeId}'
         '${refresh.selectionReset ? '，原方案已被卸载/禁用 → 已回退内置 Anime4K' : ''}）',
       );
+      // 画面调节包也要重扫：用户在扩展页关掉了某些预设（`extension-settings.json`）
+      // 时，已开的播放窗口若无这一步，右键菜单里那些预设还会在（点了才没反应）。
+      // `reload()` 永不抛，最坏是菜单保持旧清单。
+      try {
+        final shikiin.PictureMenu? menu = ref.read(shikiin.pictureMenuProvider);
+        await menu?.reload();
+      } catch (e) {
+        _trace('扩展变更后重扫画面调节包失败（菜单保持旧清单）：$e');
+      }
       // 方案清单变了：控制栏胶囊文案/菜单都读它，重建一次让界面跟上。
       if (mounted) setState(() {});
     } catch (e) {

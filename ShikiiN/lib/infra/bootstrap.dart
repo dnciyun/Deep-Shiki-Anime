@@ -13,6 +13,7 @@ import '../controllers/anime4k_controller.dart';
 import '../controllers/player_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../models/app_settings.dart';
+import '../models/picture_menu.dart';
 import '../models/player_request.dart';
 import '../models/theme_tokens.dart';
 import '../models/upscale_scheme.dart';
@@ -37,6 +38,7 @@ class AppRuntime {
     required this.launchFile,
     this.fileOpenRequests,
     required this.tokens,
+    this.pictureMenu,
     bool lazyPlayer = false,
   }) {
     // 默认（子窗口/单窗口宿主）保持历史行为：启动即建播放器。
@@ -69,6 +71,16 @@ class AppRuntime {
   /// [ThemeTokens.fallback]。宿主用 `shikiinOverrides` 或直接 override
   /// `tokensProvider` 把它给播放面。
   final ThemeTokens tokens;
+
+  /// 画面调节菜单（宿主在 bootstrap 之后装配；null = 没装画面调节包）。
+  ///
+  /// 为什么是**可变**字段而不是构造参数：装配它需要 ① 刚建好的 [anime4k] 控制器、
+  /// ② 宿主扫扩展目录（异步、且失败只该让这一项消失）。让宿主建完再
+  /// [attachPictureMenu]，比在 bootstrap 里塞一个"工厂回调"更好读。
+  PictureMenu? pictureMenu;
+
+  /// 装配画面调节菜单（宿主调用；传 null = 不提供这一项）。
+  void attachPictureMenu(PictureMenu? menu) => pictureMenu = menu;
 
   PlayerController? _player;
 
@@ -188,6 +200,12 @@ Future<AppRuntime> bootstrapPlayer({
   /// 与内置方案**去重**：id 撞内置的一律丢掉（见 [mergedUpscaleSchemes]），
   /// 且 `files` 为空的方案也不算数（没有 shader 文件挂上去只会静默不生效）。
   List<UpscaleScheme> extraSchemes = const <UpscaleScheme>[],
+
+  /// 宿主注入：画面调节菜单（`PictureMenu`）。null = 没装画面调节包。
+  ///
+  /// 与 [extraSchemes] 同一个理由：shikiin 不认识扩展清单格式，宿主把"有哪些包/预设、
+  /// 渲染成哪个文件"藏在自己的实现里，这里只收一个接口。
+  PictureMenu? pictureMenu,
 
   /// 窗口初始位置（逻辑像素，桌面坐标）。多窗口宿主用它把播放窗口放到主窗口旁边，
   /// 而不是居中把主窗口整个盖住（见 [setupWindow]）。
@@ -309,6 +327,7 @@ Future<AppRuntime> bootstrapPlayer({
       launchFile: launchFile,
       fileOpenRequests: fileOpenRequests,
       tokens: tokens ?? ThemeTokens.fallback,
+      pictureMenu: pictureMenu,
       lazyPlayer: lazyPlayer,
     );
     if (lazyPlayer) {
@@ -332,6 +351,7 @@ Future<AppRuntime> bootstrapPlayer({
     launchFile: launchFile,
     fileOpenRequests: fileOpenRequests,
     tokens: tokens ?? ThemeTokens.fallback,
+    pictureMenu: pictureMenu,
     lazyPlayer: lazyPlayer,
   );
 }
@@ -359,6 +379,9 @@ List<Override> shikiinOverrides(AppRuntime runtime, {PlayerRequestNotifier? play
   // 以及启动期偶发 `0xC0000005`）。改成惰性之后：读它的那一刻才建。
   playerProvider.overrideWith((ref) => runtime.player),
   anime4kProvider.overrideWithValue(runtime.anime4k),
+  // 画面调节：允许宿主在 bootstrap 之后才装配（它要用刚建好的 anime4k 控制器 +
+  // 扫扩展目录），所以这里是惰性读 runtime 上的可变字段，不是构造期快照。
+  pictureMenuProvider.overrideWith((ref) => runtime.pictureMenu),
   tokensProvider.overrideWithValue(runtime.tokens),
   // 宿主显式给的请求通道优先；没有就用启动时建的「原生打开文件」接收端
   // （独立 exe 不传 playerRequests，双击视频/命令行传文件就靠这一条）。

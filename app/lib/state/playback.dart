@@ -212,6 +212,14 @@ class PlaybackController extends Notifier<PlaybackUiState> {
         currentUrl: target.streamUrl,
         currentFileIndex: target.fileIndex,
       );
+      // 续播（用户 2026-10-18：「发现bug继续观看回不到上一次的观看位置」）：
+      // 任何入口点开一集，只要观看记录里有"上次看到哪儿"就把起点交给播放器。
+      // 之前**只有**「观看记录」页的「继续播放」和重启后侧栏那行传了起点，
+      // 正在追 / 今日更新 / 搜索结果 / 播放列表切集一律从 0 开始；而子窗口自己那份
+      // 续播记忆是按**串流 URL** 记的（带边车 token，重启即换）⇒ 必然 miss。
+      // 看完的集 `resumePositionMs` 是 null（看完了就该从头），这里不另设阈值。
+      final int? resumeMs =
+          resumePositionForRecord(ref.read(watchHistoryProvider), watch.recordId);
       await ref.read(playerPortProvider).open(
             PlayerRequest(
               streamUrl: target.streamUrl,
@@ -219,6 +227,7 @@ class PlaybackController extends Notifier<PlaybackUiState> {
               engineId: target.engineId,
               fileIndex: target.fileIndex,
               subtitlePath: target.subtitlePath,
+              startAt: resumeMs == null ? null : Duration(milliseconds: resumeMs),
             ),
             // 上一集/下一集（决策 B31）：**这一刻**按刚解析出来的文件序号归组，
             // 不能读 currentEpisodeGroupProvider（它看的是还没更新的 nowPlaying）。
@@ -240,9 +249,9 @@ class PlaybackController extends Notifier<PlaybackUiState> {
           watchByUrl: watchByUrl,
         ),
       );
-      // 「上次播放」快照：开播成功就落一次（位置 0 = 从头；之后进度节流更新）。
+      // 「上次播放」快照：开播成功就落一次（位置 = 这次起播的起点；之后进度节流更新）。
       // 放在这里而不是等第一次进度：用户可能刚点开就关掉程序 —— 那时也得记得"在看哪一集"。
-      _positionMs = 0;
+      _positionMs = resumeMs ?? 0;
       await _saveSnapshotNow();
       // 观看记录：开播就写一条（**不等它** —— 记不上账也不该挡着出画面）。
       unawaited(_recordWatchStart(
@@ -459,6 +468,17 @@ class PlaybackController extends Notifier<PlaybackUiState> {
         fileIndex: file.index,
         engine: ref.read(enginePortProvider),
       );
+      // 起点：调用方显式给的优先（「观看记录」页的「继续播放」/ 重启恢复行）；
+      // 没给就按**引擎坐标**（infoHash + 文件序号）从观看记录里查 —— 「已完成」页的
+      // 播放按钮走的正是"没给"这条路，它以前永远从 0 开始（用户 2026-10-18：
+      // 「继续观看回不到上一次的观看位置」）。
+      final int? startMs = (startPositionMs != null && startPositionMs > 0)
+          ? startPositionMs
+          : resumePositionForFile(
+              ref.read(watchHistoryProvider),
+              infoHash: torrent.infoHash,
+              fileIndex: file.index,
+            );
       await ref.read(playerPortProvider).open(
             PlayerRequest(
               streamUrl: url,
@@ -467,9 +487,7 @@ class PlaybackController extends Notifier<PlaybackUiState> {
               fileIndex: file.index,
               // 续播：起点交给播放器（`startAt` 一路到 shikiin 的 `player.open`，
               // 它 open 完会 seek 过去）。null = 从头。
-              startAt: (startPositionMs == null || startPositionMs <= 0)
-                  ? null
-                  : Duration(milliseconds: startPositionMs),
+              startAt: startMs == null ? null : Duration(milliseconds: startMs),
             ),
             episodeGroup: torrentGroup,
           );
@@ -500,7 +518,7 @@ class PlaybackController extends Notifier<PlaybackUiState> {
         ),
       );
       // 快照位置 = 这次起播用的起点（从观看记录续播时就是上次看到的位置）。
-      _positionMs = (startPositionMs == null || startPositionMs <= 0) ? 0 : startPositionMs;
+      _positionMs = startMs ?? 0;
       await _saveSnapshotNow();
       unawaited(_recordWatchStart(watch, engineId: torrent.id, fileIndex: file.index));
       await _recordRecent(
@@ -875,12 +893,19 @@ class PlaybackController extends Notifier<PlaybackUiState> {
             engine: ref.read(enginePortProvider),
           );
     try {
+      // 续播（用户 2026-10-18：「发现bug继续观看回不到上一次的观看位置」）：
+      // 「唤回」语义就是**接着看**，起点必须由宿主显式给 —— 子窗口自己那份按
+      // 串流 URL 记的续播（`SettingsController.resumeKey` = md5(URL|size)）不一定命中
+      // （URL 上挂着边车 token；边车重启/换端口就是另一个键），而宿主这边的
+      // `_positionMs` 与观看记录同源，是可靠的那一份。
+      final int? resumeMs = _positionMs > 0 ? _positionMs : null;
       await ref.read(playerPortProvider).open(
             PlayerRequest(
               streamUrl: url,
               title: current.title,
               engineId: current.engineId,
               fileIndex: current.fileIndex,
+              startAt: resumeMs == null ? null : Duration(milliseconds: resumeMs),
             ),
             episodeGroup: torrentGroup,
           );

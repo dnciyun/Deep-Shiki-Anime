@@ -214,3 +214,42 @@ class ExtensionsSummary {
     );
   }
 }
+
+/// 「这类扩展在本版本能干什么」——**唯一口径**，扩展页、安装成功提示都用它。
+///
+/// 为什么要一个函数：`usable` 只说"清单完整、能用"，不说"用在哪儿"。
+/// 1.1.0 里 `shader-pack` 进播放器「超分」菜单，`picture-pack` 进「画面调节」
+/// （预设 + 滑杆面板），两者混着说会指错菜单（用户点进去找不到）。
+String extensionUseHint(core.ExtensionManifest manifest) {
+  if (!manifest.isUsable) {
+    if (!manifest.isKnownKind) {
+      return '类型「${manifest.kind}」本版本不接运行时，暂时不会有新功能';
+    }
+    return '本版本不接运行时（数据包装得上、用不上，暂时不会有新功能）';
+  }
+  if (manifest.kind == core.ExtensionKind.picturePack) {
+    return '画面调节包：装上后进播放器右键菜单的「画面调节」（预设 + 滑杆面板）';
+  }
+  return '可在播放器的「超分」菜单里选用';
+}
+
+/// 官方插件库的地址（用户 2026-10-18：「加入官方插件库，可以直接下载我加进去的插件」）。
+///
+/// 用户 2026-10-18 晚给了仓库：<https://github.com/dnciyun/DSAnima-plungin>，本轮填上 ——
+/// 扩展页「官方插件库」按钮从此**开箱就能点**，不用先粘一次地址。
+///
+/// 填的是**仓库网页地址**而不是 `catalog.json` 的 raw 地址，这是故意的：
+/// * 从网页地址看不出"默认分支叫 main 还是 master"、"catalog.json 放根还是 extensions/ 下"，
+///   所以 `core.extensionCatalogUrlCandidates` 会把仓库地址展开成 4 个候选依次试；
+///   直接写死 raw 地址只会试一个，作者把文件放歪一格就是一句看不懂的 404；
+/// * 用户粘的也是这个地址 —— 应用自己认得（`core/lib/extensions/urls.dart` 有测试）。
+///
+/// 仓库名 `DSAnima-plungin` 是用户给的原样拼写（`plungin`，不是 `plugin`）：
+/// GitHub 的仓库名就是地址的一部分，**不要顺手"改正"**，改一个字母就是另一个仓库。
+///
+/// 仓库里还没有 `catalog.json` 时按钮会报 404 —— `extensions_adapter.dart` 对"官方库"
+/// 这条地址有专门的一句提示（把 catalog.json 推上去就好了），别让用户去猜。
+///
+/// 换仓库时改这一行即可；用户那边"上次成功拉过的地址"优先于它（`extension-settings.json`），
+/// 所以换仓库也不会让已经配好别的目录的人突然被改掉。
+const String kOfficialExtensionsCatalogUrl = 'https://github.com/dnciyun/DSAnima-plungin';

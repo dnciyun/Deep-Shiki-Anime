@@ -326,7 +326,7 @@ class ExtensionsController extends Notifier<ExtensionsState> {
         problem: null,
         problemHint: null,
       );
-      _bumpRevision();
+      bumpRevision();
     } catch (error) {
       final DsFailure failure = _describe(error);
       state = state.copyWith(
@@ -350,7 +350,7 @@ class ExtensionsController extends Notifier<ExtensionsState> {
         problem: null,
         problemHint: null,
       );
-      _bumpRevision();
+      bumpRevision();
     } catch (error) {
       final DsFailure failure = _describe(error);
       state = state.copyWith(
@@ -420,7 +420,7 @@ class ExtensionsController extends Notifier<ExtensionsState> {
         cancelling: false,
         notice: _installedNotice(installed),
       );
-      _bumpRevision();
+      bumpRevision();
     } on ExtensionInstallCancelled {
       if (generation != _generation) return;
       _cancelRequested = false;
@@ -460,7 +460,16 @@ class ExtensionsController extends Notifier<ExtensionsState> {
     }
   }
 
-  void _bumpRevision() {
+  /// 页面级的一句提示（中性/成功条）。
+  ///
+  /// 为什么让页面能直接写一句：像"还没有官方插件库地址，先拉一次"这种话既不是安装结果、
+  /// 也不是错误（红字会把用户吓一跳）。统一落在 `notice` 上，界面只有一条提示位。
+  void note(String text) {
+    state = state.copyWith(notice: text, problem: null, problemHint: null);
+  }
+
+  /// 通知已打开的播放窗口重扫扩展（装/卸/启停成功、**扩展设置变了**都走这里）。
+  void bumpRevision() {
     try {
       ref.read(extensionsRevisionProvider.notifier).bump();
     } catch (_) {
@@ -471,9 +480,9 @@ class ExtensionsController extends Notifier<ExtensionsState> {
   /// 安装成功的提示：类型本版本不接运行时的话，必须当场说清楚（不许让用户以为有了新功能）。
   String _installedNotice(InstalledExtension installed) {
     final String base = '「${installed.name}」已安装';
-    if (installed.usable) {
-      return '$base · 可在播放器的「超分」菜单里选用';
-    }
+    // "用在哪儿"只有一个口径（`domain/extensions.dart`）：usable 只说清单完整，
+    // 不代表它进的是「超分」菜单 —— picture-pack 进的是画面调节。
+    if (installed.usable) return '$base · ${extensionUseHint(installed.manifest)}';
     if (!installed.manifest.isKnownKind) {
       return '$base · 类型「${installed.manifest.kind}」本版本不接运行时，暂时不会有新功能';
     }

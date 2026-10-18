@@ -218,4 +218,84 @@ void main() {
       expect(sent, hasLength(1)); // 只补发一次
     });
   });
+
+  // 画面调节扩展包：宿主按滑块值渲染出一份 .glsl，作为**叠加链**挂在方案后面。
+  // 判据的重点不是"能不能挂"，而是"关超分时不许 clr 掉画面调节"和"顺序在方案之后"。
+  group('画面调节叠加链（extraChain）', () {
+    const String picture = r'C:\cache\picture_demo_ab12.glsl';
+
+    test('setExtraChain 只记状态、不下发（一次操作只发一条命令）', () {
+      c.setExtraChain(<String>[picture]);
+      expect(sent, isEmpty);
+      expect(c.extraChain, <String>[picture]);
+    });
+
+    test('关超分 + 画面调节 → set 只带画面调节（绝不 clr）', () async {
+      c.setExtraChain(<String>[picture]);
+      await c.setPreset(Anime4kPreset.off);
+      expect(sent.single.sublist(0, 3), ['change-list', 'glsl-shaders', 'set']);
+      expect(sent.single[3], picture);
+      expect(c.hasEffect, isTrue);
+      expect(c.hasShaders, isTrue);
+    });
+
+    test('开着方案 + 画面调节 → 方案链在前、画面调节在后', () async {
+      c.setExtraChain(<String>[picture]);
+      await c.setSelection(const UpscaleSelection(preset: Anime4kPreset.standard));
+      final List<String> paths = sent.single[3].split(';');
+      expect(paths.last, picture);
+      expect(paths.first, isNot(picture));
+      expect(paths.where((String x) => x == picture), hasLength(1));
+      expect(paths.length, anime4kShaderChain(Anime4kPreset.standard).length + 1);
+    });
+
+    test('画面调节叠在扩展方案上：两种来源的绝对路径都在，扩展包自己的目录不被改', () async {
+      final c3 = Anime4kController(runner: (args) async => sent.add(args))
+        ..setShaderDir(r'C:\sh');
+      c3.setExtraChain(<String>[picture]);
+      c3.setSchemes(<UpscaleScheme>[
+        const UpscaleScheme(
+          id: 'ext-pack',
+          name: '扩展包',
+          shortName: 'EXT',
+          kind: UpscaleSchemeKind.glslPack,
+          files: <String>['a.glsl', 'b.glsl'],
+          dir: r'C:\ext\ext-pack\shaders',
+        ),
+      ]);
+      await c3.setSelection(const UpscaleSelection(schemeId: 'ext-pack'));
+      final List<String> paths = sent.single[3].split(';');
+      expect(paths, <String>[
+        r'C:\ext\ext-pack\shaders\a.glsl',
+        r'C:\ext\ext-pack\shaders\b.glsl',
+        picture,
+      ]);
+    });
+
+    test('清掉叠加链后回关 → clr；hasEffect/hasShaders 跟着回到 false', () async {
+      c.setExtraChain(<String>[picture]);
+      await c.setPreset(Anime4kPreset.off);
+      sent.clear();
+      c.setExtraChain(const <String>[]);
+      await c.reapply();
+      expect(sent.single[2], 'clr');
+      expect(c.hasEffect, isFalse);
+      expect(c.hasShaders, isFalse);
+    });
+
+    test('空白路径被丢掉（避免拼出 "a;;b" 这种让 mpv 读不到文件的值）', () {
+      c.setExtraChain(<String>[picture, '  ', '']);
+      expect(c.extraChain, <String>[picture]);
+    });
+
+    test('换片保护窗口内改叠加链：记账，exit 时按最新链补发一次', () async {
+      final token = c.enterSwitchWindow();
+      c.setExtraChain(<String>[picture]);
+      await c.setPreset(Anime4kPreset.off);
+      expect(sent, isEmpty, reason: '窗口内不 set');
+      await c.exitSwitchWindow(token);
+      expect(sent.single[2], 'set');
+      expect(sent.single[3], picture);
+    });
+  });
 }

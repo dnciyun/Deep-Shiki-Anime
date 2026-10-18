@@ -54,7 +54,7 @@ Future<List<UpscaleScheme>> _load(Directory supportDir) async {
   final Directory root = Directory(p.join(supportDir.path, kExtensionsDirName));
   if (!root.existsSync()) return const <UpscaleScheme>[];
 
-  final Map<String, bool> enabled = await _readEnabledFlags(root);
+  final Map<String, bool> enabled = await readExtensionsEnabledFlags(root);
   final List<UpscaleScheme> schemes = <UpscaleScheme>[];
 
   for (final FileSystemEntity entity in root.listSync(followLinks: false)) {
@@ -74,10 +74,13 @@ Future<List<UpscaleScheme>> _load(Directory supportDir) async {
 
 /// 读 `state.json` 里每个扩展的 `enabled`；读不出来就当"全启用"。
 ///
+/// 公开给「画面调节」包的扫描（`state/picture_pack.dart`）复用：**启用/禁用只有一个口径**，
+/// 两处各写一份的话，扩展页禁用了、画面调节却还挂着它不是没可能。
+///
 /// 为什么不因为 state.json 坏了就整体放弃：目录里的文件是真实的，用户手抄一份扩展进来
 /// （或者 adapter 写盘被打断）时，能用的方案应当照常出现；启用状态只是**限制**，
 /// 拿不到限制时按默认（启用）处理，符合"目录存在即安装"的直觉。
-Future<Map<String, bool>> _readEnabledFlags(Directory root) async {
+Future<Map<String, bool>> readExtensionsEnabledFlags(Directory root) async {
   final File stateFile = File(p.join(root.path, kExtensionsStateFileName));
   if (!stateFile.existsSync()) return <String, bool>{};
   try {

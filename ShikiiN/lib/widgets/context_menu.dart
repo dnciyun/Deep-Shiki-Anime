@@ -3,6 +3,7 @@ import '../models/anime4k_preset.dart';
 import '../models/player_action.dart';
 import '../models/theme_tokens.dart';
 import '../models/track.dart';
+import '../models/picture_menu.dart';
 import '../models/upscale_scheme.dart';
 import 'context_submenu.dart';
 
@@ -76,6 +77,7 @@ List<ContextEntry> defaultContextEntries({
   List<SubmenuItem> subtitleItems = const [],
   UpscaleSelection upscale = UpscaleSelection.off,
   List<UpscaleScheme>? upscaleSchemes,
+  PictureMenu? pictureMenu,
   bool alwaysOnTop = false,
   bool fullscreen = false,
   bool pip = false,
@@ -126,6 +128,13 @@ List<ContextEntry> defaultContextEntries({
       elementId: 'contextMenu.upscale',
       children: upscaleSubmenuItems(upscale, schemes),
     ),
+    if (pictureMenu != null && pictureMenu.params.isNotEmpty)
+      ContextEntry.submenu(
+        label: '画面调节',
+        icon: Icons.tune_rounded,
+        elementId: 'contextMenu.picture',
+        children: pictureSubmenuItems(pictureMenu),
+      ),
     ContextEntry.action(
       PlayerAction.toggleStats,
       Icons.monitor_heart_outlined,
@@ -524,3 +533,35 @@ class _SubmenuRowState extends State<_SubmenuRow> {
     );
   }
 }
+
+/// 「画面调节」子菜单项：关 + 各包预设 + 「调节…」。
+///
+/// 纯函数（不碰 widget）：菜单是右键时现建的，所以这里读到的就是最新状态。
+///
+/// **每一项只有名称，不带说明**（用户 2026-10-18：「右键菜单内不要有太多介绍，
+/// 全在扩展内就好了」）：预设的说明在扩展页「设置」里逐条列着，菜单里再放一遍
+/// 就是一层灰字噪音。多包重名时由宿主把包名拼进 `name`
+/// （`app/lib/state/picture_menu_adapter.dart` 只在包数 > 1 时拼），这里不重复拼装。
+List<SubmenuItem> pictureSubmenuItems(PictureMenu menu) => <SubmenuItem>[
+      SubmenuItem(
+        label: '关',
+        checked: menu.isOff,
+        value: const PictureMenuSelection.off(),
+        elementId: 'picture.off',
+      ),
+      for (final PicturePresetInfo preset in menu.presets)
+        SubmenuItem(
+          label: preset.name,
+          checked: !menu.isOff && menu.activePresetId == preset.id,
+          value: PictureMenuSelection.preset(preset.id),
+          elementId: 'picture.${preset.id}',
+        ),
+      SubmenuItem(
+        label: '调节…',
+        value: const PictureMenuSelection.openPanel(),
+        elementId: kPicturePanelElementId,
+      ),
+    ];
+
+/// 「调节…」那一项的 elementId（播放面据此弹出滑杆面板）。
+const String kPicturePanelElementId = 'picture.openPanel';

@@ -45,6 +45,7 @@ library;
 
 import '../update/version.dart';
 import 'package_guard.dart';
+import 'picture.dart';
 
 /// 已知扩展类型 → 界面上的中文名。
 ///
@@ -60,9 +61,14 @@ class ExtensionKind {
   /// 纯数据包：文件会被校验并落在扩展目录里，但本版本不接运行时。
   static const String dataPack = 'data-pack';
 
+  /// 「画面调节」包：一份带 `@key@` 占位符的模板 + 参数声明 + 预设，
+  /// 宿主按用户取值现场渲染成 .glsl 再挂载（见 `picture.dart`）。
+  static const String picturePack = kPicturePackKind;
+
   static const Map<String, String> labels = <String, String>{
     shaderPack: '着色器包',
     dataPack: '数据包',
+    picturePack: '画面调节包',
   };
 
   static bool isKnown(String kind) => labels.containsKey(kind);
@@ -154,6 +160,7 @@ class ExtensionManifest {
     this.homepage,
     this.minAppVersion,
     this.shader,
+    this.picture,
   });
 
   /// 清单格式版本；本版本只认 1。
@@ -187,6 +194,9 @@ class ExtensionManifest {
   /// `shader-pack` 必需的 shader 描述；其他类型为 null。
   final ExtensionShaderSpec? shader;
 
+  /// `picture-pack` 必需的画面调节描述（模板 + 参数 + 预设）；其他类型为 null。
+  final PictureSpec? picture;
+
   /// 原始 json（**原样**存进 `state.json`，宿主新增字段时不用改这套模型，
   /// 也不存在 `toJson` 漂移）。
   final Map<String, Object?> raw;
@@ -194,8 +204,13 @@ class ExtensionManifest {
   /// 宿主是否认识这个类型（不认识也能装，只是没有运行时行为）。
   bool get isKnownKind => ExtensionKind.isKnown(kind);
 
-  /// 装上之后能不能真的用起来（本版本只有 `shader-pack` + shader 描述齐了才算）。
-  bool get isUsable => kind == ExtensionKind.shaderPack && shader != null;
+  /// 装上之后能不能真的用起来：`shader-pack` 要看 shader 描述，
+  /// `picture-pack` 要看画面调节描述；其余类型装上也没有运行时行为。
+  bool get isUsable {
+    if (kind == ExtensionKind.shaderPack) return shader != null;
+    if (kind == ExtensionKind.picturePack) return picture != null;
+    return false;
+  }
 
   /// `path → ExtensionFile`（大小写不敏感：Windows 文件系统不区分）。
   Map<String, ExtensionFile> get filesByPath => <String, ExtensionFile>{
@@ -496,6 +511,29 @@ ManifestParseResult parseExtensionManifest(
     ));
   }
 
+  // ── payload.picture ─────────────────────────────────────────────────────
+  PictureSpec? picture;
+  final Object? rawPicture = payloadMap?['picture'];
+  final bool pictureApplies = kind.isEmpty || kind == ExtensionKind.picturePack;
+  if (rawPicture != null && pictureApplies) {
+    picture = parsePictureSpec(
+      rawPicture,
+      files: files,
+      issues: issues,
+      warnings: warnings,
+    );
+  } else if (rawPicture != null && !pictureApplies) {
+    warnings.add(ManifestIssue(
+      'payload.picture',
+      '类型「$kind」不使用 payload.picture，已忽略（画面调节只在 picture-pack 里生效）',
+    ));
+  } else if (kind == ExtensionKind.picturePack) {
+    issues.add(const ManifestIssue(
+      'payload.picture',
+      'picture-pack 必须带 payload.picture（template + params/presets）',
+    ));
+  }
+
   // ── 可选元信息 ───────────────────────────────────────────────────────────
   final String? homepage = _readString(map['homepage'])?.trim();
   if (homepage != null && homepage.isNotEmpty) {
@@ -523,6 +561,7 @@ ManifestParseResult parseExtensionManifest(
       minAppVersion: (minAppVersion == null || minAppVersion.isEmpty) ? null : minAppVersion,
       files: List<ExtensionFile>.unmodifiable(files),
       shader: shader,
+      picture: picture,
       raw: map,
     ),
     warnings: warnings,

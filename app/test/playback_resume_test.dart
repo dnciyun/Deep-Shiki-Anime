@@ -501,4 +501,99 @@ void main() {
       expect(find.text('继续播放'), findsNothing);
     });
   });
+
+  // ── 从任何入口点播都接着上次的位置（用户 2026-10-18） ──────────────────────
+  //
+  // 用户原话：「发现bug继续观看回不到上一次的观看位置」。
+  // 代码事实：`startPositionMs` 以前只有两个调用方传（「观看记录」页的「继续播放」、
+  // 重启后侧栏那行），**正在追 / 今日更新 / 搜索结果点开层 / 已完成页的播放按钮 /
+  // 唤回窗口** 一律从 0 开始；子窗口自己那份续播记忆按串流 URL 存
+  // （`md5(URL|size)`，URL 上挂着边车 token），换一次边车就 miss。
+  // 下面每条用例都对应一个真实入口，回归前必红。
+  group('任何入口点开一集都从上次看到的位置接着播', () {
+    test('正在追 / 搜索点重看同一集：第二遍带上观看记录里的位置', () async {
+      final _Harness h = _Harness();
+      await h.playback.playItem(_item());
+      expect(h.player.openedStartAtMs, <int?>[null], reason: '第一次没有进度 → 从头');
+
+      await h.playback.onWatchProgress(<String, Object?>{
+        'positionMs': 300000,
+        'durationMs': 1440000,
+      });
+      await h.playback.stop();
+
+      await h.playback.playItem(_item());
+      expect(
+        h.player.openedStartAtMs.last,
+        300000,
+        reason: '这一集看到 05:00 了：再点它必须接着放，而不是回到 0:00',
+      );
+      expect(h.snapshot!.startPositionMs, 300000, reason: '快照也跟着这次的起点');
+    });
+
+    test('已完成页的播放按钮（没显式给起点）：按 infoHash + 文件序号查观看记录', () async {
+      final _Harness h = _Harness();
+      final EngineTorrentView torrent = _torrent();
+      await h.playback.playTorrentFile(torrent: torrent, file: torrent.files[1]);
+      expect(h.player.openedStartAtMs, <int?>[null]);
+
+      await h.playback.onWatchProgress(<String, Object?>{
+        'positionMs': 420000,
+        'durationMs': 1440000,
+      });
+      await h.playback.stop();
+
+      await h.playback.playTorrentFile(torrent: torrent, file: torrent.files[1]);
+      expect(h.player.calls.last, 'open:42/1');
+      expect(
+        h.player.openedStartAtMs.last,
+        420000,
+        reason: '「已完成」页点第二遍不该从 0 开始（以前就是这么坏的）',
+      );
+    });
+
+    test('已完成页：看到 95% 算看完 → 这次从头（按钮语义等于「重看」）', () async {
+      final _Harness h = _Harness();
+      final EngineTorrentView torrent = _torrent();
+      await h.playback.playTorrentFile(torrent: torrent, file: torrent.files[0]);
+      await h.playback.onWatchProgress(<String, Object?>{
+        'positionMs': 1400000,
+        'durationMs': 1440000,
+      });
+      await h.playback.stop();
+
+      await h.playback.playTorrentFile(torrent: torrent, file: torrent.files[0]);
+      expect(h.player.openedStartAtMs.last, isNull, reason: '看完了就从头，别扔到片尾');
+    });
+
+    test('唤回窗口（收起后再点「继续播放」）：把宿主记着的进度交给播放器', () async {
+      final _Harness h = _Harness();
+      await h.playback.playItem(_item());
+      await h.playback.onWatchProgress(<String, Object?>{
+        'positionMs': 360000,
+        'durationMs': 1440000,
+      });
+      // 收起播放窗口（不拆引擎、不清 nowPlaying）：用户随后点侧栏那行唤回。
+      await h.playback.onPlayerWindowHidden();
+      expect(h.state.nowPlaying, isNotNull);
+
+      await h.playback.reopenPlayerWindow();
+      expect(
+        h.player.openedStartAtMs.last,
+        360000,
+        reason: '唤回 = 接着看：不能指望子窗口自己按 URL 记住位置（token 会变）',
+      );
+      expect(h.state.failure, isNull);
+    });
+
+    test('显式给了起点时以它为准（重启恢复 / 观看记录页的路径不被覆盖）', () async {
+      final _Harness h = _Harness(seed: <String, Object?>{
+        SettingsController.storageKey: const AppSettings(firstRunCompleted: true).toJson(),
+        kLastPlayingKey: _snapshot().toJson(),
+      });
+      h.engine.torrents = <EngineTorrentView>[_torrent()];
+      await h.playback.resumeRestored();
+      expect(h.player.openedStartAtMs, <int?>[754000]);
+    });
+  });
 }

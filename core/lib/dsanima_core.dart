@@ -28,3 +28,6 @@ export 'update/update.dart';
 // ── extensions/（1.1.0 M3：扩展清单解析 + 包体守卫，纯逻辑）──────────────────
 export 'extensions/manifest.dart';
 export 'extensions/package_guard.dart';
+export 'extensions/picture.dart';
+export 'extensions/urls.dart';
+export 'extensions/user_settings.dart';

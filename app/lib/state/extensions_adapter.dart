@@ -462,70 +462,205 @@ class ExtensionsAdapter implements ExtensionsPort {
 
   @override
   Future<List<core.CatalogEntry>> fetchCatalog(Uri url) async {
-    final String? unsafe = core.unsafeExtensionUrlReason(url);
-    if (unsafe != null) {
-      throw ExtensionFailure(
-        '目录地址不可用：$unsafe',
-        hint: '填 https:// 开头的目录 json 地址（本机回环可用 http）',
-      );
-    }
+    // 用户（2026-10-18：「识别 github 上面的」）贴的通常是浏览器里的 GitHub 网页地址，
+    // 而 catalog.json 的真实地址在 raw.githubusercontent.com 上 —— 换算规则在
+    // `core/lib/extensions/urls.dart`（纯逻辑、有测试）。这里按候选顺序试，
+    // 第一个能解析成目录的算数：默认分支叫 main 还是 master、catalog 放根还是
+    // 放 extensions/ 下，这几种作者习惯都覆盖掉。
+    final List<Uri> candidates = core.extensionCatalogUrlCandidates(url);
     final http.Client client = _clientFactory();
+    ExtensionFailure? lastFailure;
     try {
-      final http.Response response = await client.get(url).timeout(_kCatalogTimeout);
-      if (response.statusCode != 200) {
-        throw ExtensionFailure(
-          '拉取扩展目录失败（HTTP ${response.statusCode}）',
-          hint: response.statusCode == 404
-              ? '这个地址上没有目录 json：确认地址是你发布的那份 catalog.json'
-              : '检查网络/代理设置后重试',
-        );
-      }
-      final Object? json;
-      try {
-        json = jsonDecode(utf8.decode(response.bodyBytes));
-      } on FormatException catch (error) {
-        throw ExtensionFailure(
-          '扩展目录不是合法 JSON（${error.message}）',
-          hint: '确认这个地址返回的是 catalog.json 本身，而不是网页/HTML',
-        );
-      }
-      final core.CatalogParseResult parsed = core.parseExtensionCatalog(
-        json,
-        baseUrl: url,
-        currentAppVersion: kAppVersion.toString(),
-      );
-      if (parsed.entries.isEmpty) {
-        if (parsed.issues.isEmpty) {
-          throw const ExtensionFailure(
-            '扩展目录里没有任何条目',
-            hint: '目录 json 的 extensions 是空数组：让作者先发布扩展再拉目录',
+      for (int i = 0; i < candidates.length; i++) {
+        final Uri candidate = candidates[i];
+        final String? unsafe = core.unsafeExtensionUrlReason(candidate);
+        if (unsafe != null) {
+          lastFailure = ExtensionFailure(
+            '目录地址不可用：$unsafe',
+            hint: '填 https:// 开头的目录 json 地址（本机回环可用 http）',
           );
+          continue;
         }
-        throw ExtensionFailure(
-          '扩展目录里没有能用的条目：${parsed.issues.first.message}',
-          hint: '这份目录的条目都过不了校验（地址/清单格式问题）；'
-              '可以改用「从地址安装」直接填 zip 直链',
-        );
+        final _CatalogAttempt attempt = await _fetchCatalogOnce(client, candidate);
+        if (attempt.entries != null) return attempt.entries!;
+        lastFailure = attempt.failure;
+        // 网络层错误（超时/连不上）换候选也没用：同一个 host，只会再慢一轮。
+        if (attempt.fatal) break;
       }
-      return List<core.CatalogEntry>.unmodifiable(parsed.entries);
-    } on TimeoutException {
-      throw const ExtensionFailure(
-        '拉取扩展目录超时（20 秒）',
-        hint: '检查网络；国内访问 GitHub/raw 常常需要代理（设置 → 网络 那一份会一起用上）',
-      );
-    } on http.ClientException catch (error) {
-      throw ExtensionFailure(
-        '拉取扩展目录失败（${error.message}）',
-        hint: '检查网络与代理设置后重试',
-      );
-    } on SocketException catch (error) {
-      throw ExtensionFailure(
-        '连不上目录地址（${error.osError?.message ?? error.message}）',
-        hint: '检查网络与代理设置（设置 → 网络）；也可以改用「从地址安装」直接填 zip 直链',
-      );
     } finally {
       client.close();
     }
+    ExtensionFailure failure = lastFailure ??
+        const ExtensionFailure(
+          '拉取扩展目录失败',
+          hint: '检查地址：它应当返回 catalog.json（不是网页）',
+        );
+    // 试过一串候选时要把这一点说清楚，否则用户只会看到"404"却不知道我们去过哪儿。
+    if (candidates.length > 1) {
+      failure = ExtensionFailure(
+        '${failure.message}（试过 ${candidates.length} 个候选地址：'
+        '${candidates.map((Uri u) => u.path).join(' / ')}）',
+        hint: failure.hint,
+      );
+    }
+    // 官方插件库失败要单独说一句：用户点的是"官方"按钮，看到的却是 404，
+    // 只会以为是程序的网坏了。实际最常见的原因就是**仓库刚建好、还没推内容**。
+    if (_isOfficialCatalogUrl(url)) {
+      throw ExtensionFailure(
+        '${failure.message}｜官方插件库仓库（dnciyun/DSAnima-plungin）里还没有内容',
+        hint: '把 catalog.json 和 packs/ 推上去之后这里一键就能拉；'
+            '现在也可以先粘别的目录地址，或用「从地址安装」直接填 zip 直链',
+      );
+    }
+    throw failure;
+  }
+
+  /// 这个地址是不是**出厂默认的官方插件库**（用户 2026-10-18 给的仓库）。
+  ///
+  /// 只用来把失败提示说得更具体，**不参与**拉取逻辑：官方库与任何第三方目录走完全
+  /// 同一条路（候选展开 / 安全判据 / 解析），不能因为"是官方的"就放宽任何校验。
+  bool _isOfficialCatalogUrl(Uri url) {
+    final String want = kOfficialExtensionsCatalogUrl;
+    if (want.isEmpty) return false;
+    String normalize(Uri value) =>
+        value.removeFragment().toString().replaceAll(RegExp(r'/+$'), '').toLowerCase();
+    return normalize(url) == normalize(Uri.parse(want));
+  }
+
+  /// 试一个候选地址拉目录：成功返回条目；失败返回原因（[fatal] = 换地址也没用）。
+  Future<_CatalogAttempt> _fetchCatalogOnce(http.Client client, Uri url) async {
+    final http.Response response;
+    try {
+      response = await client.get(url).timeout(_kCatalogTimeout);
+    } on TimeoutException {
+      return const _CatalogAttempt.failure(
+        ExtensionFailure(
+          '拉取扩展目录超时（20 秒）',
+          hint: '检查网络；国内访问 GitHub/raw 常常需要代理（设置 → 网络 那一份会一起用上）',
+        ),
+        fatal: true,
+      );
+    } on http.ClientException catch (error) {
+      return _CatalogAttempt.failure(
+        ExtensionFailure('拉取扩展目录失败（${error.message}）', hint: '检查网络与代理设置后重试'),
+        fatal: true,
+      );
+    } on SocketException catch (error) {
+      return _CatalogAttempt.failure(
+        ExtensionFailure(
+          '连不上目录地址（${error.osError?.message ?? error.message}）',
+          hint: '检查网络与代理设置（设置 → 网络）；也可以改用「从地址安装」直接填 zip 直链',
+        ),
+        fatal: true,
+      );
+    }
+
+    if (response.statusCode != 200) {
+      return _CatalogAttempt.failure(
+        ExtensionFailure(
+          '拉取扩展目录失败（HTTP ${response.statusCode}）',
+          hint: response.statusCode == 404
+              ? '这个地址上没有目录 json：确认仓库里放了 catalog.json、'
+                  '默认分支叫 main 或 master；也可以直接贴仓库网页地址让应用自己找'
+              : '检查网络/代理设置后重试',
+        ),
+      );
+    }
+    // GitHub 对不存在的路径有时回 200 + HTML（网页/登录页），直接 jsonDecode 会报
+    // "不是合法 JSON"，用户看不懂。content-type 是网页时给一句人话。
+    final String contentType = (response.headers['content-type'] ?? '').toLowerCase();
+    if (contentType.contains('text/html')) {
+      return const _CatalogAttempt.failure(
+        ExtensionFailure(
+          '这个地址返回的是一张网页，不是 catalog.json',
+          hint: '贴仓库地址（https://github.com/作者/仓库）或 catalog.json 的 raw 地址；'
+              '私有仓库的网页拿不到内容',
+        ),
+      );
+    }
+    final Object? json;
+    try {
+      json = jsonDecode(utf8.decode(response.bodyBytes));
+    } on FormatException catch (error) {
+      return _CatalogAttempt.failure(
+        ExtensionFailure(
+          '扩展目录不是合法 JSON（${error.message}）',
+          hint: '确认这个地址返回的是 catalog.json 本身，而不是网页/HTML',
+        ),
+      );
+    }
+    final core.CatalogParseResult parsed = core.parseExtensionCatalog(
+      json,
+      baseUrl: url,
+      currentAppVersion: kAppVersion.toString(),
+    );
+    if (parsed.entries.isEmpty) {
+      if (parsed.issues.isEmpty) {
+        return const _CatalogAttempt.failure(
+          ExtensionFailure(
+            '扩展目录里没有任何条目',
+            hint: '目录 json 的 extensions 是空数组：让作者先发布扩展再拉目录',
+          ),
+        );
+      }
+      return _CatalogAttempt.failure(
+        ExtensionFailure(
+          '扩展目录里没有能用的条目：${parsed.issues.first.message}',
+          hint: '这份目录的条目都过不了校验（地址/清单格式问题）；'
+              '可以改用「从地址安装」直接填 zip 直链',
+        ),
+      );
+    }
+    return _CatalogAttempt.success(List<core.CatalogEntry>.unmodifiable(parsed.entries));
+  }
+
+  /// 依次试下载候选地址，返回第一个可用的流式响应。
+  ///
+  /// 为什么要看 content-type：GitHub 的 `blob` 网页对 GET 返回 **200 + HTML**，
+  /// 只看状态码会"下载成功"然后死在解压上，错误信息对用户毫无意义。
+  Future<http.StreamedResponse> _openDownload(
+    http.Client client,
+    List<Uri> candidates,
+  ) async {
+    ExtensionFailure? lastFailure;
+    for (final Uri candidate in candidates) {
+      final http.StreamedResponse response;
+      try {
+        response = await client
+            .send(http.Request('GET', candidate))
+            .timeout(_kDownloadTimeout);
+      } on TimeoutException {
+        throw const ExtensionFailure(
+          '下载扩展包超时（30 秒）',
+          hint: '检查网络/代理后重试；也可以让作者把包发给你，用「本地 zip」安装',
+        );
+      }
+      if (response.statusCode != 200) {
+        lastFailure = ExtensionFailure(
+          '下载扩展包失败（HTTP ${response.statusCode}）',
+          hint: response.statusCode == 404
+              ? '这个地址上没有扩展包：确认链接是作者发布的 zip 直链'
+                  '（GitHub 的 blob 网页地址也行，应用会自己换算成 raw）'
+              : '检查网络/代理设置后重试；也可以改用本地 zip 安装',
+        );
+        continue;
+      }
+      final String contentType = (response.headers['content-type'] ?? '').toLowerCase();
+      if (contentType.contains('text/html')) {
+        lastFailure = const ExtensionFailure(
+          '这个地址返回的是网页，不是 zip',
+          hint: '贴 GitHub 里文件页（blob）的地址，或作者发布的 releases 直链；'
+              '私有仓库的网页拿不到文件',
+        );
+        continue;
+      }
+      return response;
+    }
+    throw lastFailure ??
+        const ExtensionFailure(
+          '下载扩展包失败',
+          hint: '检查地址后重试；也可以改用本地 zip 安装',
+        );
   }
 
   @override
@@ -559,13 +694,18 @@ class ExtensionsAdapter implements ExtensionsPort {
     void Function(ExtensionProgress progress)? onProgress,
     bool Function() cancelled,
   ) async {
-    final Uri uri = request.url!;
-    final String? unsafe = core.unsafeExtensionUrlReason(uri);
-    if (unsafe != null) {
-      throw ExtensionFailure(
-        '下载地址不可用：$unsafe',
-        hint: '只接受 https:// 地址（本机回环可用 http）；换个地址或改用本地 zip 安装',
-      );
+    // 作者通常把 zip 放在 GitHub 仓库里，复制出来的是 `blob` 网页地址 —— 那个地址
+    // 下到的是 HTML（GitHub 的页头），会被当成坏 zip。换算规则见
+    // `core/lib/extensions/urls.dart`；releases 的直链原样通过。
+    final List<Uri> candidates = core.extensionDownloadUrlCandidates(request.url!);
+    for (final Uri candidate in candidates) {
+      final String? unsafe = core.unsafeExtensionUrlReason(candidate);
+      if (unsafe != null) {
+        throw ExtensionFailure(
+          '下载地址不可用：$unsafe',
+          hint: '只接受 https:// 地址（本机回环可用 http）；换个地址或改用本地 zip 安装',
+        );
+      }
     }
 
     final String stem = _safeStem(request.manifest?.id);
@@ -573,26 +713,8 @@ class ExtensionsAdapter implements ExtensionsPort {
     final http.Client client = _clientFactory();
     IOSink? sink;
     try {
-      final http.StreamedResponse response;
-      try {
-        response = await client
-            .send(http.Request('GET', uri))
-            .timeout(_kDownloadTimeout);
-      } on TimeoutException {
-        throw const ExtensionFailure(
-          '下载扩展包超时（30 秒）',
-          hint: '检查网络/代理后重试；也可以让作者把包发给你，用「本地 zip」安装',
-        );
-      }
-
-      if (response.statusCode != 200) {
-        throw ExtensionFailure(
-          '下载扩展包失败（HTTP ${response.statusCode}）',
-          hint: response.statusCode == 404
-              ? '这个地址上没有扩展包：确认链接是作者发布的 zip 直链'
-              : '检查网络/代理设置后重试；也可以改用本地 zip 安装',
-        );
-      }
+      // 候选地址依次试，第一个 200 且不是网页的算数（GitHub 的 blob 页会回 200 + HTML）。
+      final http.StreamedResponse response = await _openDownload(client, candidates);
 
       final int? declared = response.contentLength ?? request.size;
       if (declared != null && declared > kMaxPackageBytes) {
@@ -1151,4 +1273,19 @@ class _LoadedState {
 
   /// 读进来的东西是否和文件里的不同（坏文件 / 丢了坏条目）→ scan 需要回写。
   final bool needsWrite;
+}
+
+/// 一次候选地址的拉取结果（成功 = 有 entries；失败 = 原因 + 是否"换地址也没用"）。
+class _CatalogAttempt {
+  const _CatalogAttempt._(this.entries, this.failure, this.fatal);
+
+  const _CatalogAttempt.success(List<core.CatalogEntry> entries)
+      : this._(entries, null, false);
+
+  const _CatalogAttempt.failure(ExtensionFailure failure, {bool fatal = false})
+      : this._(null, failure, fatal);
+
+  final List<core.CatalogEntry>? entries;
+  final ExtensionFailure? failure;
+  final bool fatal;
 }
