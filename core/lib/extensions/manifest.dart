@@ -47,8 +47,10 @@ import '../update/version.dart';
 import 'issues.dart';
 import 'package_guard.dart';
 import 'picture.dart';
+import 'url_safety.dart';
 
 export 'issues.dart';
+export 'url_safety.dart';
 
 /// 已知扩展类型 → 界面上的中文名。
 ///
@@ -285,26 +287,7 @@ class CatalogParseResult {
   bool get ok => issues.isEmpty;
 }
 
-/// 下载地址的安全判据（纯函数，返回 null = 可以下）。
-///
-/// 只允许 **HTTPS**；HTTP 只给回环地址（`127.0.0.1` / `localhost` / `[::1]`）留一条缝 ——
-/// 本地起个静态目录测扩展是正当需求，而公网明文 HTTP 会被中间人换成任意 zip。
-String? unsafeExtensionUrlReason(Uri? uri) {
-  if (uri == null) return '地址为空';
-  if (uri.hasScheme == false) return '地址缺少协议（要写 https://）';
-  final String scheme = uri.scheme.toLowerCase();
-  if (scheme == 'https') {
-    if (uri.host.isEmpty) return '地址缺少主机名';
-    return null;
-  }
-  if (scheme == 'http') {
-    final String host = uri.host.toLowerCase();
-    final bool loopback = host == 'localhost' || host == '127.0.0.1' || host == '::1' || host == '[::1]';
-    if (loopback) return null;
-    return '出于安全只接受 HTTPS 地址（HTTP 仅限本机回环地址）';
-  }
-  return '不支持的协议「$scheme」（只接受 https://）';
-}
+// （`unsafeExtensionUrlReason` 定义在 `url_safety.dart`；本文件顶部 `export` 保持旧导入可用。）
 
 /// 解析一份 `manifest.json`。
 ///
