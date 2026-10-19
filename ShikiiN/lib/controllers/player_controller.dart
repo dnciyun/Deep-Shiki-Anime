@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import '../models/debug_mpv_vf.dart';
 import '../models/media_item.dart';
 import '../models/track.dart' as app;
 import '../models/video_fit_mode.dart';
@@ -52,6 +53,9 @@ class PlayerController {
     final Future<bool>? ready =
         target == null ? null : waitUntilMediaReady(player.stream.duration);
     await player.open(Media(item.path));
+    // 调试开关（见 models/debug_mpv_vf.dart）：只有设了 DSANIMA_MPV_VF 才下发，
+    // 且用 `set` 而不是 `add` —— 每次 open 都下发也不会把滤镜叠加成一串。
+    await _applyDebugMpvVf();
     if (target == null) return;
     // 等不到（直播没有时长、或者超时）也**照试一次**：seek 失败只记日志，
     // 绝不让"开播"本身失败。
@@ -256,6 +260,24 @@ class PlayerController {
       diag.warn('player', 'mpv get property $name failed', e, st);
       return '';
     }
+  }
+
+  /// 调试：把 `DSANIMA_MPV_VF` 指定的滤镜挂到播放链上（默认什么都不做）。
+  ///
+  /// 只服务「新 libmpv 的 `d3d11vpp`（NVIDIA VSR）在 ANGLE/GLES 这条链上能不能用」
+  /// 这一次验证（docs/specs/2026-10-19-nv-vsr-spike.md）。顺手把判定依据写进日志：
+  /// `mpv-version`（证明 dll 真的换了）、`current-gpu-context`、`hwdec-current`。
+  Future<void> _applyDebugMpvVf() async {
+    final String spec = debugMpvVf();
+    if (spec.isEmpty) return;
+    final int code = await runMpvCommand(<String>['set', 'vf', spec]);
+    final String version = await readMpvProperty('mpv-version');
+    final String context = await readMpvProperty('current-gpu-context');
+    final String hwdec = await readMpvProperty('hwdec-current');
+    diag.info(
+      'debug-vf',
+      'vf="$spec" set=$code mpv-version="$version" gpu-context="$context" hwdec="$hwdec"',
+    );
   }
 
   // ── Stop ─────────────────────────────────────────────────────────────────────
