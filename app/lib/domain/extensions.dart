@@ -221,6 +221,19 @@ class ExtensionsSummary {
 /// 1.1.0 里 `shader-pack` 进播放器「超分」菜单，`picture-pack` 进「画面调节」
 /// （预设 + 滑杆面板），两者混着说会指错菜单（用户点进去找不到）。
 String extensionUseHint(core.ExtensionManifest manifest) {
+  // 通用包（preset-pack / list-pack）的回答由它声明的「面」决定：
+  // 已知面 → 这个面自己的入口文案；未知面 → 如实说本版本不接。
+  final bool genericKind = manifest.kind == core.ExtensionKind.presetPack ||
+      manifest.kind == core.ExtensionKind.listPack;
+  if (genericKind) {
+    final String label = core.ExtensionKind.labelOf(manifest.kind);
+    final core.GenericPayload? payload = manifest.generic;
+    final core.ExtensionSurface? surface =
+        payload == null ? null : core.extensionSurfaceOf(payload.surface);
+    if (surface != null) return '$label：${surface.hostHint}';
+    final String surfaceId = payload?.surface ?? '未知';
+    return '$label（面「$surfaceId」本版本不接运行时）：装得上、暂时不会有新功能';
+  }
   if (!manifest.isUsable) {
     if (!manifest.isKnownKind) {
       return '类型「${manifest.kind}」本版本不接运行时，暂时不会有新功能';
