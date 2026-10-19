@@ -33,9 +33,6 @@ class PlayerController {
   String? _currentPath;
   String? get currentPath => _currentPath;
 
-  /// 调试开关「没启用」只记一次日志（每个播放器进程一条，不刷屏）。
-  bool _debugVfLogged = false;
-
   /// 当前媒体是否已有带尺寸的视频轨（纯音频/未加载 → false）。
   bool get hasVideo =>
       (player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0;
@@ -265,13 +262,16 @@ class PlayerController {
     }
   }
 
-  /// 本构建有没有 NV-VSR 能力：滤镜串来自「环境变量 / 程序目录 txt / 编译期烘焙」三选一
-  /// （见 [debugMpvVf]）。没有 = 右键菜单不显示这一项，也不下发任何命令。
+  /// 本播放器用的 NV-VSR 滤镜串（内置默认，可被环境变量/目录 txt 调试覆盖）。
   String get nvVsrSpec => debugMpvVf(fileText: debugMpvVfFile());
 
-  bool get nvVsrAvailable => nvVsrSpec.isNotEmpty;
+  /// 运行时探测结果：滤镜被 libmpv 拒了（`vf` 回读里没有它）→ 以后不再试、菜单也不显示。
+  bool _nvVsrUnsupported = false;
 
-  /// VSR 当前是否开着。**没有能力时恒为 false**（菜单据此不显示）。
+  /// VSR 可用 = 有滤镜串、且没被运行时判定为不支持。
+  bool get nvVsrAvailable => nvVsrSpec.isNotEmpty && !_nvVsrUnsupported;
+
+  /// VSR 当前是否开着。**不可用时恒为 false**（菜单据此不显示）。
   bool get nvVsrEnabled => nvVsrAvailable && _nvVsrEnabled;
   bool _nvVsrEnabled = true;
 
@@ -291,25 +291,11 @@ class PlayerController {
 
   /// 按当前开关状态把 `vf` 链下发一次（开播后 / 用户切换后都走这里）。
   ///
-  /// 只服务「新 libmpv 的 `d3d11vpp`（NVIDIA VSR）在 ANGLE/GLES 这条链上能不能用」
-  /// 这一条，判定依据都写进 `[debug-vf]` 日志：`mpv-version`（dll 换成功了吗）、
-  /// `vf-now`（滤镜到底在不在链上）、`current-gpu-context`、`hwdec-current`。
-  ///
-  /// 没有能力时也要留一行：第一次真机验证就是「双击 exe → 环境变量没进进程 → 开关静默
-  /// 不生效」，白白多跑一轮。每个播放器进程只写这一行。
+  /// 判定依据都写进 `[debug-vf]` 日志：`mpv-version`（dll 是不是带 NVIDIA 模式的构建）、
+  /// `vf-now`（滤镜到底在不在链上）、`hwdec-current`、以及滤镜之后的输出尺寸。
   Future<void> applyNvVsr() async {
     final String spec = nvVsrSpec;
-    if (spec.isEmpty) {
-      if (!_debugVfLogged) {
-        _debugVfLogged = true;
-        diag.info(
-          'debug-vf',
-          '未启用（既没有 $kDebugMpvVfEnvVar 环境变量，也没有 ${defaultDebugMpvVfPath()}，'
-          '本构建也没有编译期烘焙值）',
-        );
-      }
-      return;
-    }
+    if (spec.isEmpty || _nvVsrUnsupported) return;
     final bool on = _nvVsrEnabled;
     final int code = await runMpvCommand(nvVsrVfCommand(spec, enabled: on));
     // ⚠️ 只看 `set` 的返回码不够：media_kit 的 command() 不把 mpv 的「命令失败」
@@ -326,6 +312,15 @@ class PlayerController {
       'enabled=$on vf="$spec" set=$code vf-now="$vfNow" mpv-version="$version" '
       'gpu-context="$context" hwdec="$hwdec" pixelformat="$pixelFormat" size=${width}x$height',
     );
+    // 开着却没进链 = 这份 libmpv 不认这条滤镜（老版本）。关掉它是预期行为，不算失败。
+    if (on && !vfNow.contains('d3d11vpp')) {
+      _nvVsrUnsupported = true;
+      diag.warn(
+        'debug-vf',
+        '本机的 libmpv 不接受 NV-VSR 滤镜（vf-now="$vfNow"，mpv-version="$version"）：'
+        '右键菜单会隐藏这一项；要让 VSR 生效，需要随程序带带 NVIDIA 模式的 libmpv。',
+      );
+    }
     // 滤镜之后/渲染目标的分辨率：判断「VSR 到底有没有把帧放大」的唯一硬证据。
     // `video-params` 是解码尺寸（filter 之前），`video-out-params` 才是 vf 链输出。
     if (on) unawaited(_logNvVsrAfterReconfigure());
