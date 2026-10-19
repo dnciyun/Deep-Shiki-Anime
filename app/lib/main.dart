@@ -44,7 +44,9 @@ import 'state/cover_cache.dart';
 import 'state/desktop_integration.dart';
 import 'state/engine_bootstrap.dart';
 import 'state/extension_schemes.dart';
+import 'state/generic_packs.dart';
 import 'state/picture_menu_attach.dart';
+import 'state/subtitle_presets.dart';
 import 'state/extensions.dart';
 import 'state/extensions_adapter.dart';
 import 'state/global_failure.dart';
@@ -822,6 +824,23 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
     trace: trace,
   );
   trace('player window: 画面调节${attachedMenu == null ? '未装配（没有包）' : '菜单已就位'}');
+  // 通用扩展包：字幕样式预设（`preset-pack` / `player.subtitle` 面）。
+  // 与上面两条同一个口径：开窗扫一遍、灌进子窗口的 notifier（设置面板读它）；
+  // 这扇窗开着时装/卸包走 `kMethodExtensionsChanged` → `_reloadExtensionSchemes` 现场重扫。
+  // 扫不出来/字体加载失败都只 trace，绝不影响开播。
+  try {
+    final SubtitlePresetConsumer subtitleConsumer = SubtitlePresetConsumer(
+      onChanged: (List<shikiin.SubtitlePreset> presets) =>
+          windowSubtitlePresetsNotifier.value = presets,
+    );
+    await subtitleConsumer.setPacks(await scanGenericPacks(supportDir));
+    trace('player window: 字幕预设 ${subtitleConsumer.summary}');
+    for (final String note in subtitleConsumer.notes) {
+      trace('player window: $note');
+    }
+  } catch (error) {
+    trace('player window: 字幕预设扫描失败（不影响开播）：$error');
+  }
   // 任务栏 / Alt-Tab 的图标与标题（第十七轮），见 [_applyPlayerWindowChrome]。
   await _applyPlayerWindowChrome(args, trace, dataRoot.path);
   // 排障：这一扇窗**自己是谁**（window_manager 认为它在管哪个 HWND）、它以为自己多大。

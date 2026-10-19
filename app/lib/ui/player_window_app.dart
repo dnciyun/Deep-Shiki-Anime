@@ -26,8 +26,10 @@ import 'package:shikiin/shikiin.dart' as shikiin;
 import 'package:window_manager/window_manager.dart' as wm;
 
 import '../state/extension_schemes.dart';
+import '../state/generic_packs.dart';
 import '../state/player_window.dart';
 import '../state/store_layout.dart';
+import '../state/subtitle_presets.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 
@@ -49,6 +51,13 @@ final ValueNotifier<shikiin.EpisodeGroup?> windowEpisodeGroupNotifier =
 /// 与 token/分组同一套推送机制 —— 子窗口读不到主窗口的 `settingsProvider`，
 /// 设置页改了之后由 `app.dart` 的 `pushArgs(wakeChromeAtCenter: …)` 现场推。
 final ValueNotifier<bool> windowWakeChromeAtCenterNotifier = ValueNotifier<bool>(false);
+
+/// 字幕样式预设（通用扩展包 `preset-pack` / `player.subtitle` 面）。
+///
+/// 主窗口开窗时扫一次；这扇窗开着时装/卸包走 `kMethodExtensionsChanged`
+/// （`_reloadExtensionSchemes` 里现场重扫），与画面调节同一套热刷新口径。
+final ValueNotifier<List<shikiin.SubtitlePreset>> windowSubtitlePresetsNotifier =
+    ValueNotifier<List<shikiin.SubtitlePreset>>(const <shikiin.SubtitlePreset>[]);
 
 /// 播放窗口的根：把主窗口下发的请求喂给 `PlayerSurface`。
 class PlayerWindowApp extends ConsumerStatefulWidget {
@@ -214,6 +223,18 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
         ref.invalidate(shikiin.pictureMenuProvider);
       } catch (e) {
         _trace('扩展变更后重扫画面调节包失败（菜单保持旧清单）：$e');
+      }
+      // 字幕样式预设（通用扩展包）：同一时刻重扫 —— 装卸包后设置面板的
+      // 「样式预设」立刻跟上。窗口没开时下次开窗扫描兜底。
+      try {
+        final SubtitlePresetConsumer consumer = SubtitlePresetConsumer(
+          onChanged: (List<shikiin.SubtitlePreset> presets) =>
+              windowSubtitlePresetsNotifier.value = presets,
+        );
+        await consumer.setPacks(await scanGenericPacks(Directory(dataRoot.path)));
+        _trace('扩展变更：${consumer.summary}');
+      } catch (e) {
+        _trace('扩展变更后重扫字幕预设失败（设置面板保持旧清单）：$e');
       }
       // 方案清单变了：控制栏胶囊文案/菜单都读它，重建一次让界面跟上。
       if (mounted) setState(() {});
@@ -548,6 +569,9 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
             // 切集失败的原因：接给播放面顶在画面上（第三十八轮）。
             shikiin.switchNoticeProvider
                 .overrideWith((Ref ref) => ref.watch(windowSwitchNoticeProvider)),
+            // 通用扩展包的字幕样式预设（装卸包后由 `_reloadExtensionSchemes` 现场重扫）。
+            shikiin.subtitlePresetsProvider
+                .overrideWith((Ref ref) => ref.watch(windowSubtitlePresetsProvider)),
           ],
           child: MaterialApp(
             debugShowCheckedModeBanner: false,
@@ -625,6 +649,19 @@ final NotifierProvider<_NotifierBridge<bool>, bool> _windowWakeChromeAtCenterPro
     NotifierProvider<_NotifierBridge<bool>, bool>(
       () => _NotifierBridge<bool>(windowWakeChromeAtCenterNotifier),
     );
+
+/// 字幕样式预设：接给播放面（子窗口 `ProviderScope` 里 override `subtitlePresetsProvider`）。
+final Provider<List<shikiin.SubtitlePreset>> windowSubtitlePresetsProvider =
+    Provider<List<shikiin.SubtitlePreset>>(
+  (Ref ref) => ref.watch(_windowSubtitlePresetsProvider),
+);
+
+final NotifierProvider<_NotifierBridge<List<shikiin.SubtitlePreset>>,
+        List<shikiin.SubtitlePreset>> _windowSubtitlePresetsProvider =
+    NotifierProvider<_NotifierBridge<List<shikiin.SubtitlePreset>>,
+        List<shikiin.SubtitlePreset>>(
+  () => _NotifierBridge<List<shikiin.SubtitlePreset>>(windowSubtitlePresetsNotifier),
+);
 
 /// 切集失败的通知（第三十八轮，主窗口 → 本窗口，见 `kMethodSwitchFailed`）。
 ///
