@@ -79,10 +79,16 @@ export 'models/audio_fx.dart'
     show
         AudioFxPreset,
         AudioFxSelection,
+        AudioFxState,
+        audioFxActiveSpec,
         audioFxFilterSpec,
         audioFxFiltersCommand,
         kAudioFxBands,
-        kAudioFxBandFrequencies;
+        kAudioFxBandFrequencies,
+        kAudioFxCompressionStoreKey,
+        kAudioFxEnabledStoreKey,
+        kAudioFxLoudnessStoreKey,
+        kAudioFxPresetStoreKey;
 export 'models/subtitle_style.dart' show SubtitleStyle;
 export 'models/track.dart' show TrackInfo, TrackKind;
 export 'models/picture_menu.dart'

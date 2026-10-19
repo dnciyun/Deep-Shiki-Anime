@@ -1294,6 +1294,9 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
       return Material(color: tokens.base, child: OpenSurface(tokens: tokens));
     }
     final PlayerController player = injected;
+    // 音效档位：宿主从扩展包扫来的清单灌给控制器（清单没变则直接返回）。
+    // 放在 build 里是为了「这扇窗开着时装包」也能立刻认到新档位。
+    player.seedAudioFxPresets(ref.watch(audioPresetsProvider));
     final EpisodeGroup? group = ref.watch(episodeGroupProvider);
     // `anime4kProvider` 走的是 `overrideWithValue`，同样不能用 `exists` 判（见上）。
     Anime4kController? a4k;

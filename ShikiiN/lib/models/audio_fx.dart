@@ -152,6 +152,83 @@ String audioFxFilterSpec(
 /// 「关了音效却还有/开了没反应」而不是报错，真机很难定位。
 List<String> audioFxFiltersCommand(String spec) => <String>['set', 'af', spec];
 
+// ── 状态（总开关 / 当前档 / 两个全局强度）─────────────────────────────────────
+
+/// 音效的四项状态：总开关、当前档 id、对白压缩强度、音量均衡强度。
+///
+/// 全局一档（用户 2026-10-19 决定）：不是每部番各自记，切一次全局生效。
+class AudioFxState {
+  const AudioFxState({
+    this.enabled = false,
+    this.presetId,
+    this.compression = 0,
+    this.loudness = 0,
+  });
+
+  final bool enabled;
+  final String? presetId;
+  final int compression;
+  final int loudness;
+
+  AudioFxState copyWith({
+    bool? enabled,
+    String? presetId,
+    int? compression,
+    int? loudness,
+    bool clearPreset = false,
+  }) =>
+      AudioFxState(
+        enabled: enabled ?? this.enabled,
+        presetId: clearPreset ? null : (presetId ?? this.presetId),
+        compression: compression ?? this.compression,
+        loudness: loudness ?? this.loudness,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is AudioFxState &&
+      other.enabled == enabled &&
+      other.presetId == presetId &&
+      other.compression == compression &&
+      other.loudness == loudness;
+
+  @override
+  int get hashCode => Object.hash(enabled, presetId, compression, loudness);
+
+  @override
+  String toString() =>
+      'AudioFxState(enabled=$enabled, preset=$presetId, compression=$compression, '
+      'loudness=$loudness)';
+}
+
+/// 按状态挑出当前该下发的 `af` 串：关着 / 档位不存在 → 空串（原声）。
+String audioFxActiveSpec({
+  required List<AudioFxPreset> presets,
+  required AudioFxState state,
+}) {
+  if (!state.enabled) return '';
+  AudioFxPreset? preset;
+  for (final AudioFxPreset candidate in presets) {
+    if (candidate.id == state.presetId) {
+      preset = candidate;
+      break;
+    }
+  }
+  if (preset == null) return '';
+  return audioFxFilterSpec(
+    preset,
+    compression: state.compression,
+    loudness: state.loudness,
+  );
+}
+
+// ── 持久化键（播放器 store；宿主 bootstrap 读写）──────────────────────────────
+
+const String kAudioFxEnabledStoreKey = 'audio-fx-enabled';
+const String kAudioFxPresetStoreKey = 'audio-fx-preset';
+const String kAudioFxCompressionStoreKey = 'audio-fx-compression';
+const String kAudioFxLoudnessStoreKey = 'audio-fx-loudness';
+
 String _level(List<String> levels, int level) {
   if (level <= 0) return '';
   final int index = level >= levels.length ? levels.length - 1 : level;

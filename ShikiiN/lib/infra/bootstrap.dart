@@ -13,6 +13,7 @@ import '../controllers/anime4k_controller.dart';
 import '../controllers/player_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../models/app_settings.dart';
+import '../models/audio_fx.dart';
 import '../models/debug_mpv_vf.dart';
 import '../models/picture_menu.dart';
 import '../models/player_request.dart';
@@ -104,6 +105,33 @@ class AppRuntime {
     final Object? nvVsrSaved = store.get(kNvVsrEnabledStoreKey);
     if (nvVsrSaved is bool) p.seedNvVsrEnabled(nvVsrSaved);
     p.onNvVsrChanged = (bool on) => store.put(kNvVsrEnabledStoreKey, on);
+    // 音效（audio-pack）：四个键与开关同一套读写；包清单由宿主扫完灌进来。
+    final Object? fxEnabled = store.get(kAudioFxEnabledStoreKey);
+    final Object? fxPreset = store.get(kAudioFxPresetStoreKey);
+    final Object? fxCompression = store.get(kAudioFxCompressionStoreKey);
+    final Object? fxLoudness = store.get(kAudioFxLoudnessStoreKey);
+    p.seedAudioFxState(AudioFxState(
+      enabled: fxEnabled is bool && fxEnabled,
+      presetId: fxPreset is String && fxPreset.isNotEmpty ? fxPreset : null,
+      compression: fxCompression is int ? fxCompression : 0,
+      loudness: fxLoudness is int ? fxLoudness : 0,
+    ));
+    p.onAudioFxChanged = (AudioFxState state) {
+      store.put(kAudioFxEnabledStoreKey, state.enabled);
+      store.put(kAudioFxPresetStoreKey, state.presetId ?? '');
+      store.put(kAudioFxCompressionStoreKey, state.compression);
+      store.put(kAudioFxLoudnessStoreKey, state.loudness);
+    };
+    // 音效链初始化失败的兜底（探针实测：`set af` 对坏滤镜也返回成功，真正的失败
+    // 只出现在日志里，而且此时是**没声音**的 —— 必须回退原声，不能静默）。
+    p.player.stream.log.listen((PlayerLog log) {
+      final String text = log.text;
+      if (text.contains('Audio filter initialized failed') ||
+          text.contains('No such filter') ||
+          text.contains('Error creating filters')) {
+        p.disableAudioFxOnFailure('libmpv: $text');
+      }
+    });
     return p;
   }
 

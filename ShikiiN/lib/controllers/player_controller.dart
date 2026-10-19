@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import '../models/audio_fx.dart';
 import '../models/debug_mpv_vf.dart';
 import '../models/media_item.dart';
 import '../models/track.dart' as app;
@@ -56,6 +57,8 @@ class PlayerController {
     // 调试开关（见 models/debug_mpv_vf.dart）：只有设了 DSANIMA_MPV_VF 才下发，
     // 且用 `set` 而不是 `add` —— 每次 open 都下发也不会把滤镜叠加成一串。
     await applyNvVsr();
+    // 音效（audio-pack）：与 VSR 同一时刻下发；没装包/没开 = 清空 af（原声）。
+    await applyAudioFx();
     if (target == null) return;
     // 等不到（直播没有时长、或者超时）也**照试一次**：seek 失败只记日志，
     // 绝不让"开播"本身失败。
@@ -341,6 +344,122 @@ class PlayerController {
       'debug-vf',
       'after-reconfig vf-now="$vfNow" out-params=${outW}x$outH osd=${osdW}x$osdH',
     );
+  }
+
+  // ── 音效（audio-pack 扩展包）────────────────────────────────────────────────
+  //
+  // 与 NV-VSR 同一套口径：包只给**有界数值**，链在这里拼（`audioFxActiveSpec`），
+  // 下发后回读 `af`。探针实测（2026-10-19）：`set af` 对写错的滤镜**也返回成功**，
+  // 真正的失败在滤镜初始化（`Audio filter initialized failed`，等于完全没声音），
+  // 所以那条日志由 bootstrap 转给 [disableAudioFxOnFailure] 兜底回退原声。
+
+  List<AudioFxPreset> _audioPresets = const <AudioFxPreset>[];
+  List<AudioFxPreset> get audioPresets => _audioPresets;
+
+  AudioFxState _audioFxState = const AudioFxState();
+  AudioFxState get audioFxState => _audioFxState;
+
+  /// 有包才有这一项（右键菜单据此不显示）。
+  bool get audioFxAvailable => _audioPresets.isNotEmpty;
+
+  /// 当前生效的档（没选/包被卸 = null）。
+  AudioFxPreset? get audioFxPreset {
+    for (final AudioFxPreset preset in _audioPresets) {
+      if (preset.id == _audioFxState.presetId) return preset;
+    }
+    return null;
+  }
+
+  /// 状态落盘回调（由宿主接 KV；不注入 = 不持久化，只在本次会话有效）。
+  void Function(AudioFxState state)? onAudioFxChanged;
+
+  /// 宿主扫到包之后灌进来（播放面每次 build 都会调；清单没变则直接返回）。
+  void seedAudioFxPresets(List<AudioFxPreset> presets) {
+    if (_samePresetIds(presets, _audioPresets)) return;
+    _audioPresets = List<AudioFxPreset>.unmodifiable(presets);
+    // 包被卸了：档位跟着失效，不静默继续用旧链（右键菜单也会整项消失）。
+    if (_audioFxState.presetId != null && audioFxPreset == null) {
+      _audioFxState = _audioFxState.copyWith(enabled: false, clearPreset: true);
+      onAudioFxChanged?.call(_audioFxState);
+      unawaited(applyAudioFx());
+      return;
+    }
+    if (_audioFxState.enabled) unawaited(applyAudioFx());
+  }
+
+  /// 用存下来的状态初始化（不触发落盘/下发）。
+  void seedAudioFxState(AudioFxState state) => _audioFxState = state;
+
+  /// 开/关音效总开关；没有选档时开 = 用第一档。
+  Future<void> setAudioFxEnabled(bool enabled) async {
+    if (!audioFxAvailable) return;
+    if (enabled && _audioFxState.presetId == null) {
+      _audioFxState =
+          _audioFxState.copyWith(enabled: true, presetId: _audioPresets.first.id);
+    } else {
+      _audioFxState = _audioFxState.copyWith(enabled: enabled);
+    }
+    _persistAudioFx();
+    await applyAudioFx();
+  }
+
+  /// 选一档（`null` = 回原声，等同关总开关）。
+  Future<void> setAudioFxPresetId(String? id) async {
+    _audioFxState = id == null
+        ? _audioFxState.copyWith(enabled: false, clearPreset: true)
+        : _audioFxState.copyWith(enabled: true, presetId: id);
+    _persistAudioFx();
+    await applyAudioFx();
+  }
+
+  Future<void> setAudioFxCompression(int level) async {
+    _audioFxState = _audioFxState.copyWith(compression: level.clamp(0, 3));
+    _persistAudioFx();
+    if (_audioFxState.enabled) await applyAudioFx();
+  }
+
+  Future<void> setAudioFxLoudness(int level) async {
+    _audioFxState = _audioFxState.copyWith(loudness: level.clamp(0, 3));
+    _persistAudioFx();
+    if (_audioFxState.enabled) await applyAudioFx();
+  }
+
+  /// 按当前状态把 `af` 链下发一次（开播后 / 用户切档后都走这里）。
+  Future<void> applyAudioFx() async {
+    final String spec =
+        audioFxActiveSpec(presets: _audioPresets, state: _audioFxState);
+    final int code = await runMpvCommand(audioFxFiltersCommand(spec));
+    // 回读：只能证明「设上了」，不能证明初始化成功（见本段开头的探针结论）。
+    final String afNow = await readMpvProperty('af');
+    diag.info(
+      'debug-af',
+      'enabled=${_audioFxState.enabled} preset=${_audioFxState.presetId} '
+      'compression=${_audioFxState.compression} loudness=${_audioFxState.loudness} '
+      'set=$code af-now="$afNow"',
+    );
+    if (spec.isNotEmpty && !afNow.contains('lavfi')) {
+      await disableAudioFxOnFailure('af 回读里没有 lavfi（af-now="$afNow"）');
+    }
+  }
+
+  /// 链初始化失败：关掉音效、清空 `af`、落盘，并留一行原因（绝不静默）。
+  Future<void> disableAudioFxOnFailure(String reason) async {
+    if (!_audioFxState.enabled) return;
+    _audioFxState = _audioFxState.copyWith(enabled: false);
+    _persistAudioFx();
+    diag.warn('audio-fx', '音效链初始化失败，已回退原声：$reason');
+    await runMpvCommand(audioFxFiltersCommand(''));
+  }
+
+  void _persistAudioFx() => onAudioFxChanged?.call(_audioFxState);
+
+  bool _samePresetIds(List<AudioFxPreset> a, List<AudioFxPreset> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
   }
 
   // ── Stop ─────────────────────────────────────────────────────────────────────

@@ -135,4 +135,53 @@ void main() {
       expect(const AudioFxSelection('a/b'), isNot(const AudioFxSelection('a/c')));
     });
   });
+
+  group('audioFxActiveSpec', () {
+    final AudioFxPreset p = _preset(bands: <String, double>{'b2k': 6});
+    final List<AudioFxPreset> presets = <AudioFxPreset>[p];
+
+    test('关着 → 空串（原声）', () {
+      expect(
+        audioFxActiveSpec(presets: presets, state: const AudioFxState(presetId: 'p')),
+        '',
+      );
+    });
+
+    test('开着但档位不存在（包被卸了）→ 空串', () {
+      expect(
+        audioFxActiveSpec(
+          presets: presets,
+          state: const AudioFxState(enabled: true, presetId: 'gone'),
+        ),
+        '',
+      );
+      expect(
+        audioFxActiveSpec(presets: const <AudioFxPreset>[], state: const AudioFxState(enabled: true, presetId: 'p')),
+        '',
+      );
+    });
+
+    test('开着且档位在 → 链里带上该档和两个全局强度', () {
+      final String spec = audioFxActiveSpec(
+        presets: presets,
+        state: const AudioFxState(
+          enabled: true,
+          presetId: 'p',
+          compression: 2,
+          loudness: 1,
+        ),
+      );
+      expect(spec, contains('equalizer=f=2000:width_type=o:width=1:g=6'));
+      expect(spec, contains('acompressor='));
+      expect(spec, contains('dynaudnorm='));
+      expect(spec, endsWith('alimiter=limit=0.97]'));
+    });
+
+    test('AudioFxState.copyWith 能清掉档位', () {
+      const AudioFxState s = AudioFxState(enabled: true, presetId: 'a');
+      expect(s.copyWith().presetId, 'a');
+      expect(s.copyWith(clearPreset: true).presetId, isNull);
+      expect(s.copyWith(enabled: false).enabled, isFalse);
+    });
+  });
 }
