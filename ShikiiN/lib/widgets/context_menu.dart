@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../models/anime4k_preset.dart';
+import '../models/audio_fx.dart';
 import '../models/player_action.dart';
 import '../models/theme_tokens.dart';
 import '../models/track.dart';
@@ -98,6 +99,10 @@ List<ContextEntry> defaultContextEntries({
   bool nvVsrAvailable = false,
   /// VSR 当前开着还是关着（决定文案是「关闭」还是「开启」）。
   bool nvVsrEnabled = false,
+  /// 装好的音效档（空 = 没装音效包 → 整项不出现）。
+  List<AudioFxPreset> audioFxPresets = const <AudioFxPreset>[],
+  /// 音效当前选中的是哪一档（null = 原声）。
+  AudioFxSelection audioFxSelection = const AudioFxSelection.off(),
 }) {
   final List<UpscaleScheme> schemes = upscaleSchemes ?? builtinUpscaleSchemes();
   return [
@@ -151,6 +156,14 @@ List<ContextEntry> defaultContextEntries({
         icon: Icons.tune_rounded,
         elementId: 'contextMenu.picture',
         children: pictureSubmenuItems(pictureMenu),
+      ),
+    // 音效（`audio-pack` 扩展包）：**有包才出现**（用户 2026-10-19：没装就不占这一行）。
+    if (audioFxPresets.isNotEmpty)
+      ContextEntry.submenu(
+        label: '音效',
+        icon: Icons.graphic_eq_rounded,
+        elementId: 'contextMenu.audioFx',
+        children: audioFxSubmenuItems(audioFxPresets, audioFxSelection),
       ),
     // NV-VSR（NVIDIA 超分）：只在「本构建真有这条滤镜能力」时出现，直接一行开关。
     // 它和「超分」子菜单里的 Anime4K 方案是叠加关系（vf 滤镜链 vs glsl-shaders），
@@ -660,3 +673,27 @@ List<SubmenuItem> pictureSubmenuItems(PictureMenu menu) => <SubmenuItem>[
 
 /// 「调节…」那一项的 elementId（播放面据此弹出滑杆面板）。
 const String kPicturePanelElementId = 'picture.openPanel';
+
+/// 「音效」子菜单项：原声 + 各档。
+///
+/// 与画面调节同一口径：**只有名称**（说明在设置面板里），多包重名时由宿主拼包名。
+/// 第一项恒为「原声」——它同时是「关总开关」的意思，用户不必先找开关再关。
+List<SubmenuItem> audioFxSubmenuItems(
+  List<AudioFxPreset> presets,
+  AudioFxSelection current,
+) =>
+    <SubmenuItem>[
+      SubmenuItem(
+        label: '原声',
+        checked: current.isOff,
+        value: const AudioFxSelection.off(),
+        elementId: 'audioFx.off',
+      ),
+      for (final AudioFxPreset preset in presets)
+        SubmenuItem(
+          label: preset.name,
+          checked: !current.isOff && current.presetId == preset.id,
+          value: AudioFxSelection(preset.id),
+          elementId: 'audioFx.${preset.id}',
+        ),
+    ];

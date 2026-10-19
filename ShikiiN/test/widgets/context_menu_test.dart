@@ -2,19 +2,20 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shikiin/models/anime4k_preset.dart';
+import 'package:shikiin/models/audio_fx.dart';
 import 'package:shikiin/models/player_action.dart';
 import 'package:shikiin/models/theme_tokens.dart';
 import 'package:shikiin/models/upscale_scheme.dart';
 import 'package:shikiin/widgets/context_menu.dart';
 
-Widget _host(List<ContextEntry> entries, {ValueChanged<PlayerAction>? onAction, ValueChanged<String>? onCommand}) =>
+Widget _host(List<ContextEntry> entries, {ValueChanged<PlayerAction>? onAction, ValueChanged<String>? onCommand, void Function(String, SubmenuItem)? onSubmenuSelect}) =>
     MaterialApp(
       home: Scaffold(
         body: ContextMenuOverlay(
           tokens: ThemeTokens.fallback,
           entries: entries,
           onAction: onAction ?? (_) {},
-          onSubmenuSelect: (_, _) {},
+          onSubmenuSelect: onSubmenuSelect ?? (_, _) {},
           onCommand: onCommand,
         ),
       ),
@@ -249,6 +250,75 @@ void main() {
       await tester.tap(find.text('关闭 NV-VSR'));
       expect(command, 'contextMenu.nvVsr');
       expect(fired, isNull, reason: '命令条目不该落进 PlayerAction 分支');
+    });
+  });
+
+  group('音效子菜单（audio-pack）', () {
+    const List<AudioFxPreset> presets = <AudioFxPreset>[
+      AudioFxPreset(id: 'audio-a/vocal', name: '人声增强'),
+      AudioFxPreset(id: 'audio-a/bass', name: '低音增强'),
+    ];
+
+    test('没装音效包 → 「音效」整项不出现（用户 2026-10-19 决定）', () {
+      expect(
+        defaultContextEntries().any((e) => e.elementId == 'contextMenu.audioFx'),
+        isFalse,
+      );
+    });
+
+    test('有包 → 出现子菜单，第一项是「原声」且默认打勾', () {
+      final ContextEntry entry = defaultContextEntries(
+        audioFxPresets: presets,
+      ).firstWhere((e) => e.elementId == 'contextMenu.audioFx');
+      expect(entry.displayLabel, '音效');
+      expect(entry.action, isNull, reason: '音效不占 PlayerAction');
+      expect(entry.hasSubmenu, isTrue);
+      expect(entry.children!.first.label, '原声');
+      expect(entry.children!.first.checked, isTrue);
+      expect(
+        entry.children!.map((SubmenuItem i) => i.label),
+        containsAll(<String>['人声增强', '低音增强']),
+      );
+    });
+
+    test('选中某档 → 该项打勾、原声不勾', () {
+      final ContextEntry entry = defaultContextEntries(
+        audioFxPresets: presets,
+        audioFxSelection: const AudioFxSelection('audio-a/bass'),
+      ).firstWhere((e) => e.elementId == 'contextMenu.audioFx');
+      final List<SubmenuItem> items = entry.children!;
+      expect(items.first.checked, isFalse);
+      final SubmenuItem bass = items.firstWhere(
+        (SubmenuItem i) =>
+            i.value is AudioFxSelection &&
+            (i.value! as AudioFxSelection).presetId == 'audio-a/bass',
+      );
+      expect(bass.checked, isTrue);
+    });
+
+    testWidgets('展开「音效」→ 点「人声增强」把 AudioFxSelection 交给播放面', (tester) async {
+      String? elementId;
+      SubmenuItem? selected;
+      final List<ContextEntry> entries = defaultContextEntries(audioFxPresets: presets);
+      await tester.pumpWidget(_host(
+        entries,
+        onSubmenuSelect: (String id, SubmenuItem item) {
+          elementId = id;
+          selected = item;
+        },
+      ));
+      await tester.pumpAndSettle();
+      final TestGesture gesture =
+          await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      await gesture.moveTo(tester.getCenter(find.text('音效')));
+      await tester.pumpAndSettle();
+      expect(find.text('原声'), findsOneWidget);
+      await tester.tap(find.text('人声增强'));
+      await tester.pumpAndSettle();
+      expect(elementId, 'contextMenu.audioFx');
+      expect(selected!.value, const AudioFxSelection('audio-a/vocal'));
     });
   });
 }

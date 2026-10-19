@@ -13,6 +13,7 @@ import '../controllers/playlist_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../infra/diagnostics/diag.dart';
 import '../models/episode_switch_notice.dart';
+import '../models/audio_fx.dart';
 import '../models/media_item.dart';
 import '../models/picture_menu.dart';
 import '../models/player_action.dart';
@@ -1193,6 +1194,10 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
       pip: _pip,
       nvVsrAvailable: player.nvVsrAvailable,
       nvVsrEnabled: player.nvVsrEnabled,
+      audioFxPresets: player.audioPresets,
+      audioFxSelection: AudioFxSelection(
+        player.audioFxState.enabled ? player.audioFxState.presetId : null,
+      ),
     );
     final overlay = Overlay.of(context);
     late OverlayEntry entry;
@@ -1251,6 +1256,13 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
 
   void _onSubmenuSelect(String elementId, SubmenuItem item) {
     final v = item.value;
+    if (v is AudioFxSelection) {
+      // 音效：选一档 = 开 + 选档；第一项「原声」= 关 + 清空 af。
+      final PlayerController player = ref.read(playerProvider);
+      unawaited(player.setAudioFxPresetId(v.presetId));
+      if (mounted) setState(() {}); // 菜单打勾跟着换
+      return;
+    }
     if (v is UpscaleSelection) {
       unawaited(_setUpscale(v));
       return;
