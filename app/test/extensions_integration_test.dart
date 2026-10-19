@@ -18,6 +18,8 @@ import 'package:shikiin/shikiin.dart';
 import 'package:dsanima/domain/extensions.dart';
 import 'package:dsanima/state/extension_schemes.dart';
 import 'package:dsanima/state/extensions_adapter.dart';
+import 'package:dsanima/state/generic_packs.dart';
+import 'package:dsanima/state/subtitle_presets.dart';
 
 /// 测试里任何一次网络请求都算失败（本地 zip 安装不该联网）。
 class _NoNetworkClient extends http.BaseClient {
@@ -205,5 +207,96 @@ void main() {
       core.unsafeExtensionUrlReason(Uri.parse('http://127.0.0.1/x.zip')),
       isNull,
     );
+  });
+
+  // 用户 2026-10-19：「导入失败了那个包」。示例字幕包只有 manifest.json（`files: []`），
+  // 这条把用户真走的那条路补上：真 zip → 真安装器 → 真扫盘 → 字幕预设成型。
+  // 缺了这段，单测各自绿也可能在「装」这一层把通用包拒掉。
+  test('通用预设包（files 为空）→ 真装 → 扫盘 → 字幕预设可用', () async {
+    final Directory tmp = Directory.systemTemp.createTempSync('dsanima-ext-e2e-generic-');
+    addTearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+    });
+    final Directory support = Directory(p.join(tmp.path, 'data'))..createSync(recursive: true);
+
+    // 与 `tool/build_extensions_catalog.py` 打出来的示例包同形。
+    final Map<String, Object?> manifest = <String, Object?>{
+      'schema': 1,
+      'id': 'subtitle-demo',
+      'name': '演示字幕',
+      'version': '1.0.0',
+      'kind': 'preset-pack',
+      'description': '端到端测试用的字幕预设包',
+      'license': 'MIT',
+      'minAppVersion': '1.0.0',
+      'files': <Object?>[],
+      'payload': <String, Object?>{
+        'surface': 'player.subtitle',
+        'surfaceSchema': 1,
+        'presets': <Object?>[
+          <String, Object?>{
+            'id': 'cinema',
+            'name': '影院大字',
+            'values': <String, Object?>{
+              'scale': 1.6,
+              'pos': 88,
+              'borderSize': 3.2,
+              'color': '#FFFFFFFF',
+              'borderColor': '#FF000000',
+              'bold': true,
+            },
+          },
+          <String, Object?>{
+            'id': 'yellow',
+            'name': '黄字',
+            'values': <String, Object?>{
+              'scale': 1.2,
+              'pos': 96,
+              'color': '#FFFFD400',
+            },
+          },
+        ],
+      },
+    };
+    final List<int> manifestBytes = utf8.encode(jsonEncode(manifest));
+    final Archive archive = Archive()
+      ..addFile(ArchiveFile('manifest.json', manifestBytes.length, manifestBytes));
+    final File zip = File(p.join(tmp.path, 'subtitle-demo.zip'))
+      ..writeAsBytesSync(ZipEncoder().encode(archive));
+
+    final ExtensionsAdapter adapter = ExtensionsAdapter(
+      root: Directory(p.join(support.path, kExtensionsDirName)),
+      clientFactory: () => _NoNetworkClient(),
+      trash: (List<String> paths) async {},
+      openDir: (String path) async {},
+      freeBytes: (String path) async => 10 * 1024 * 1024 * 1024,
+    );
+
+    final InstalledExtension installed =
+        await adapter.install(ExtensionInstallRequest(localPath: zip.path));
+    expect(installed.id, 'subtitle-demo');
+    expect(installed.enabled, isTrue);
+    expect(installed.usable, isTrue, reason: 'preset-pack + 认识的面 = 能用');
+    expect(
+      File(p.join(support.path, kExtensionsDirName, 'subtitle-demo', 'manifest.json')).existsSync(),
+      isTrue,
+    );
+
+    // 扫盘 → consumer 拿到两个预设（按包分组需要的 id / packName 也在）。
+    final List<GenericPack> packs = await scanGenericPacks(support);
+    expect(packs.map((GenericPack pack) => pack.id), <String>['subtitle-demo']);
+    final List<SubtitlePreset> captured = <SubtitlePreset>[];
+    final SubtitlePresetConsumer consumer =
+        SubtitlePresetConsumer(onChanged: captured.addAll);
+    await consumer.setPacks(packs);
+    expect(consumer.presetCount, 2);
+    expect(
+      captured.map((SubtitlePreset preset) => preset.id),
+      <String>['subtitle-demo/cinema', 'subtitle-demo/yellow'],
+    );
+    expect(captured.first.packId, 'subtitle-demo');
+    expect(captured.first.packName, '演示字幕');
+    expect(captured.first.style.scale, 1.6);
+    expect(captured.first.style.color, '#FFFFFFFF');
   });
 }
