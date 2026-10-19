@@ -116,6 +116,22 @@ class SettingsPanel extends StatelessWidget {
               ),
               SizedBox(height: t.spacing * 3),
 
+              // ── 音效（`audio-pack`；没装包时整区不出现）──────────────────
+              //
+              // 放在**音量下面**而不是面板最底：用户 2026-10-19 报「看不到音效包的
+              // 配置选项」——面板 480 高，排在样式预设/字幕样式之后就得滚才能看见。
+              if (audioPresets.isNotEmpty) ...[
+                AudioFxSection(
+                  tokens: t,
+                  presets: audioPresets,
+                  state: audioFxState,
+                  onPreset: onAudioFxPreset,
+                  onCompression: onAudioFxCompression,
+                  onLoudness: onAudioFxLoudness,
+                ),
+                SizedBox(height: t.spacing * 3),
+              ],
+
               // ── 样式预设（宿主从扩展包扫出来的；没有就不显示这一区）──────
               if (presets.isNotEmpty) ...[
                 _header(t, '样式预设', trailing: '${presets.length} 套'),
@@ -216,19 +232,6 @@ class SettingsPanel extends StatelessWidget {
                   ),
                 ],
               ),
-
-              // ── 音效（`audio-pack`；没装包时整区不出现）──────────────────
-              if (audioPresets.isNotEmpty) ...[
-                SizedBox(height: t.spacing * 3),
-                AudioFxSection(
-                  tokens: t,
-                  presets: audioPresets,
-                  state: audioFxState,
-                  onPreset: onAudioFxPreset,
-                  onCompression: onAudioFxCompression,
-                  onLoudness: onAudioFxLoudness,
-                ),
-              ],
             ],
           ),
         ),

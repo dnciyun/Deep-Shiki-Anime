@@ -60,6 +60,26 @@ core.ExtensionManifest _list(String surface) =>
       },
     }).manifest!;
 
+/// 音效包（`audio-pack` / `player.audio`）：扩展页提示必须指向「音效」那一区，
+/// 不能落到老的「超分」文案里（用户 2026-10-19 报「看不到音效包的配置选项」）。
+core.ExtensionManifest _audio() =>
+    core.parseExtensionManifest(<String, Object?>{
+      ..._base('audio-pack'),
+      'id': 'audio1',
+      'files': <Object?>[],
+      'payload': <String, Object?>{
+        'surface': 'player.audio',
+        'surfaceSchema': 1,
+        'presets': <Object?>[
+          <String, Object?>{
+            'id': 'vocal',
+            'name': '人声增强',
+            'values': <String, Object?>{'preamp': 0},
+          },
+        ],
+      },
+    }).manifest!;
+
 core.ExtensionManifest _picture() =>
     core.parseExtensionManifest(<String, Object?>{
       ..._base('picture-pack'),
@@ -125,6 +145,13 @@ void main() {
     expect(
       extensionUseHint(_list('home.recommend')),
       '列表包（面「home.recommend」本版本不接运行时）：装得上、暂时不会有新功能',
+    );
+  });
+
+  test('音效包：指向播放器设置 →「音效」，不再落到「超分」', () {
+    expect(
+      extensionUseHint(_audio()),
+      '音效包：装完在播放器设置 →「音效」里选档，右键菜单也能切',
     );
   });
 
