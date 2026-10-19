@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../models/anime4k_preset.dart';
 import '../models/player_action.dart';
@@ -273,6 +275,30 @@ class _ContextMenuOverlayState extends State<ContextMenuOverlay> {
   final LayerLink _link = LayerLink();
   final OverlayPortalController _portal = OverlayPortalController();
 
+  /// 离开菜单/子菜单后延迟收起子菜单。
+  ///
+  /// 为什么要延迟而不是立刻收：子菜单挂在菜单卡片**旁边**（中间有 4px 间隙），
+  /// 指针从某一行挪进子菜单时必然先触发一次"离开菜单卡片"。立刻收会让人永远
+  /// 点不到子菜单项；200ms 足够跨过间隙，又不会让子菜单粘在画面上。
+  static const Duration _submenuCloseDelay = Duration(milliseconds: 200);
+  Timer? _submenuCloseTimer;
+
+  void _scheduleCloseSubmenu() {
+    _submenuCloseTimer?.cancel();
+    _submenuCloseTimer = Timer(_submenuCloseDelay, _closeSubmenu);
+  }
+
+  void _cancelCloseSubmenu() {
+    _submenuCloseTimer?.cancel();
+    _submenuCloseTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _submenuCloseTimer?.cancel();
+    super.dispose();
+  }
+
   void _openSubmenu(String id, double offsetY, bool openUp) {
     setState(() {
       _openSubmenuId = id;
@@ -280,6 +306,19 @@ class _ContextMenuOverlayState extends State<ContextMenuOverlay> {
       _submenuOpenUp = openUp;
     });
     if (!_portal.isShowing) _portal.show();
+  }
+
+  /// 收起当前展开的子菜单（幂等）。
+  ///
+  /// 为什么需要它：修复前唯一的复位点是「选中子项」——鼠标移到同级的普通行、
+  /// 或者只是挪开，子菜单都会一直挂在那儿（用户 2026-10-19 报的 bug）。
+  /// 现在只要指针进入**任意一个普通行**就收起来；在别的可展开行上悬停则由
+  /// [_openSubmenu] 直接换成那一个（同时只会有一个）。
+  void _closeSubmenu() {
+    _cancelCloseSubmenu();
+    if (_openSubmenuId == null) return;
+    setState(() => _openSubmenuId = null);
+    _portal.hide();
   }
 
   @override
@@ -320,6 +359,8 @@ class _ContextMenuOverlayState extends State<ContextMenuOverlay> {
             icon: e.icon,
             label: e.displayLabel,
             tokens: t,
+            // 指针进到普通行 = 离开子菜单的语境：把手上的子菜单收起来。
+            onEnter: _closeSubmenu,
             // 三种行：占动作的（onAction）/ 命令条目（onCommand）/ 都没有（不可点，
             // 例如未注入轨道列表的空子菜单）。别让 action! 抛异常。
             onTap: e.action != null
@@ -393,20 +434,30 @@ class _ContextMenuOverlayState extends State<ContextMenuOverlay> {
               targetAnchor: onLeft ? Alignment.topLeft : Alignment.topRight,
               followerAnchor: Alignment(onLeft ? 1 : -1, up ? 1 : -1),
               offset: Offset(onLeft ? -4 : 4, _submenuOffsetY),
-              child: ContextSubmenu(
-                tokens: t,
-                onLeft: onLeft,
-                openUp: up,
-                items: entry.children!,
-                onSelect: (item) {
-                  widget.onSubmenuSelect?.call(_openSubmenuId!, item);
-                  setState(() => _openSubmenuId = null);
-                  _portal.hide();
-                },
+              child: MouseRegion(
+                // 指针进了子菜单：取消"离开菜单就收起"的缓冲计时。
+                onEnter: (_) => _cancelCloseSubmenu(),
+                onExit: (_) => _scheduleCloseSubmenu(),
+                child: ContextSubmenu(
+                  tokens: t,
+                  onLeft: onLeft,
+                  openUp: up,
+                  items: entry.children!,
+                  onSelect: (item) {
+                    widget.onSubmenuSelect?.call(_openSubmenuId!, item);
+                    setState(() => _openSubmenuId = null);
+                    _portal.hide();
+                  },
+                ),
               ),
             );
           },
-          child: menuWidget,
+          child: MouseRegion(
+            // 指针离开菜单卡片（到画面上）：缓冲一下再收，跨间隙进子菜单时会被取消。
+            onEnter: (_) => _cancelCloseSubmenu(),
+            onExit: (_) => _scheduleCloseSubmenu(),
+            child: menuWidget,
+          ),
         ),
       ),
     );
@@ -418,7 +469,17 @@ class _MenuRow extends StatefulWidget {
   final String label;
   final ThemeTokens tokens;
   final VoidCallback onTap;
-  const _MenuRow({required this.icon, required this.label, required this.tokens, required this.onTap});
+
+  /// 指针进入这一行时的回调（用于收起别的行上展开的子菜单）。
+  final VoidCallback? onEnter;
+
+  const _MenuRow({
+    required this.icon,
+    required this.label,
+    required this.tokens,
+    required this.onTap,
+    this.onEnter,
+  });
 
   @override
   State<_MenuRow> createState() => _MenuRowState();
@@ -432,7 +493,10 @@ class _MenuRowState extends State<_MenuRow> {
     final t = widget.tokens;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
+      onEnter: (_) {
+        setState(() => _hover = true);
+        widget.onEnter?.call();
+      },
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         onTap: widget.onTap,

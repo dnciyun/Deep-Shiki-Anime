@@ -128,6 +128,94 @@ void main() {
     expect(find.byType(Divider), findsOneWidget);
   });
 
+  group('子菜单要能收回去（用户 2026-10-19 报的真 bug）', () {
+    // 复现路径：悬停「超分」展开子菜单 → 把鼠标移到同级的普通行（例如「视频数据」）。
+    // 修复前 `_openSubmenuId` 除了「选中子项」和「整个菜单关掉」永不复位，
+    // 于是子菜单一直挂着不消失。
+    testWidgets('鼠标从展开的行移到普通行 → 子菜单收起', (tester) async {
+      await tester.pumpWidget(_host(defaultContextEntries()));
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+
+      // 展开
+      await gesture.moveTo(tester.getCenter(find.text('超分')));
+      await tester.pumpAndSettle();
+      expect(find.text('Anime4K · 标准'), findsOneWidget, reason: '悬停应展开子菜单');
+
+      // 移到普通行：子菜单应收起
+      await gesture.moveTo(tester.getCenter(find.text('视频数据')));
+      await tester.pumpAndSettle();
+      expect(find.text('Anime4K · 标准'), findsNothing, reason: '离开子菜单行后应该收起');
+    });
+
+    testWidgets('移到另一个可展开行 → 只显示新展开的那个', (tester) async {
+      await tester.pumpWidget(_host(defaultContextEntries(
+        audioItems: const [
+          SubmenuItem(label: '音轨 A', value: 1),
+        ],
+      )));
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+
+      await gesture.moveTo(tester.getCenter(find.text('超分')));
+      await tester.pumpAndSettle();
+      expect(find.text('Anime4K · 标准'), findsOneWidget);
+
+      await gesture.moveTo(tester.getCenter(find.text('音轨')));
+      await tester.pumpAndSettle();
+      expect(find.text('音轨 A'), findsOneWidget);
+      expect(find.text('Anime4K · 标准'), findsNothing, reason: '同时只应有一个子菜单');
+    });
+
+    testWidgets('鼠标移出整个菜单（到画面上）→ 子菜单收起', (tester) async {
+      await tester.pumpWidget(_host(defaultContextEntries()));
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+
+      await gesture.moveTo(tester.getCenter(find.text('超分')));
+      await tester.pumpAndSettle();
+      expect(find.text('Anime4K · 标准'), findsOneWidget);
+
+      // 移出菜单卡片：卡片在 body 左上角（宽 206），所以取右下角很远处。
+      // 注意两件事：① 别用 (2,2) 之类的小坐标（还在卡片里）；
+      // ② 先 pump 一帧让指针事件把"离开"回调派发完，再推进时间让缓冲计时到点。
+      await gesture.moveTo(const Offset(790, 10));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+      expect(find.text('Anime4K · 标准'), findsNothing, reason: '离开菜单后子菜单应收起');
+    });
+
+    testWidgets('从菜单行挪进子菜单里 → 不许被缓冲期误收', (tester) async {
+      await tester.pumpWidget(_host(defaultContextEntries()));
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+
+      await gesture.moveTo(tester.getCenter(find.text('超分')));
+      await tester.pumpAndSettle();
+      expect(find.text('Anime4K · 标准'), findsOneWidget);
+
+      // 走进子菜单里并停住：期间经过菜单与子菜单之间的间隙
+      await gesture.moveTo(tester.getCenter(find.text('Anime4K · 标准')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(find.text('Anime4K · 标准'), findsOneWidget, reason: '在子菜单里不该被收起');
+    });
+  });
+
   group('NV-VSR 开关行（契约外的探针能力）', () {
     test('没有能力 → 菜单里没有这一项', () {
       final entries = defaultContextEntries();
