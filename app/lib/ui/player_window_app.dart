@@ -52,13 +52,25 @@ final ValueNotifier<bool> windowWakeChromeAtCenterNotifier = ValueNotifier<bool>
 
 /// 播放窗口的根：把主窗口下发的请求喂给 `PlayerSurface`。
 class PlayerWindowApp extends ConsumerStatefulWidget {
-  const PlayerWindowApp({super.key, required this.args, required this.controller});
+  const PlayerWindowApp({
+    super.key,
+    required this.args,
+    required this.controller,
+    this.onExtensionsChanged,
+  });
 
   /// 启动参数（首次播放的那一条 + 那一时刻的外观/分组）。
   final PlayerWindowArgs args;
 
   /// 本窗口自己的 controller —— 主窗口通过它下发后续请求。
   final WindowController controller;
+
+  /// 扩展目录变了：让宿主**重新扫一遍并补挂**画面调节菜单（返回时菜单已就位）。
+  ///
+  /// 为什么由宿主来做：装配它要用这个窗口自己的 `AppRuntime`（anime4k 控制器）
+  /// 和刚扫出来的包 —— 这些只在 `main.dart._runPlayerWindow` 的作用域里，
+  /// `PlayerWindowApp` 拿不到。（null = 组件测试/没装配，退回"只重扫现有菜单"。）
+  final Future<void> Function()? onExtensionsChanged;
 
   @override
   ConsumerState<PlayerWindowApp> createState() => _PlayerWindowAppState();
@@ -185,12 +197,21 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
         '扩展变更：方案 ${refresh.schemes.length} 个（选中 ${refresh.selection.schemeId}'
         '${refresh.selectionReset ? '，原方案已被卸载/禁用 → 已回退内置 Anime4K' : ''}）',
       );
-      // 画面调节包也要重扫：用户在扩展页关掉了某些预设（`extension-settings.json`）
-      // 时，已开的播放窗口若无这一步，右键菜单里那些预设还会在（点了才没反应）。
-      // `reload()` 永不抛，最坏是菜单保持旧清单。
+      // 画面调节包也要重扫：① 用户在扩展页关掉了某些预设（`extension-settings.json`）；
+      // ② 更常见的：**这扇窗已经开着的时候才装上的画面调节包** —— 开窗那次扫描
+      // 当然没看到它，而 `pictureMenuProvider` 是只读 Provider（第一次读到 null
+      // 就被缓存住），不重新挂 + 不丢缓存的话右键菜单里永远没有「画面调节」。
+      // 用户 2026-10-18 原话：「装完插件后播放器不会立马生效」（只有重启 app 才行）。
       try {
-        final shikiin.PictureMenu? menu = ref.read(shikiin.pictureMenuProvider);
-        await menu?.reload();
+        final Future<void> Function()? rescan = widget.onExtensionsChanged;
+        if (rescan != null) {
+          await rescan(); // 宿主：重扫 + 必要时现场挂上（`main.dart._ensurePictureMenu`）
+        } else {
+          // 没有装配根回调（组件测试）：至少把现有菜单重扫一遍。
+          await ref.read(shikiin.pictureMenuProvider)?.reload();
+        }
+        // 菜单实例可能刚被换上/摘下：丢掉旧缓存，让右键菜单下次读到新值。
+        ref.invalidate(shikiin.pictureMenuProvider);
       } catch (e) {
         _trace('扩展变更后重扫画面调节包失败（菜单保持旧清单）：$e');
       }

@@ -141,6 +141,11 @@ class PictureMenuAdapter implements PictureMenu {
       final List<PicturePack> packs =
           await loadPicturePacks(dir, hiddenPresets: settings.hiddenPresets);
       await _controller.setPacks(packs);
+      // `setPacks` 只在"设置变了"的时候才重下发；而**包换了版本**（清单里同 id、
+      // version 变了）时设置可以完全一样 —— 那种情况它不会 apply，播放器就一直挂着
+      // 旧版本渲染出来的那份 shader（缓存文件名带版本号）。扩展变更本来就该"以新为准"，
+      // 这里无条件再下发一次：没有包时 `apply()` 自己会清链，正好覆盖卸载。
+      await _controller.apply();
     } catch (error) {
       debugPrint('[picture] 重扫画面调节包失败（菜单保持旧清单）：$error');
     }

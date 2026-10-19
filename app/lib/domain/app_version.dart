@@ -1,7 +1,7 @@
 /// 本构建的版本号（第三十九轮：检查更新时的比较基准）。
 ///
-/// ⚠️ **必须与 `app/pubspec.yaml` 的 `version:` 同步**（`1.0.4+5` ↔
-/// `AppVersion(1, 0, 4, build: 5)`）。`app/test/app_version_test.dart` 会直接读
+/// ⚠️ **必须与 `app/pubspec.yaml` 的 `version:` 同步**（`1.0.5+6` ↔
+/// `AppVersion(1, 0, 5, build: 6)`）。`app/test/app_version_test.dart` 会直接读
 /// pubspec 对账：漏改一处，检查更新就会永远说"有新版本"（或者发布了新版却没提示）。
 ///
 /// 为什么用一个常量而不是 `package_info_plus`：
@@ -22,4 +22,9 @@ import 'package:dsanima_core/update/update.dart';
 /// 程序自己也报 1.0.3 —— 「检查更新」比较的是"远端是否比本地新"，两边相等 ⇒ 旧安装
 /// 永远只看到"已是最新"，**更新功能等于没有出口**。所以每次对外发布都要让版本号
 /// 严格大于已经发出去的最大版本；这次就是补上这个差。
-const AppVersion kAppVersion = AppVersion(1, 0, 4, build: 5);
+///
+/// **第七十七轮（2026-10-19）抬到 1.0.5+6**：修两个用户实测缺陷 ——
+/// 「装完插件后播放器不会立马生效」（画面调节菜单只在开窗时扫一次，之后装上的包
+/// 永远不出现）与「点的继续播放会不生效」（续播 seek 在文件加载前下发，被 mpv
+/// 丢掉 ⇒ 从 0 开始）。用户装的是 1.0.4，所以必须 > 1.0.4 才能被自动更新到。
+const AppVersion kAppVersion = AppVersion(1, 0, 5, build: 6);

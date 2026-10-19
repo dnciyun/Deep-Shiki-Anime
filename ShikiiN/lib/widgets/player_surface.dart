@@ -420,7 +420,10 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
 
   // 换片串行化（防 media_kit 原生崩溃）
   bool _opening = false;
-  MediaItem? _pendingOpen;
+
+  /// 排队中的下一次 open（含它自己的续播起点 —— 丢掉 startAt 会让"连着点两集"
+  /// 的第二集从 0 开始，正是续播那条 bug 的翻版）。
+  ({MediaItem item, Duration? startAt})? _pendingOpen;
 
   // ── 切集反馈（第三十八轮）──────────────────────────────────────────────────
   //
@@ -538,13 +541,15 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
     _lastPlayerRequest = req;
     if (!mounted) return;
     await diag.breadcrumbFlushed('open request: ${req.uri}');
-    await _openMedia(MediaItem(path: req.uri, title: req.title));
+    // ⚠️ 起点**交给 `_openMedia` 一起带下去**，不要在这之后自己再 seek 一次：
+    // 原来是 `open` 完立刻 `seekTo(startAt)`，而那时 mpv 还没把文件 load 起来，
+    // seek 直接被丢弃（画面从 0 开始）。现在由 `PlayerController.open` 等
+    // 「duration 有值」之后再 seek（见那里的长注释 / 真机日志 2026-10-18 17:22:20）。
+    await _openMedia(
+      MediaItem(path: req.uri, title: req.title),
+      startAt: req.startAt,
+    );
     if (!mounted) return;
-    final startAt = req.startAt;
-    if (startAt != null && startAt > Duration.zero) {
-      // 宿主显式给了起点：覆盖续播位置。
-      await ref.read(playerProvider).seekTo(startAt);
-    }
     final sub = req.subtitlePath;
     if (sub != null && sub.isNotEmpty && mounted) {
       // 宿主已经把外挂字幕取到本地：直接挂上（失败不打断播放，自己去菜单里选）。
@@ -563,9 +568,9 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
   /// + 1500ms → `exitSwitchWindow(reapply: true)`。
   /// 串行化 open：上一个 open 还在进行（纹理创建中）时再次 open 会触发 media_kit
   /// 在 Windows 上的原生崩溃，故打开请求排队、最新请求胜出。
-  Future<void> _openMedia(MediaItem item) async {
+  Future<void> _openMedia(MediaItem item, {Duration? startAt}) async {
     if (_opening) {
-      _pendingOpen = item;
+      _pendingOpen = (item: item, startAt: startAt);
       return;
     }
     _opening = true;
@@ -574,7 +579,12 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
     final a4k = ref.read(anime4kProvider);
     int? switchToken;
     try {
-      final resume = _rememberPosition ? _settings.loadResume(item.path) : null;
+      // 起点：宿主显式给的（续播/继续播放）优先，其次才是子窗口自己按 URL 记的那份
+      // （URL 带 token，换一次就 miss，只能当兜底）。
+      final Duration? hostStart =
+          (startAt != null && startAt > Duration.zero) ? startAt : null;
+      final Duration? resume = hostStart ??
+          (_rememberPosition ? _settings.loadResume(item.path) : null);
       // 换片闪退修复：超分 glsl-shaders `set` 撞上新文件视频输出(VO)重建，会与 GPU
       // 渲染上下文竞争 → libmpv 原生崩溃（关超分只发 clr 故不崩）。复刻用户实测安全的
       // 「先关超分→换片→再开超分」：换片前先清，open 后等 VO 就绪再把档位 set 回去。
@@ -622,7 +632,7 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
     }
     final next = _pendingOpen;
     _pendingOpen = null;
-    if (next != null) await _openMedia(next);
+    if (next != null) await _openMedia(next.item, startAt: next.startAt);
   }
 
   // ── 上一集 / 下一集（契约 §9：交回宿主，不自己 open）─────────────────────────

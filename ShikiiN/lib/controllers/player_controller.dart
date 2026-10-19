@@ -38,9 +38,28 @@ class PlayerController {
 
   Future<void> open(MediaItem item, {Duration? startAt}) async {
     _currentPath = item.path;
+    // 只有真的要从中间开始才等：从头播（绝大多数开播）不该为此多拖一拍。
+    final Duration? target =
+        (startAt != null && startAt > Duration.zero) ? startAt : null;
+    // ⚠️ 必须**先订阅**「这次的文件真的加载起来了」再 `player.open`：
+    // media_kit 的 `open()` 只是把 `loadlist` 命令交给 mpv（`real.dart` 实测），
+    // 并不等文件 load 完；紧随其后的 `seek` 会撞上"还没有文件"→ mpv 返回
+    // `error running command _command(seek, …)` 并**丢掉这次 seek**，画面从 0 开始。
+    // 真机日志 2026-10-18 17:22:20 就是这个（用户报「点的继续播放不生效」）。
+    // `duration` 流是 broadcast（无重放），所以只能提前订阅；`open()` 内部
+    // 会先 `stop(open: true)`（把 duration 推成 0）再载入新文件，因此一定会有
+    // 「0 → 新值」的顺序，不会漏。
+    final Future<bool>? ready =
+        target == null ? null : waitUntilMediaReady(player.stream.duration);
     await player.open(Media(item.path));
-    if (startAt != null && startAt > Duration.zero) {
-      await player.seek(startAt);
+    if (target == null) return;
+    // 等不到（直播没有时长、或者超时）也**照试一次**：seek 失败只记日志，
+    // 绝不让"开播"本身失败。
+    if (ready != null) await ready;
+    try {
+      await player.seek(target);
+    } catch (e, st) {
+      diag.warn('player', 'resume seek failed（这次从 0 开始）', e, st);
     }
   }
 
@@ -322,5 +341,26 @@ class PlayerController {
 
   void dispose() {
     player.dispose();
+  }
+}
+
+/// 等「这一次」的媒体真的加载起来：`duration` 第一次大于 0 就算到了。
+///
+/// 为什么单拎出来：它守的是「续播 seek 太早被 mpv 丢掉」这条（[PlayerController.open]
+/// 的注释里有真机日志证据），而 `Player.stream.duration` 是 broadcast、没有重放，
+/// 只能**在 open 之前**订阅 —— 这层顺序在真实播放器上没法在单测里复现，
+/// 所以把判据做成纯函数，用一条可控的流来钉（`test/controllers/media_ready_test.dart`）。
+///
+/// 返回 false = 超时（直播没有时长 / 这个文件一直没载起来）。调用方**仍然**应该
+/// 试一次 seek：seek 失败最多是"从 0 开始"，不该把开播本身拖成失败。
+Future<bool> waitUntilMediaReady(
+  Stream<Duration> durations, {
+  Duration timeout = const Duration(seconds: 8),
+}) async {
+  try {
+    await durations.firstWhere((Duration d) => d > Duration.zero).timeout(timeout);
+    return true;
+  } catch (_) {
+    return false;
   }
 }

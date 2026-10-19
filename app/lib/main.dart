@@ -44,10 +44,7 @@ import 'state/cover_cache.dart';
 import 'state/desktop_integration.dart';
 import 'state/engine_bootstrap.dart';
 import 'state/extension_schemes.dart';
-import 'state/extension_settings.dart';
-import 'state/picture_menu_adapter.dart';
-import 'state/picture_pack.dart' as picture;
-import 'state/picture_settings_io.dart';
+import 'state/picture_menu_attach.dart';
 import 'state/extensions.dart';
 import 'state/extensions_adapter.dart';
 import 'state/global_failure.dart';
@@ -813,53 +810,18 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
   // 1.1.0：把「画面调节」扩展包接进播放器右键菜单（第六十九轮）。
   // 与 extraSchemes 同样的口径：子窗口每次开窗重新扫，扫不出来就**不显示这一项**，
   // 绝不影响开播。渲染/缓存/挂载都在 `PictureController` 里，菜单只看到接口。
-  try {
-    final Directory supportDir = Directory(dataRoot.path);
-    // 用户关掉的预设（扩展页 →「设置」）在这里生效：开窗时读一次用户设置文件。
-    // 读失败只当"没有设置"（`loadExtensionUserSettings` 永不抛），不影响开播。
-    final core.ExtensionUserSettings extSettings =
-        await loadExtensionUserSettings(supportDir);
-    final List<picture.PicturePack> picturePacks = await picture.loadPicturePacks(
-      supportDir,
-      hiddenPresets: extSettings.hiddenPresets,
-    );
-    if (picturePacks.isNotEmpty) {
-      // 上次调好的画面（包/预设/每个滑杆的取值）存在
-      // `<数据根>/dsanima/picture-settings.json`：关掉播放窗口再开、或者重启程序，
-      // 画面上还是上次的样子。读失败只当"没调过"（store 自己永不抛）。
-      final PictureSettingsStore pictureStore = PictureSettingsStore(supportDir);
-      final picture.PictureSettings savedPicture = await pictureStore.load();
-      final picture.PictureController pictureController = picture.PictureController(
-        player: runtime.anime4k,
-        shaderCacheDir: picture.pictureCacheDirOf(supportDir),
-        packs: picturePacks,
-        settings: savedPicture,
-        // 每次真正下发之后（选预设/松手/重置/关掉）都把当前状态存下来。
-        onChanged: pictureStore.save,
-      );
-      runtime.attachPictureMenu(PictureMenuAdapter(
-        source: pictureController,
-        // 传数据根：扩展页改了预设开关之后，已开的播放窗口会收到"扩展变了"通知，
-        // 靠这个目录重新扫包（`PictureMenuAdapter.reload`）。
-        supportDir: supportDir,
-      ));
-      // 开窗就把上次的调色挂上（`apply()` 自己会清/挂、永不抛）。
-      if (!pictureController.isOff) {
-        final String restored = '包 ${pictureController.settings.packId}'
-            '、预设 ${pictureController.settings.presetId ?? '手调'}';
-        await pictureController.apply();
-        trace('player window: 画面调节已恢复（$restored）');
-      } else {
-        trace('player window: 上次没有画面调节（不挂叠加链）');
-      }
-      trace('player window: picture menu attached (${picturePacks.length} 个包)');
-    } else {
-      trace('player window: 没有画面调节包（右键菜单不显示这一项）');
-    }
-  } catch (error) {
-    // 画面调节是"锦上添花"：装配失败只该少一项菜单，不能拖垮播放窗口。
-    trace('player window: 画面调节装配失败（忽略）：$error');
-  }
+  //
+  // ⚠️ 开窗扫完还不够：用户完全可能在**这扇窗已经开着**的时候装画面调节包
+  // （用户 2026-10-18：「装完插件后播放器不会立马生效」）。那时主窗口会推一条
+  // `kMethodExtensionsChanged` 过来，子窗口用它调同一个 `_ensurePictureMenu`
+  // 现场补挂 —— 否则只能重启整个应用（关窗只是 hide，不会重扫）。
+  final Directory supportDir = Directory(dataRoot.path);
+  final shikiin.PictureMenu? attachedMenu = await _ensurePictureMenu(
+    runtime: runtime,
+    supportDir: supportDir,
+    trace: trace,
+  );
+  trace('player window: 画面调节${attachedMenu == null ? '未装配（没有包）' : '菜单已就位'}');
   // 任务栏 / Alt-Tab 的图标与标题（第十七轮），见 [_applyPlayerWindowChrome]。
   await _applyPlayerWindowChrome(args, trace, dataRoot.path);
   // 排障：这一扇窗**自己是谁**（window_manager 认为它在管哪个 HWND）、它以为自己多大。
@@ -899,9 +861,48 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
           (Ref ref) => ref.watch(windowEpisodeGroupProvider),
         ),
       ],
-      child: PlayerWindowApp(args: args, controller: controller),
+      child: PlayerWindowApp(
+        args: args,
+        controller: controller,
+        // 扩展在**这扇窗开着的时候**被装上/卸下：宿主现场重扫扩展目录、必要时补挂
+        // 画面调节菜单，然后由子窗口把 `pictureMenuProvider` 的旧缓存丢掉
+        // （它是只读 Provider，会缓存第一次读到的 null）。用户 2026-10-18：
+        // 「装完插件后播放器不会立马生效」—— 修的就是这条。
+        onExtensionsChanged: () => _ensurePictureMenu(
+          runtime: runtime,
+          supportDir: supportDir,
+          trace: trace,
+        ),
+      ),
     ),
   );
+}
+
+/// 扫扩展目录 → 有画面调节包就把菜单挂进这扇播放窗口（并把上次的取值恢复）。
+///
+/// 两个调用点共用这一条（**不能各写一份**，否则"开窗"和"装完插件"会漂成两套语义）：
+/// * `_runPlayerWindow` 开窗时；
+/// * `kMethodExtensionsChanged` 到达时（用户可能在这扇窗开着的时候刚装了包）。
+///
+/// 失败只记日志：画面调节是锦上添花，装不上最多右键菜单少一项，绝不能拖垮播放窗口。
+Future<shikiin.PictureMenu?> _ensurePictureMenu({
+  required shikiin.AppRuntime runtime,
+  required Directory supportDir,
+  required void Function(String) trace,
+}) async {
+  try {
+    final shikiin.PictureMenu? menu = await ensurePictureMenuAttached(
+      player: runtime.anime4k,
+      supportDir: supportDir,
+      current: runtime.pictureMenu,
+      attach: runtime.attachPictureMenu,
+    );
+    if (menu != null) trace('player window: 画面调节菜单已就位');
+    return menu;
+  } catch (error) {
+    trace('player window: 画面调节装配失败（忽略）：$error');
+    return null;
+  }
 }
 
 /// 启动参数里的窗口几何 → `Rect`（逻辑像素）；缺失/坏了返回 null。
