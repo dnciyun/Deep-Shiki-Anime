@@ -309,6 +309,16 @@ void main() {
     expect(r.warnings.single.field, 'payload.surface');
   });
 
+  test('kind 与面吃的载荷类型写反 → 拒（field 指向 payload.surface）', () {
+    // player.subtitle 吃的是预设；写成 list-pack 会出现「装得上、扩展页指错入口、播放器 0 预设」。
+    final r = parseGenericPayload(
+      kListPackKind,
+      _listPayload(surface: 'player.subtitle'),
+      declaredPathsLower: <String>{},
+    );
+    expect(_fields(r), contains('payload.surface'));
+  });
+
   test('list-pack：item 缺必填字段 / 多未知字段 / URL 不安全 → 拒', () {
     List<String> fieldsOf(Object? item) => _fields(parseGenericPayload(
           kListPackKind,

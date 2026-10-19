@@ -38,6 +38,12 @@ final pictureMenuProvider = Provider<PictureMenu?>((_) => null);
 final subtitlePresetsProvider =
     Provider<List<SubtitlePreset>>((_) => const <SubtitlePreset>[]);
 
+/// 宿主注入：字幕预设的**非致命提示**（目前是「字体没加载上」）。
+///
+/// 字体资产加载失败不挡预设（回退系统默认字体），但界面必须如实说 —— 否则用户
+/// 只会觉得「这个预设没效果」。与 [subtitlePresetsProvider] 同一套注入方式。
+final subtitlePresetNotesProvider = Provider<List<String>>((_) => const <String>[]);
+
 /// 宿主投递播放请求的通道。默认 null = 无请求。
 ///
 /// 宿主（DSAnima）override 成 [PlayerRequestNotifier] 后，任何 `request(...)`

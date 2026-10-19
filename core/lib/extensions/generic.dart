@@ -319,6 +319,16 @@ GenericPayloadParseResult parseGenericPayload(
 
   final bool isPreset = kind == kPresetPackKind;
 
+  if (surface != null &&
+      surface.payloadKind !=
+          (isPreset ? SurfacePayloadKind.preset : SurfacePayloadKind.list)) {
+    issues.add(ManifestIssue(
+      'payload.surface',
+      '面「${surface.id}」吃的是${surface.payloadKind == SurfacePayloadKind.preset ? '预设' : '列表'}，'
+          '这个包的 kind 是 $kind（写反了？）',
+    ));
+  }
+
   // ── assets（只有 preset-pack 允许，首版只支持字体）──────────────────────
   final List<GenericAsset> assets = <GenericAsset>[];
   final Object? rawAssets = payload['assets'];

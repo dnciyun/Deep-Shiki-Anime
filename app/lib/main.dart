@@ -834,6 +834,7 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
           windowSubtitlePresetsNotifier.value = presets,
     );
     await subtitleConsumer.setPacks(await scanGenericPacks(supportDir));
+    windowSubtitlePresetNotesNotifier.value = subtitleConsumer.notes;
     trace('player window: 字幕预设 ${subtitleConsumer.summary}');
     for (final String note in subtitleConsumer.notes) {
       trace('player window: $note');

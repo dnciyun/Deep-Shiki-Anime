@@ -53,7 +53,8 @@ class SubtitlePresetConsumer implements ExtensionConsumer {
     _fontCount = 0;
 
     final List<GenericPack> mine = packs
-        .where((GenericPack pack) => pack.payload.surface == surface)
+        .where((GenericPack pack) =>
+            pack.payload.surface == surface && pack.payload.presets.isNotEmpty)
         .toList()
       ..sort((GenericPack a, GenericPack b) => a.id.compareTo(b.id));
 
@@ -66,6 +67,8 @@ class SubtitlePresetConsumer implements ExtensionConsumer {
           id: '${pack.id}/${preset.id}',
           name: preset.name,
           description: preset.description,
+          packId: pack.id,
+          packName: pack.name,
           style: subtitleStyleFromPresetValues(preset.values),
         ));
       }

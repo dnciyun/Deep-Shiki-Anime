@@ -1463,6 +1463,8 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
                 onSubtitleStyle: _onSubtitleStyle,
                 // 宿主从扩展包扫出来的字幕样式预设（没装包时是空列表 → 不显示这一区）。
                 presets: ref.watch(subtitlePresetsProvider),
+                // 字体没加载上之类的非致命提示：显示在预设区下面。
+                presetNotes: ref.watch(subtitlePresetNotesProvider),
                 onClose: _closeSettingsOverlay,
               ),
             ),

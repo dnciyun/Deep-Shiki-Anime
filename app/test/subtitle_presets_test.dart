@@ -92,6 +92,8 @@ void main() {
 
     expect(captured, hasLength(1));
     expect(captured.single.name, '影院大字');
+    expect(captured.single.packId, 'subtitle-cinema');
+    expect(captured.single.packName, '演示字幕包');
     expect(captured.single.style.scale, 1.6);
     expect(captured.single.style.color, '#FFFFFFFF');
     expect(consumer.summary, contains('1 个字幕预设'));
@@ -180,9 +182,37 @@ void main() {
     expect(consumer.notes, isNotEmpty);
   });
 
+  test('包里没有预设（kind/面写反的防御）→ consumer 直接跳过', () async {
+    final Directory support = _newSupportDir();
+    addTearDown(() => support.deleteSync(recursive: true));
+    final Directory ext = Directory(p.join(support.path, kExtensionsDirName, 'empty-presets'))
+      ..createSync(recursive: true);
+    _writeManifest(ext, _manifest(id: 'empty-presets'));
+    final core.ManifestParseResult parsed = core.parseExtensionManifest(
+      jsonDecode(File(p.join(ext.path, 'manifest.json')).readAsStringSync()),
+      currentAppVersion: kAppVersion.toString(),
+    );
+    final GenericPack pack = GenericPack(
+      manifest: parsed.manifest!,
+      // 面上写着字幕、但载荷里没有任何预设（core 会在解析阶段拒掉写反的 kind，
+      // 这里模拟"旧版本写的包/未来字段"之类的漏网输入）。
+      payload: const core.GenericPayload(surface: 'player.subtitle', surfaceSchema: 1),
+      dir: ext,
+      surface: core.extensionSurfaceOf('player.subtitle'),
+    );
+
+    List<SubtitlePreset> captured = const <SubtitlePreset>[];
+    final SubtitlePresetConsumer consumer =
+        SubtitlePresetConsumer(onChanged: (List<SubtitlePreset> p) => captured = p);
+    await consumer.setPacks(<GenericPack>[pack]);
+
+    expect(captured, isEmpty);
+  });
+
   test('接线守卫：播放窗口挂了 notifier + provider override，主窗口开窗预扫', () {
     final String window = File('lib/ui/player_window_app.dart').readAsStringSync();
     expect(window, contains('windowSubtitlePresetsNotifier'));
+    expect(window, contains('windowSubtitlePresetNotesNotifier'));
     expect(window, contains('shikiin.subtitlePresetsProvider'));
     expect(window, contains('.overrideWith('));
     expect(window, contains('scanGenericPacks'));
@@ -190,5 +220,6 @@ void main() {
     final String mainFile = File('lib/main.dart').readAsStringSync();
     expect(mainFile, contains('SubtitlePresetConsumer'));
     expect(mainFile, contains('windowSubtitlePresetsNotifier'));
+    expect(mainFile, contains('windowSubtitlePresetNotesNotifier'));
   });
 }

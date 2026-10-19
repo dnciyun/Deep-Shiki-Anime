@@ -43,6 +43,7 @@ export 'app.dart'
         playerProvider,
         playerRequestProvider,
         storeProvider,
+        subtitlePresetNotesProvider,
         subtitlePresetsProvider,
         switchNoticeProvider,
         tokensProvider;

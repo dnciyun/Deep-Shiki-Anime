@@ -16,6 +16,9 @@ class SettingsPanel extends StatelessWidget {
   /// 宿主从扩展包扫出来的字幕样式预设；空 = 不显示「样式预设」这一区。
   final List<SubtitlePreset> presets;
 
+  /// 预设的非致命提示（目前是「字体没加载上」）：显示在预设区下面，不挡预设。
+  final List<String> presetNotes;
+
   /// 可选关闭按钮（宿主也可用 Esc / 点外部关闭）。
   final VoidCallback? onClose;
 
@@ -27,8 +30,21 @@ class SettingsPanel extends StatelessWidget {
     required this.subtitleStyle,
     required this.onSubtitleStyle,
     this.presets = const <SubtitlePreset>[],
+    this.presetNotes = const <String>[],
     this.onClose,
   });
+
+  /// 按包名分组（保持 presets 原顺序；没有包名的归到空 key）。
+  ///
+  /// 为什么要在界面上分组：一个面可以装多个包，两个包都叫「影院大字」时，只看一排
+  /// 同名按钮用户分不清来源 —— id 隔离是给代码的，分组是给人的。
+  Map<String, List<SubtitlePreset>> _presetGroups() {
+    final Map<String, List<SubtitlePreset>> groups = <String, List<SubtitlePreset>>{};
+    for (final SubtitlePreset preset in presets) {
+      (groups[preset.packName] ??= <SubtitlePreset>[]).add(preset);
+    }
+    return groups;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -87,18 +103,47 @@ class SettingsPanel extends StatelessWidget {
               if (presets.isNotEmpty) ...[
                 _header(t, '样式预设', trailing: '${presets.length} 套'),
                 SizedBox(height: t.spacing),
-                Wrap(
-                  spacing: t.spacing,
-                  runSpacing: t.spacing,
-                  children: <Widget>[
-                    for (final SubtitlePreset preset in presets)
-                      _PresetChip(
-                        tokens: t,
-                        preset: preset,
-                        onTap: () => onSubtitleStyle(preset.style),
+                for (final MapEntry<String, List<SubtitlePreset>> group
+                    in _presetGroups().entries) ...[
+                  if (group.key.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(bottom: t.spacing / 2),
+                      child: Text(
+                        group.key,
+                        style: TextStyle(
+                          color: t.text3,
+                          fontSize: t.fontSizeSmall,
+                          height: 1.2,
+                        ),
                       ),
-                  ],
-                ),
+                    ),
+                  Wrap(
+                    spacing: t.spacing,
+                    runSpacing: t.spacing,
+                    children: <Widget>[
+                      for (final SubtitlePreset preset in group.value)
+                        _PresetChip(
+                          tokens: t,
+                          preset: preset,
+                          onTap: () => onSubtitleStyle(preset.style),
+                        ),
+                    ],
+                  ),
+                  SizedBox(height: t.spacing * 2),
+                ],
+                // 字体没加载上之类的非致命提示（预设照常可用，但要说清楚）。
+                for (final String note in presetNotes)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: t.spacing / 2),
+                    child: Text(
+                      note,
+                      style: TextStyle(
+                        color: t.text3,
+                        fontSize: t.fontSizeSmall,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
                 SizedBox(height: t.spacing * 3),
               ],
 
@@ -301,7 +346,7 @@ class _PresetChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = tokens;
-    return MouseRegion(
+    final Widget chip = MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: onTap,
@@ -319,5 +364,7 @@ class _PresetChip extends StatelessWidget {
         ),
       ),
     );
+    if (preset.description.isEmpty) return chip;
+    return Tooltip(message: preset.description, child: chip);
   }
 }

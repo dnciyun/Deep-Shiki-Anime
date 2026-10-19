@@ -59,6 +59,11 @@ final ValueNotifier<bool> windowWakeChromeAtCenterNotifier = ValueNotifier<bool>
 final ValueNotifier<List<shikiin.SubtitlePreset>> windowSubtitlePresetsNotifier =
     ValueNotifier<List<shikiin.SubtitlePreset>>(const <shikiin.SubtitlePreset>[]);
 
+/// 字幕预设的非致命提示（目前是「字体没加载上」）：与预设同一套推法，
+/// 设置面板显示在预设区下面 —— 失败但不拖垮预设，也不能只在日志里。
+final ValueNotifier<List<String>> windowSubtitlePresetNotesNotifier =
+    ValueNotifier<List<String>>(const <String>[]);
+
 /// 播放窗口的根：把主窗口下发的请求喂给 `PlayerSurface`。
 class PlayerWindowApp extends ConsumerStatefulWidget {
   const PlayerWindowApp({
@@ -232,7 +237,11 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
               windowSubtitlePresetsNotifier.value = presets,
         );
         await consumer.setPacks(await scanGenericPacks(Directory(dataRoot.path)));
-        _trace('扩展变更：${consumer.summary}');
+        windowSubtitlePresetNotesNotifier.value = consumer.notes;
+        _trace(
+          '扩展变更：${consumer.summary}'
+          '${consumer.notes.isEmpty ? '' : '（${consumer.notes.join('；')}）'}',
+        );
       } catch (e) {
         _trace('扩展变更后重扫字幕预设失败（设置面板保持旧清单）：$e');
       }
@@ -572,6 +581,9 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
             // 通用扩展包的字幕样式预设（装卸包后由 `_reloadExtensionSchemes` 现场重扫）。
             shikiin.subtitlePresetsProvider
                 .overrideWith((Ref ref) => ref.watch(windowSubtitlePresetsProvider)),
+            // 字体没加载上之类的提示：显示在设置面板预设区下面。
+            shikiin.subtitlePresetNotesProvider
+                .overrideWith((Ref ref) => ref.watch(windowSubtitlePresetNotesProvider)),
           ],
           child: MaterialApp(
             debugShowCheckedModeBanner: false,
@@ -661,6 +673,18 @@ final NotifierProvider<_NotifierBridge<List<shikiin.SubtitlePreset>>,
     NotifierProvider<_NotifierBridge<List<shikiin.SubtitlePreset>>,
         List<shikiin.SubtitlePreset>>(
   () => _NotifierBridge<List<shikiin.SubtitlePreset>>(windowSubtitlePresetsNotifier),
+);
+
+/// 字幕预设的非致命提示（字体没加载上）：接给播放面（子窗口 `ProviderScope` 里 override）。
+final Provider<List<String>> windowSubtitlePresetNotesProvider =
+    Provider<List<String>>(
+  (Ref ref) => ref.watch(_windowSubtitlePresetNotesProvider),
+);
+
+final NotifierProvider<_NotifierBridge<List<String>>, List<String>>
+    _windowSubtitlePresetNotesProvider =
+    NotifierProvider<_NotifierBridge<List<String>>, List<String>>(
+  () => _NotifierBridge<List<String>>(windowSubtitlePresetNotesNotifier),
 );
 
 /// 切集失败的通知（第三十八轮，主窗口 → 本窗口，见 `kMethodSwitchFailed`）。

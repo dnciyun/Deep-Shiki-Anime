@@ -53,4 +53,62 @@ void main() {
 
     expect(find.text('样式预设'), findsNothing);
   });
+
+  testWidgets('多包预设按包名分组展示（同名预设也能分清来源）', (WidgetTester tester) async {
+    SubtitleStyle? applied;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SettingsPanel(
+          tokens: ThemeTokens.fallback,
+          volume: 50,
+          onVolume: (double _) {},
+          subtitleStyle: const SubtitleStyle(),
+          onSubtitleStyle: (SubtitleStyle s) => applied = s,
+          presets: const <SubtitlePreset>[
+            SubtitlePreset(
+              id: 'a-pack/cinema',
+              name: '影院大字',
+              packId: 'a-pack',
+              packName: 'A 包',
+              style: SubtitleStyle(scale: 1.2),
+            ),
+            SubtitlePreset(
+              id: 'b-pack/cinema',
+              name: '影院大字',
+              packId: 'b-pack',
+              packName: 'B 包',
+              style: SubtitleStyle(scale: 1.8),
+            ),
+          ],
+        ),
+      ),
+    ));
+
+    expect(find.text('A 包'), findsOneWidget);
+    expect(find.text('B 包'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey<String>('subtitle-preset-b-pack/cinema')));
+    await tester.pump();
+    expect(applied!.scale, 1.8);
+  });
+
+  testWidgets('字体加载失败要在预设区下面如实显示', (WidgetTester tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SettingsPanel(
+          tokens: ThemeTokens.fallback,
+          volume: 50,
+          onVolume: (double _) {},
+          subtitleStyle: const SubtitleStyle(),
+          onSubtitleStyle: (SubtitleStyle _) {},
+          presets: const <SubtitlePreset>[
+            SubtitlePreset(id: 'cinema', name: '影院大字', style: SubtitleStyle()),
+          ],
+          presetNotes: const <String>['字体「坏字体」没加载上（fonts/x.ttf）'],
+        ),
+      ),
+    ));
+
+    expect(find.textContaining('字体'), findsWidgets);
+    expect(find.textContaining('没加载上'), findsOneWidget);
+  });
 }

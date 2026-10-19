@@ -8,14 +8,18 @@ import 'package:shikiin/shikiin.dart';
 void main() {
   test('预设携带完整 SubtitleStyle 与说明', () {
     const SubtitlePreset preset = SubtitlePreset(
-      id: 'cinema',
+      id: 'subtitle-cinema/cinema',
       name: '影院大字',
       description: '白字黑边',
+      packId: 'subtitle-cinema',
+      packName: '影院字幕',
       style: SubtitleStyle(scale: 1.6, pos: 88),
     );
-    expect(preset.id, 'cinema');
+    expect(preset.id, 'subtitle-cinema/cinema');
     expect(preset.name, '影院大字');
     expect(preset.description, '白字黑边');
+    expect(preset.packId, 'subtitle-cinema');
+    expect(preset.packName, '影院字幕');
     expect(preset.style.scale, 1.6);
     expect(preset.style.pos, 88);
   });
