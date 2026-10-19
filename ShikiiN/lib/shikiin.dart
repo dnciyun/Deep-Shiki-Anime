@@ -74,6 +74,14 @@ export 'models/upscale_scheme.dart'
         kAnime4kSchemeId;
 export 'models/theme_tokens.dart' show ThemeTokens;
 export 'models/subtitle_preset.dart' show SubtitlePreset;
+export 'models/audio_fx.dart'
+    show
+        AudioFxPreset,
+        AudioFxSelection,
+        audioFxFilterSpec,
+        audioFxFiltersCommand,
+        kAudioFxBands,
+        kAudioFxBandFrequencies;
 export 'models/subtitle_style.dart' show SubtitleStyle;
 export 'models/track.dart' show TrackInfo, TrackKind;
 export 'models/picture_menu.dart'
