@@ -27,4 +27,4 @@ import 'package:dsanima_core/update/update.dart';
 /// 「装完插件后播放器不会立马生效」（画面调节菜单只在开窗时扫一次，之后装上的包
 /// 永远不出现）与「点的继续播放会不生效」（续播 seek 在文件加载前下发，被 mpv
 /// 丢掉 ⇒ 从 0 开始）。用户装的是 1.0.4，所以必须 > 1.0.4 才能被自动更新到。
-const AppVersion kAppVersion = AppVersion(1, 0, 5, build: 6);
+const AppVersion kAppVersion = AppVersion(1, 1, 0, build: 7);
