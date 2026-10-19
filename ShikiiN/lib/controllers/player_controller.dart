@@ -286,12 +286,19 @@ class PlayerController {
       return;
     }
     final int code = await runMpvCommand(<String>['set', 'vf', spec]);
+    // ⚠️ 只看 `set` 的返回码不够：media_kit 的 command() 不把 mpv 的「命令失败」
+    // 当成异常，`set=0` 也可能是假的。回读 `vf` 才知道这条滤镜到底在不在链上。
+    final String vfNow = await readMpvProperty('vf');
     final String version = await readMpvProperty('mpv-version');
     final String context = await readMpvProperty('current-gpu-context');
     final String hwdec = await readMpvProperty('hwdec-current');
+    final String pixelFormat = await readMpvProperty('video-params/pixelformat');
+    final String width = await readMpvProperty('video-params/w');
+    final String height = await readMpvProperty('video-params/h');
     diag.info(
       'debug-vf',
-      'vf="$spec" set=$code mpv-version="$version" gpu-context="$context" hwdec="$hwdec"',
+      'vf="$spec" set=$code vf-now="$vfNow" mpv-version="$version" '
+      'gpu-context="$context" hwdec="$hwdec" pixelformat="$pixelFormat" size=${width}x$height',
     );
   }
 

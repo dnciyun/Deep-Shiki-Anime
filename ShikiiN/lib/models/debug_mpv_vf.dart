@@ -27,12 +27,22 @@ const String kDebugMpvVfEnvVar = 'DSANIMA_MPV_VF';
 /// 程序目录下的文件名：内容同上（与环境变量同时存在时环境变量优先）。
 const String kDebugMpvVfFileName = 'DSANIMA_MPV_VF.txt';
 
-/// 解析开关：[env] / [fileText] 只给单测注入，生产调用不传。
-String debugMpvVf({Map<String, String>? env, String? fileText}) {
+/// 编译期烘焙值（`flutter build windows --release --dart-define=DSANIMA_MPV_VF=...`）。
+///
+/// 用途：探针版要「双击 exe 就生效」，不能依赖环境变量或目录里的文件；正式版不带这个
+/// define，这里就是空串，行为不变。运行时环境变量 / 文件的优先级仍然高于它。
+const String _kBakedMpvVf = String.fromEnvironment('DSANIMA_MPV_VF');
+
+/// 解析开关：[env] / [fileText] / [baked] 只给单测注入，生产调用不传。
+///
+/// 优先级：环境变量 > 程序目录 txt > 编译期烘焙值；全空 → 空串。
+String debugMpvVf({Map<String, String>? env, String? fileText, String? baked}) {
   final Map<String, String> values = env ?? Platform.environment;
   final String fromEnv = _clean(values[kDebugMpvVfEnvVar] ?? '');
   if (fromEnv.isNotEmpty) return fromEnv;
-  return _clean(fileText ?? '');
+  final String fromFile = _clean(fileText ?? '');
+  if (fromFile.isNotEmpty) return fromFile;
+  return _clean(baked ?? _kBakedMpvVf);
 }
 
 /// 读程序目录下的 [kDebugMpvVfFileName]；不存在/读不出 → 空串（永不抛）。

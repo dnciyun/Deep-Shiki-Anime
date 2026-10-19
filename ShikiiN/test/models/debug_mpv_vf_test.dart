@@ -57,6 +57,30 @@ void main() {
     test('纯空白 txt → 空串', () {
       expect(debugMpvVf(fileText: ' \t \n'), isEmpty);
     });
+
+    test('只有编译期烘焙值（--dart-define）→ 用它', () {
+      expect(
+        debugMpvVf(baked: 'd3d11vpp=format=nv12:scale=2:scaling-mode=nvidia'),
+        'd3d11vpp=format=nv12:scale=2:scaling-mode=nvidia',
+      );
+    });
+
+    test('优先级：环境变量 > 文件 > 烘焙值', () {
+      expect(
+        debugMpvVf(
+          env: const <String, String>{'DSANIMA_MPV_VF': 'env'},
+          fileText: 'file',
+          baked: 'baked',
+        ),
+        'env',
+      );
+      expect(debugMpvVf(fileText: 'file', baked: 'baked'), 'file');
+      expect(debugMpvVf(baked: 'baked'), 'baked');
+    });
+
+    test('烘焙值含换行 → 空串（同样不许注入）', () {
+      expect(debugMpvVf(baked: 'vf a\nvf b'), isEmpty);
+    });
   });
 
   group('debugMpvVfFile（读文件）', () {
