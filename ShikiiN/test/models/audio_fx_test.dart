@@ -41,6 +41,13 @@ void main() {
       expect(spec, contains('equalizer=f=1000:width_type=o:width=1:g=0'));
     });
 
+    test('preamp = 0 时不下发 volume（预增益吃掉抬升是历史事故）', () {
+      final String spec = audioFxFilterSpec(_preset(bands: _zeros(), preamp: 0));
+      expect(spec, isNot(contains('volume=')));
+      final String withPreamp = audioFxFilterSpec(_preset(bands: _zeros(), preamp: -3));
+      expect(withPreamp, contains('volume=-3dB'));
+    });
+
     test('crossfeed = 0 不出现，> 0 出现且顺序在限幅之前', () {
       final Map<String, double> bands = _zeros();
       expect(audioFxFilterSpec(_preset(bands: bands)), isNot(contains('crossfeed')));

@@ -69,7 +69,7 @@ class AudioFxPreset {
     this.packId = '',
     this.packName = '',
     this.bands = const <String, double>{},
-    this.preamp = -3,
+    this.preamp = 0,
     this.crossfeed = 0,
   });
 
@@ -133,7 +133,9 @@ String audioFxFilterSpec(
     parts.add('equalizer=f=$freq:width_type=o:width=1:g=${_num(gain)}');
   }
   final double preamp = _clamp(preset.preamp, kAudioFxPreampMin, kAudioFxPreampMax);
-  parts.add('volume=${_num(preamp)}dB');
+  // 0 dB 不写 `volume`：链短一条、也避免「预增益吃掉抬升」那种听感事故
+  // （用户 2026-10-19：「改的音效没效果，都是把声音变小了」——根因就是这里有 -3.5dB）。
+  if (preamp != 0) parts.add('volume=${_num(preamp)}dB');
   final double crossfeed = _clamp(preset.crossfeed, 0, 1);
   if (crossfeed > 0) {
     parts.add('crossfeed=strength=${_num(crossfeed)}:range=0.5:slope=0.5');

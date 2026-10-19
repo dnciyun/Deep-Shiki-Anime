@@ -113,7 +113,7 @@ shikiin.AudioFxPreset audioFxPresetFromValues({
     packId: packId,
     packName: packName,
     bands: Map<String, double>.unmodifiable(bands),
-    preamp: preamp is num ? preamp.toDouble() : -3,
+    preamp: preamp is num ? preamp.toDouble() : 0,
     crossfeed: crossfeed is num ? crossfeed.toDouble() : 0,
   );
 }
