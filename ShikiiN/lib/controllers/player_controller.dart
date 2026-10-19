@@ -326,6 +326,26 @@ class PlayerController {
       'enabled=$on vf="$spec" set=$code vf-now="$vfNow" mpv-version="$version" '
       'gpu-context="$context" hwdec="$hwdec" pixelformat="$pixelFormat" size=${width}x$height',
     );
+    // 滤镜之后/渲染目标的分辨率：判断「VSR 到底有没有把帧放大」的唯一硬证据。
+    // `video-params` 是解码尺寸（filter 之前），`video-out-params` 才是 vf 链输出。
+    if (on) unawaited(_logNvVsrAfterReconfigure());
+  }
+
+  /// 等 VO 重新配置后补记一次「滤镜之后的尺寸」。
+  ///
+  /// 为什么要延迟：`set vf` 之后 mpv 要等下一帧才重建滤镜链与输出参数，紧接着读
+  /// 拿到的还是旧值。400ms 足够一次 VO reconfig，又不会明显拖慢开播（不 await）。
+  Future<void> _logNvVsrAfterReconfigure() async {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    final String outW = await readMpvProperty('video-out-params/w');
+    final String outH = await readMpvProperty('video-out-params/h');
+    final String osdW = await readMpvProperty('osd-dimensions/w');
+    final String osdH = await readMpvProperty('osd-dimensions/h');
+    final String vfNow = await readMpvProperty('vf');
+    diag.info(
+      'debug-vf',
+      'after-reconfig vf-now="$vfNow" out-params=${outW}x$outH osd=${osdW}x$osdH',
+    );
   }
 
   // ── Stop ─────────────────────────────────────────────────────────────────────
