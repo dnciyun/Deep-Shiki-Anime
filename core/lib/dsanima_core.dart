@@ -30,5 +30,6 @@ export 'extensions/manifest.dart';
 export 'extensions/generic.dart';
 export 'extensions/package_guard.dart';
 export 'extensions/picture.dart';
+export 'extensions/shader_guard.dart';
 export 'extensions/urls.dart';
 export 'extensions/user_settings.dart';

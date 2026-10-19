@@ -32,8 +32,13 @@ class _NoNetworkClient extends http.BaseClient {
 String _sha256Hex(List<int> bytes) => sha256.convert(bytes).toString();
 
 /// 造一个最小可安装的 shader-pack zip（与 `tool/package_extension.ps1` 同一格式）。
-File _buildZip(Directory dir, {required String id, required String name}) {
-  final List<int> shaderBytes = utf8.encode('//!DESC 测试 shader\n//!HOOK MAIN\n');
+File _buildZip(
+  Directory dir, {
+  required String id,
+  required String name,
+  String shaderSource = '//!DESC 测试 shader\n//!HOOK MAIN\n',
+}) {
+  final List<int> shaderBytes = utf8.encode(shaderSource);
   final Map<String, Object?> manifest = <String, Object?>{
     'schema': 1,
     'id': id,
@@ -71,6 +76,45 @@ File _buildZip(Directory dir, {required String id, required String name}) {
 }
 
 void main() {
+  test('compute 着色器的超分包 → 拒装并说清原因（GLES 跑不了 compute）', () async {
+    // 依据：mpv 在 GLES 上无条件关 compute（sr-models-bench §3），CuNNy/ArtCNN 每个
+    // pass 都是 //!COMPUTE。不闸的话体验是「装成功 → 菜单里能选 → 播不出来」。
+    final Directory tmp = Directory.systemTemp.createTempSync('dsanima-ext-compute-');
+    addTearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+    });
+    final Directory support = Directory(p.join(tmp.path, 'data'))..createSync(recursive: true);
+    final File zip = _buildZip(
+      tmp,
+      id: 'compute-pack',
+      name: 'CuNNy 风格包',
+      shaderSource: '//!DESC CuNNy\n//!HOOK LUMA\n//!COMPUTE 16 16 8 8\n',
+    );
+
+    final ExtensionsAdapter adapter = ExtensionsAdapter(
+      root: Directory(p.join(support.path, kExtensionsDirName)),
+      clientFactory: () => _NoNetworkClient(),
+      trash: (List<String> paths) async {},
+      openDir: (String path) async {},
+      freeBytes: (String path) async => 10 * 1024 * 1024 * 1024,
+    );
+
+    await expectLater(
+      adapter.install(ExtensionInstallRequest(localPath: zip.path)),
+      throwsA(
+        isA<ExtensionFailure>()
+            .having((ExtensionFailure f) => f.message, 'message', contains('compute'))
+            .having((ExtensionFailure f) => f.hint, 'hint', contains('ANGLE')),
+      ),
+    );
+    // 拒装 = 什么都没留下：不许出现半个目录，也不许在超分菜单里留下一个点不动的项。
+    expect(
+      Directory(p.join(support.path, kExtensionsDirName, 'compute-pack')).existsSync(),
+      isFalse,
+    );
+    expect(await loadExtensionUpscaleSchemes(support), isEmpty);
+  });
+
   test('装 → 方案出现 → 禁用 → 方案消失 → 再启用 → 再出现 → 卸载 → 目录没了', () async {
     final Directory tmp = Directory.systemTemp.createTempSync('dsanima-ext-e2e-');
     addTearDown(() {

@@ -90,6 +90,10 @@ const Duration _kDownloadTimeout = Duration(seconds: 30);
 /// 磁盘空间余量：解压前要的"总大小 + 这点余量"（日志/临时文件/文件系统块开销）。
 const int _kDiskHeadroomBytes = 4 * 1024 * 1024;
 
+/// 扫 compute 指令时单个 GLSL 的大小上限（一份 user-shader 链不会有这么大；
+/// 超过就不扫，免得为了拒装把内存吃满）。
+const int _kShaderScanMaxBytes = 4 * 1024 * 1024;
+
 /// 共享一个磁盘探测实例：`DiskSpaceProbe` 会按盘缓存 30 秒，装配根每装一个扩展
 /// 都 new 一个只会重复起 PowerShell。
 ///
@@ -283,6 +287,9 @@ class ExtensionsAdapter implements ExtensionsPort {
               '仍不行就联系扩展作者（不要手工改 zip 里的文件）',
         );
       }
+
+      // ③' 能力闸门：超分包要 compute 着色器 → 现在的播放器跑不了，直接拒装。
+      _rejectComputeShaders(package, manifest);
 
       // ④ 磁盘余量：解压前就知道要占多大，别解到一半才发现没空间。
       final int? free = await _freeBytes(_root.path);
@@ -910,6 +917,45 @@ class ExtensionsAdapter implements ExtensionsPort {
   }
 
   /// 解压到 [staging]，逐文件比对 `size`+`sha256`；返回写入的字节数（= 目录占用）。
+  /// 超分包的能力闸门：compute 着色器在本版本播放器（media_kit + ANGLE/GLES）上跑不了。
+  ///
+  /// 证据：`docs/specs/2026-10-18-sr-models-bench.md` §3 —— mpv 在 GLES 上无条件关掉
+  /// compute（`ra_gl.c`: `if (ra->glsl_es) ra->caps &= ~RA_CAP_COMPUTE;`），而 CuNNy /
+  /// ArtCNN 这类超分模型的每个阶段都是 `//!COMPUTE`。不闸的话体验是
+  /// 「装成功 → 出现在超分菜单 → 播不出来」，正是「装得上≠能用要说清楚」要消灭的那种。
+  ///
+  /// 放在解压**之前**：拒装就什么都不留（不留半个目录、不留菜单项）。
+  void _rejectComputeShaders(_DecodedPackage package, core.ExtensionManifest manifest) {
+    if (manifest.kind != core.ExtensionKind.shaderPack) return;
+    final core.ExtensionShaderSpec? spec = manifest.shader;
+    if (spec == null) return;
+
+    final String dir = spec.dir.trim();
+    final Map<String, ArchiveFile> byPath = <String, ArchiveFile>{
+      for (final ArchiveFile file in package.archive.files) file.name.toLowerCase(): file,
+    };
+    final Map<String, String> sources = <String, String>{};
+    for (final String name in spec.files) {
+      final String rel = dir.isEmpty ? name : '$dir/$name';
+      final ArchiveFile? entry = byPath[rel.toLowerCase()];
+      // 缺文件不在这里报（_extract 与 core 守卫负责），这里只判"能不能跑"。
+      if (entry == null) continue;
+      // 一份 GLSL 链不会有几 MB；超大的不扫（免得为了拒装把内存吃满）。
+      if (entry.size > _kShaderScanMaxBytes) continue;
+      final List<int>? bytes = entry.readBytes();
+      if (bytes == null) continue;
+      sources[rel] = utf8.decode(bytes, allowMalformed: true);
+    }
+
+    final String? offender = core.unsupportedShaderReason(sources);
+    if (offender == null) return;
+    throw ExtensionFailure(
+      '这个超分包要 compute 着色器（$offender），本版本的播放器跑不了',
+      hint: '播放器走 ANGLE/GLES，mpv 在 GLES 上会关掉 compute 着色器。'
+          '请换用只有普通片段钩子（//!HOOK）的超分包，或等播放器换成桌面 GL 后端',
+    );
+  }
+
   Future<int> _extract(
     _DecodedPackage package,
     core.ExtensionManifest manifest,
