@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import '../models/audio_fx.dart';
 import '../models/subtitle_preset.dart';
 import '../models/subtitle_style.dart';
 import '../models/theme_tokens.dart';
+import 'audio_fx_panel.dart';
 import 'styled_track.dart';
 
-/// 设置面板（极简）：只保留 **音量** 与 **字幕样式** 两组。
+/// 设置面板（极简）：**音量** / **音效**（装包才有）/ **字幕样式**。
 /// 主题/快捷键/文件关联/界面 Tab、播放结束行为、音量增强、附加按钮全部已删。
 class SettingsPanel extends StatelessWidget {
   final ThemeTokens tokens;
@@ -19,6 +21,13 @@ class SettingsPanel extends StatelessWidget {
   /// 预设的非致命提示（目前是「字体没加载上」）：显示在预设区下面，不挡预设。
   final List<String> presetNotes;
 
+  /// 音效档位（`audio-pack`）；空 = 不显示「音效」这一区。
+  final List<AudioFxPreset> audioPresets;
+  final AudioFxState audioFxState;
+  final ValueChanged<String?> onAudioFxPreset;
+  final ValueChanged<int> onAudioFxCompression;
+  final ValueChanged<int> onAudioFxLoudness;
+
   /// 可选关闭按钮（宿主也可用 Esc / 点外部关闭）。
   final VoidCallback? onClose;
 
@@ -31,8 +40,16 @@ class SettingsPanel extends StatelessWidget {
     required this.onSubtitleStyle,
     this.presets = const <SubtitlePreset>[],
     this.presetNotes = const <String>[],
+    this.audioPresets = const <AudioFxPreset>[],
+    this.audioFxState = const AudioFxState(),
+    this.onAudioFxPreset = _noPreset,
+    this.onAudioFxCompression = _noLevel,
+    this.onAudioFxLoudness = _noLevel,
     this.onClose,
   });
+
+  static void _noPreset(String? _) {}
+  static void _noLevel(int _) {}
 
   /// 按包名分组（保持 presets 原顺序；没有包名的归到空 key）。
   ///
@@ -199,6 +216,19 @@ class SettingsPanel extends StatelessWidget {
                   ),
                 ],
               ),
+
+              // ── 音效（`audio-pack`；没装包时整区不出现）──────────────────
+              if (audioPresets.isNotEmpty) ...[
+                SizedBox(height: t.spacing * 3),
+                AudioFxSection(
+                  tokens: t,
+                  presets: audioPresets,
+                  state: audioFxState,
+                  onPreset: onAudioFxPreset,
+                  onCompression: onAudioFxCompression,
+                  onLoudness: onAudioFxLoudness,
+                ),
+              ],
             ],
           ),
         ),

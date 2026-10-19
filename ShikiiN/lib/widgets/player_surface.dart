@@ -1497,6 +1497,21 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
                 presets: ref.watch(subtitlePresetsProvider),
                 // 字体没加载上之类的非致命提示：显示在预设区下面。
                 presetNotes: ref.watch(subtitlePresetNotesProvider),
+                // 音效档位（`audio-pack`；没装包时是空列表 → 不显示这一区）。
+                audioPresets: ref.watch(audioPresetsProvider),
+                audioFxState: ref.read(playerProvider).audioFxState,
+                onAudioFxPreset: (String? id) {
+                  unawaited(ref.read(playerProvider).setAudioFxPresetId(id));
+                  if (mounted) setState(() {});
+                },
+                onAudioFxCompression: (int level) {
+                  unawaited(ref.read(playerProvider).setAudioFxCompression(level));
+                  if (mounted) setState(() {});
+                },
+                onAudioFxLoudness: (int level) {
+                  unawaited(ref.read(playerProvider).setAudioFxLoudness(level));
+                  if (mounted) setState(() {});
+                },
                 onClose: _closeSettingsOverlay,
               ),
             ),
