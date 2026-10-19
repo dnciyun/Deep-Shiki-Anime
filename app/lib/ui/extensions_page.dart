@@ -26,13 +26,17 @@ import 'dart:io';
 import 'package:dsanima_core/dsanima_core.dart' as core;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shikiin/shikiin.dart' as shikiin;
 
 import '../domain/extensions.dart';
+import '../state/audio_fx_settings.dart';
 import '../state/extension_settings.dart';
 import '../state/infra.dart' show supportDirProvider;
+import '../state/providers.dart' show playerWindowServiceProvider;
 import '../domain/format.dart';
 import '../state/extensions.dart';
 import '../theme/tokens.dart';
+import 'audio_fx_section.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/neo.dart';
 
@@ -176,6 +180,8 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
     final Directory? dir = ref.read(supportDirProvider);
     if (dir == null) return; // 装配问题：设置页/首启向导会报，这里静默
     await ref.read(extensionUserSettingsProvider.notifier).ensureLoaded(dir);
+    // 音效设置（扩展页是唯一配置入口）：进页面读一次盘。
+    await ref.read(audioFxSettingsProvider.notifier).ensureLoaded(dir);
     if (!mounted) return;
     final String? saved = ref.read(extensionUserSettingsProvider).catalogUrl;
     if (saved != null && saved.trim().isNotEmpty && _catalog.text.trim().isEmpty) {
@@ -361,6 +367,7 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
         if (s.notice != null) _notice(s.notice!),
         if (s.phase == ExtensionsPhase.installing) _installing(t, s),
         _installedSection(t, s, busy),
+        _audioFxSection(t, s),
         _catalogSection(t, s, busy),
       ],
     );
@@ -790,6 +797,63 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
   }
 
   // ── 在线目录 ──────────────────────────────────────────────────────────────
+
+  /// 「音效」区：装了（且启用）音效包才出现。
+  ///
+  /// 用户 2026-10-19：「放设置里没用，就放扩展里，扩展不一定只有开关」——
+  /// 所以这一区不是开关，是完整的选档 + 两个强度 + 频响曲线。
+  Widget _audioFxSection(DsTokens t, ExtensionsState s) {
+    final List<shikiin.AudioFxPreset> presets = <shikiin.AudioFxPreset>[];
+    for (final InstalledExtension item in s.installed) {
+      if (!item.enabled) continue;
+      if (item.manifest.kind != core.ExtensionKind.audioPack) continue;
+      final core.GenericPayload? payload = item.manifest.generic;
+      if (payload == null) continue;
+      for (final core.GenericPreset preset in payload.presets) {
+        double numOf(String key) {
+          final Object? raw = preset.values[key];
+          return raw is num ? raw.toDouble() : 0;
+        }
+
+        presets.add(shikiin.AudioFxPreset(
+          // 与消费端同一个拼法：包 id + 预设 id。
+          id: '${item.manifest.id}/${preset.id}',
+          name: preset.name,
+          description: preset.description,
+          packId: item.manifest.id,
+          packName: item.manifest.name,
+          bands: <String, double>{
+            for (final String band in shikiin.kAudioFxBands) band: numOf(band),
+          },
+          preamp: numOf('preamp'),
+          crossfeed: numOf('crossfeed'),
+        ));
+      }
+    }
+    if (presets.isEmpty) return const SizedBox.shrink();
+    final shikiin.AudioFxState state = ref.watch(audioFxSettingsProvider);
+    return Padding(
+      padding: EdgeInsets.only(top: t.spacing),
+      child: DsSection(
+        title: '音效',
+        hue: _hue,
+        icon: Icons.graphic_eq,
+        subtitle: '音效来自装好的音效包；选档后立刻生效（播放窗口开着时当场切换），'
+            '播放窗口右键也能快速切档。',
+        trailing: DsChip(label: '${presets.length} 档', hue: _hue),
+        child: AudioFxSection(
+          tokens: t,
+          presets: presets,
+          state: state,
+          onChange: (shikiin.AudioFxState next) {
+            unawaited(ref.read(audioFxSettingsProvider.notifier).update(next));
+            // 播放窗口开着就当场生效；没开窗下次开窗会随启动参数带过去。
+            unawaited(ref.read(playerWindowServiceProvider).sendAudioFx(next.toJson()));
+          },
+        ),
+      ),
+    );
+  }
 
   Widget _catalogSection(DsTokens t, ExtensionsState s, bool busy) {
     final Set<String> installedIds = <String>{

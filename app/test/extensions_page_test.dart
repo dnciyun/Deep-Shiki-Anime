@@ -148,6 +148,49 @@ InstalledExtension _installed({
       bytes: bytes,
     );
 
+/// 音效包夹具：两档，用来测扩展页的「音效」区（用户 2026-10-19：放扩展里）。
+InstalledExtension _audioInstalled({
+  String id = 'dsanima-audio',
+  bool enabled = true,
+}) {
+  final core.ManifestParseResult parsed = core.parseExtensionManifest(
+    <String, Object?>{
+      'schema': 1,
+      'id': id,
+      'name': '音效包',
+      'version': '1.0.0',
+      'kind': 'audio-pack',
+      'minAppVersion': '1.1.0',
+      'files': <Object?>[],
+      'payload': <String, Object?>{
+        'surface': 'player.audio',
+        'surfaceSchema': 1,
+        'presets': <Object?>[
+          <String, Object?>{
+            'id': 'vocal',
+            'name': '人声增强',
+            'values': <String, Object?>{'b2k': 3},
+          },
+          <String, Object?>{
+            'id': 'bass',
+            'name': '低音增强',
+            'values': <String, Object?>{'b63': 5},
+          },
+        ],
+      },
+    },
+    currentAppVersion: '1.1.0',
+  );
+  expect(parsed.ok, isTrue, reason: '音效包夹具必须合法：${parsed.issues}');
+  return InstalledExtension(
+    manifest: parsed.manifest!,
+    enabled: enabled,
+    installedAt: DateTime(2026, 10, 19),
+    origin: ExtensionOrigin.localZip,
+    bytes: 1024,
+  );
+}
+
 core.CatalogEntry _catalogEntry({
   String id = 'new-pack',
   String name = '新扩展',
@@ -716,6 +759,28 @@ void main() {
       );
       expect(field.controller?.text, kOfficialExtensionsCatalogUrl);
       expect(find.byKey(dsExtensionsProblemKey), findsNothing);
+    });
+  });
+
+  group('音效区（装音效包才有）', () {
+    testWidgets('装了音效包 → 页面出现「音效」区与它的档位', (WidgetTester tester) async {
+      final _FakeExtensionsPort port = _FakeExtensionsPort()
+        ..installed = <InstalledExtension>[_audioInstalled()];
+      await _pump(tester, port);
+
+      expect(find.text('音效'), findsWidgets);
+      expect(find.text('人声增强'), findsOneWidget);
+      expect(find.text('低音增强'), findsOneWidget);
+      expect(find.text('对白压缩'), findsOneWidget);
+    });
+
+    testWidgets('没装音效包 → 不出现音效区（不留空标题）', (WidgetTester tester) async {
+      final _FakeExtensionsPort port = _FakeExtensionsPort()
+        ..installed = <InstalledExtension>[_installed()];
+      await _pump(tester, port);
+
+      expect(find.text('对白压缩'), findsNothing);
+      expect(find.text('人声增强'), findsNothing);
     });
   });
 

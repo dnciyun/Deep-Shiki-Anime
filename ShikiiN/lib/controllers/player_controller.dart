@@ -405,6 +405,13 @@ class PlayerController {
   /// 用存下来的状态初始化（不触发落盘/下发）。
   void seedAudioFxState(AudioFxState state) => _audioFxState = state;
 
+  /// 宿主推过来的一整份状态：记下 + 立刻下发（主窗口改了扩展页选项时走这里）。
+  Future<void> setAudioFxState(AudioFxState state) async {
+    _audioFxState = state;
+    onAudioFxChanged?.call(state);
+    await applyAudioFx();
+  }
+
   /// 开/关音效总开关；没有选档时开 = 用第一档。
   Future<void> setAudioFxEnabled(bool enabled) async {
     if (!audioFxAvailable) return;

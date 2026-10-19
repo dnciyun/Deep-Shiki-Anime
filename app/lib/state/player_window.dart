@@ -180,6 +180,12 @@ const String kMethodSwitchFailed = 'switchFailed';
 /// 不带参数：子窗口自己按数据根重扫（它本来就有 `resolveDataRoot()`，与开窗时同一口径）。
 const String kMethodExtensionsChanged = 'extensionsChanged';
 
+/// 主窗口 → 播放窗口：音效状态（`{enabled, presetId, compression, loudness}`）。
+const String kMethodAudioFx = 'audioFx';
+
+/// 播放窗口 → 主窗口：右键切了音效，回推状态（扩展页是唯一配置入口）。
+const String kMethodAudioFxChanged = 'audioFxChanged';
+
 /// 观看进度上报的最小间隔（毫秒）：每前进这么多就报一条（第二十七轮）。
 ///
 /// 5 秒是"够用且不吵"的档：再密就是每帧一条跨窗口消息，再疏则关掉播放器那一下
@@ -202,6 +208,7 @@ class PlayerWindowArgs {
     this.episodeGroup,
     this.windowBounds,
     this.wakeChromeAtCenter,
+    this.audioFx,
   });
 
   final String streamUrl;
@@ -230,6 +237,12 @@ class PlayerWindowArgs {
   /// `null` = 没说（保持子窗口当前值）。
   final bool? wakeChromeAtCenter;
 
+  /// 音效状态（`enabled/presetId/compression/loudness`）。
+  ///
+  /// 配置入口在**扩展页**（主窗口），播放窗口只是执行方：开窗时随参数带过去，
+  /// 之后扩展页改一次推一条 `kMethodAudioFx`。
+  final Map<String, Object?>? audioFx;
+
   Map<String, Object?> toJson() => <String, Object?>{
     'type': kPlayerWindowType,
     'streamUrl': streamUrl,
@@ -243,6 +256,7 @@ class PlayerWindowArgs {
     if (windowBounds != null) 'windowBounds': windowBounds,
     // ignore: use_null_aware_elements
     if (wakeChromeAtCenter != null) 'wakeChromeAtCenter': wakeChromeAtCenter,
+    if (audioFx != null) 'audioFx': audioFx,
   };
 
   /// 带上落点（新建窗口用）。
@@ -255,6 +269,7 @@ class PlayerWindowArgs {
     episodeGroup: episodeGroup,
     windowBounds: bounds,
     wakeChromeAtCenter: wakeChromeAtCenter,
+    audioFx: audioFx,
   );
 
   String encode() => jsonEncode(toJson());
@@ -414,6 +429,12 @@ class PlayerWindowService {
   /// 最近一次推送过的「画面正中也唤起」（null = 还没推过）。
   bool? _lastWakeChromeAtCenter;
 
+  /// 播放窗口回推的音效状态（`kMethodAudioFxChanged` 的原始 JSON）。
+  ///
+  /// 装配根接它写进 `audioFxSettingsProvider`：扩展页是唯一配置入口，
+  /// 但右键切档也算用户改配置，状态必须回到那一份里。
+  void Function(Object? json)? onAudioFxChanged;
+
   /// 环境推送的退避重试次数（成功即清零；见 [pushArgs]）。
   int _envRetries = 0;
 
@@ -442,6 +463,9 @@ class PlayerWindowService {
             await _onEpisodeSelect(call.arguments);
           case kMethodWatchProgress:
             await _onWatchProgress(call.arguments);
+          case kMethodAudioFxChanged:
+            // 播放窗口右键切档后回推：扩展页是唯一配置入口，这里只把状态留下。
+            onAudioFxChanged?.call(call.arguments);
         }
         return null;
       });
@@ -733,6 +757,11 @@ class PlayerWindowService {
       _log('$method 失败：$e');
     }
   }
+
+  /// 把扩展页改好的音效状态推给**正在开着的**播放窗口（没开窗就是空操作：
+  /// 下次开窗会在启动参数里带上最新那份）。
+  Future<void> sendAudioFx(Map<String, Object?> state) =>
+      send(kMethodAudioFx, state);
 
   /// 「关闭播放窗口」= **收起来**（默认关闭语义，见 [kMethodHideSelf]）。
   ///

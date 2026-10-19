@@ -136,6 +136,8 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
     _deliver(widget.args);
     // 观看记录的第二十七轮改动：进度只有这一侧知道（主窗口没有播放信号）。
     _bindProgressReporting();
+    // 音效：右键切档后回推给主窗口（配置入口在扩展页）。
+    _bindAudioFxReporting();
 
     // 主窗口后续的请求/控制走这里。
     unawaited(widget.controller.setWindowMethodHandler((MethodCall call) async {
@@ -150,6 +152,9 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
         case kMethodArgs:
           final PlayerWindowArgs? args = PlayerWindowArgs.decode(_encodeArgs(call.arguments));
           if (args != null) _applyEnv(args);
+        case kMethodAudioFx:
+          // 扩展页改了音效：配置入口在主窗口，这里只负责立刻生效。
+          await _applyAudioFxState(call.arguments);
         case kMethodPlayOrPause:
           await ref.read(shikiin.playerProvider).playOrPause();
         case kMethodSeek:
@@ -536,6 +541,35 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
     if (eg != null) windowEpisodeGroupNotifier.value = decodeEpisodeGroup(eg);
     final bool? wake = args.wakeChromeAtCenter;
     if (wake != null) windowWakeChromeAtCenterNotifier.value = wake;
+    // 音效（配置入口在扩展页）：开窗/换集时随参数带过来的那份。
+    final Map<Object?, Object?>? fx = args.audioFx;
+    if (fx != null) unawaited(_applyAudioFxState(fx));
+  }
+
+  /// 把一份音效状态交给播放器（跨 isolate 传来的是 `Map<Object?, Object?>`）。
+  Future<void> _applyAudioFxState(Object? raw) async {
+    try {
+      await ref
+          .read(shikiin.playerProvider)
+          .setAudioFxState(shikiin.AudioFxState.fromJson(raw));
+      _trace('音效状态已应用：$raw');
+    } catch (e) {
+      _trace('应用音效状态失败（保持原样）：$e');
+    }
+  }
+
+  /// 播放窗口右键切档 → 回推给主窗口。
+  ///
+  /// 用户 2026-10-19：「扩展不一定只有开关」——音效的配置入口在扩展页，
+  /// 但右键切档也是用户改配置，状态必须回到扩展页那一份，否则两边漂移。
+  void _bindAudioFxReporting() {
+    try {
+      ref.read(shikiin.playerProvider).onAudioFxChanged = (shikiin.AudioFxState s) {
+        unawaited(_notifyParent(kMethodAudioFxChanged, s.toJson()));
+      };
+    } catch (e) {
+      _trace('音效回推绑定失败（右键切档只在本窗口生效）：$e');
+    }
   }
 
   void _deliver(PlayerWindowArgs args) {

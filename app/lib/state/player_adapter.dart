@@ -26,6 +26,7 @@ class PlayerWindowPort implements PlayerPort {
     required this.service,
     required this.readTokens,
     this.readWakeChromeAtCenter,
+    this.readAudioFx,
   });
 
   final PlayerWindowService service;
@@ -40,6 +41,9 @@ class PlayerWindowPort implements PlayerPort {
   /// 由 `app.dart` 的 `pushArgs` 现场推。null = 组件测试/内嵌宿主，按默认（关）处理。
   final bool Function()? readWakeChromeAtCenter;
 
+  /// 读音效状态（扩展页里配置的那一份）。null = 组件测试，不带。
+  final Map<String, Object?>? Function()? readAudioFx;
+
   @override
   bool get isAvailable => true;
 
@@ -53,6 +57,7 @@ class PlayerWindowPort implements PlayerPort {
       tokens: encodeTokens(readTokens()),
       episodeGroup: encodeEpisodeGroup(episodeGroup),
       wakeChromeAtCenter: readWakeChromeAtCenter?.call(),
+      audioFx: readAudioFx?.call(),
     ));
   }
 

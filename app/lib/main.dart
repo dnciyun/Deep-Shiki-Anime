@@ -44,6 +44,7 @@ import 'state/cover_cache.dart';
 import 'state/desktop_integration.dart';
 import 'state/engine_bootstrap.dart';
 import 'state/extension_schemes.dart';
+import 'state/audio_fx_settings.dart';
 import 'state/audio_presets.dart';
 import 'state/generic_packs.dart';
 import 'state/picture_menu_attach.dart';
@@ -337,6 +338,8 @@ Future<void> main(List<String> args) async {
           readTokens: () => ref.read(themeTokensProvider),
           // 第二十七轮：新开的那扇窗也要知道「画面正中也唤起」的当前设置。
           readWakeChromeAtCenter: () => ref.read(settingsProvider).wakeChromeAtCenter,
+          // 音效配置在扩展页（主窗口）里，开窗时把当前那份带过去。
+          readAudioFx: () => ref.read(audioFxSettingsProvider).toJson(),
         ),
       ),
       // 源 / 订阅 / 队列 / 主页追番表：core 真实现
@@ -407,6 +410,22 @@ Future<void> main(List<String> args) async {
     ],
   );
   liveContainer = container;
+
+  // 音效（`audio-pack`）：配置入口在扩展页，状态存主窗口；这里做两件事：
+  // 1) 启动时读一次盘，保证第一次开播放窗口就能带上；
+  // 2) 播放窗口右键切档回推的状态落到同一份 provider 里（扩展页看到的就是最新的）。
+  unawaited(container.read(audioFxSettingsProvider.notifier).ensureLoaded(runtime.supportDir));
+  playerWindow.onAudioFxChanged = (Object? raw) {
+    try {
+      unawaited(
+        container
+            .read(audioFxSettingsProvider.notifier)
+            .adopt(shikiin.AudioFxState.fromJson(raw)),
+      );
+    } catch (e) {
+      shikiin.diag.warn('audio-fx', '播放窗口回推音效状态失败：$e');
+    }
+  };
 
   // 扩展页装/卸/启停成功 → 立刻通知**已经打开的**播放窗口重扫超分方案
   // （1.1.0 第六十四轮，用户实测：「删除扩展后，超分里的 anime4k-mini 不会消失，

@@ -1,39 +1,38 @@
-/// 设置面板里的「音效」区：当前档 + 频响曲线 + 档位列表 + 两个全局强度。
+/// 扩展页里的「音效」配置区（用户 2026-10-19：「放设置里没用，就放扩展里」）。
 ///
-/// 为什么配置放这里而不是主窗口的扩展页：播放窗口是独立 Flutter 引擎，主窗口读不到
-/// 这里的运行状态（用户 2026-10-19 定的入口是「右键 + 扩展的配置」，与字幕样式预设
-/// 同一处落地；扩展页只显示「装了什么」）。
+/// 位置为什么在扩展页而不是播放器设置面板：
+/// * 音效是**扩展包带来的功能**，装没装、有几档，本来就该在扩展页看得到；
+/// * 配置入口在主窗口，播放窗口（独立引擎）只负责执行与右键快捷切换——
+///   两边各存一份必然漂移，所以主窗口是唯一写入口。
 library;
 
 import 'package:flutter/material.dart';
+import 'package:shikiin/shikiin.dart' as shikiin;
 
-import '../models/audio_fx.dart';
-import '../models/theme_tokens.dart';
+import '../theme/tokens.dart';
 
-/// 「音效」区：空包时调用方不该渲染它（这一项在没装包时整个不出现）。
+/// 音效区：当前档 + 频响曲线 + 档位 + 两个全局强度。
+///
+/// 没有音效包时调用方**不渲染它**（整区不出现）。
 class AudioFxSection extends StatelessWidget {
   const AudioFxSection({
     super.key,
     required this.tokens,
     required this.presets,
     required this.state,
-    required this.onPreset,
-    required this.onCompression,
-    required this.onLoudness,
+    required this.onChange,
   });
 
-  final ThemeTokens tokens;
-  final List<AudioFxPreset> presets;
-  final AudioFxState state;
+  final DsTokens tokens;
+  final List<shikiin.AudioFxPreset> presets;
+  final shikiin.AudioFxState state;
 
-  /// `null` = 原声（关总开关）。
-  final ValueChanged<String?> onPreset;
-  final ValueChanged<int> onCompression;
-  final ValueChanged<int> onLoudness;
+  /// 页面上任何一处改动都走它：调用方负责落盘 + 推给播放窗口。
+  final ValueChanged<shikiin.AudioFxState> onChange;
 
-  AudioFxPreset? get _current {
+  shikiin.AudioFxPreset? get _current {
     if (!state.enabled) return null;
-    for (final AudioFxPreset preset in presets) {
+    for (final shikiin.AudioFxPreset preset in presets) {
       if (preset.id == state.presetId) return preset;
     }
     return null;
@@ -41,39 +40,37 @@ class AudioFxSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ThemeTokens t = tokens;
-    final AudioFxPreset? current = _current;
+    final DsTokens t = tokens;
+    final shikiin.AudioFxPreset? current = _current;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Row(
           children: <Widget>[
-            Expanded(
-              child: Text(
-                '音效',
-                style: TextStyle(
-                  color: t.text,
-                  fontSize: t.fontSize + 2,
-                  fontWeight: FontWeight.w600,
-                  height: 1.25,
-                ),
+            Icon(Icons.graphic_eq_rounded, size: 16, color: t.accent),
+            const SizedBox(width: 8),
+            Text(
+              '音效',
+              style: TextStyle(
+                color: t.text,
+                fontSize: DsTypeScale.secondary,
+                fontWeight: FontWeight.w600,
               ),
             ),
+            const Spacer(),
             Text(
               current == null ? '原声' : current.name,
-              style: TextStyle(color: t.text2, fontSize: t.fontSizeSmall, height: 1.0),
+              style: TextStyle(color: t.text2, fontSize: DsTypeScale.caption),
             ),
           ],
         ),
-        SizedBox(height: t.spacing),
-        // 频响曲线：10 个点按对数频率等间距画（31Hz → 16kHz）。
+        const SizedBox(height: 10),
         SizedBox(
-          height: 64,
+          height: 56,
           child: CustomPaint(
             painter: AudioFxCurvePainter(
               bands: <String, double>{
-                for (final String band in kAudioFxBands)
+                for (final String band in shikiin.kAudioFxBands)
                   band: current?.bands[band] ?? 0,
               },
               line: t.accent,
@@ -82,34 +79,48 @@ class AudioFxSection extends StatelessWidget {
             child: const SizedBox.expand(),
           ),
         ),
-        SizedBox(height: t.spacing),
+        const SizedBox(height: 10),
         Wrap(
-          spacing: t.spacing,
-          runSpacing: t.spacing,
+          spacing: 8,
+          runSpacing: 8,
           children: <Widget>[
             _chip(t, '原声',
                 key: const ValueKey<String>('audio-fx-off'),
-                selected: state.enabled == false, onTap: () => onPreset(null)),
-            for (final AudioFxPreset preset in presets)
+                selected: !state.enabled,
+                onTap: () => onChange(state.copyWith(enabled: false, clearPreset: true))),
+            for (final shikiin.AudioFxPreset preset in presets)
               _chip(
                 t,
                 preset.name,
                 key: ValueKey<String>('audio-fx-preset-${preset.id}'),
                 selected: state.enabled && state.presetId == preset.id,
-                onTap: () => onPreset(preset.id),
+                onTap: () => onChange(state.copyWith(enabled: true, presetId: preset.id)),
               ),
           ],
         ),
-        SizedBox(height: t.spacing * 1.5),
-        _levelRow(t, '对白压缩', 'compression', state.compression, onCompression),
-        SizedBox(height: t.spacing),
-        _levelRow(t, '音量均衡', 'loudness', state.loudness, onLoudness),
+        const SizedBox(height: 12),
+        _levelRow(t, '对白压缩', 'compression', state.compression,
+            (int v) => onChange(state.copyWith(compression: v))),
+        const SizedBox(height: 8),
+        _levelRow(t, '音量均衡', 'loudness', state.loudness,
+            (int v) => onChange(state.copyWith(loudness: v))),
+        if (current != null && current.description.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 8),
+          Text(
+            current.description,
+            style: TextStyle(
+              color: t.text3,
+              fontSize: DsTypeScale.caption,
+              height: 1.4,
+            ),
+          ),
+        ],
       ],
     );
   }
 
   Widget _chip(
-    ThemeTokens t,
+    DsTokens t,
     String label, {
     required bool selected,
     required VoidCallback onTap,
@@ -121,7 +132,7 @@ class AudioFxSection extends StatelessWidget {
           onTap: onTap,
           child: Container(
             key: key,
-            padding: EdgeInsets.symmetric(horizontal: t.spacing * 1.5, vertical: t.spacing),
+            padding: EdgeInsets.symmetric(horizontal: t.spacing, vertical: 6),
             decoration: BoxDecoration(
               color: selected ? t.accent : t.sunken,
               borderRadius: BorderRadius.circular(t.radiusPill),
@@ -129,9 +140,8 @@ class AudioFxSection extends StatelessWidget {
             child: Text(
               label,
               style: TextStyle(
-                color: selected ? t.raised : t.text,
-                fontSize: t.fontSizeSmall,
-                height: 1.2,
+                color: selected ? t.onAccent : t.text,
+                fontSize: DsTypeScale.caption,
               ),
             ),
           ),
@@ -139,22 +149,22 @@ class AudioFxSection extends StatelessWidget {
       );
 
   Widget _levelRow(
-    ThemeTokens t,
+    DsTokens t,
     String label,
     String id,
     int value,
-    ValueChanged<int> onChanged,
+    ValueChanged<int> onChange,
   ) =>
       Row(
         children: <Widget>[
           SizedBox(
-            width: 64,
+            width: 68,
             child: Text(label,
-                style: TextStyle(color: t.text, fontSize: t.fontSizeSmall, height: 1.4)),
+                style: TextStyle(color: t.text, fontSize: DsTypeScale.caption)),
           ),
           Expanded(
             child: Wrap(
-              spacing: t.spacing / 1.5,
+              spacing: 6,
               children: <Widget>[
                 for (int level = 0; level <= 3; level++)
                   _chip(
@@ -162,7 +172,7 @@ class AudioFxSection extends StatelessWidget {
                     const <String>['关', '轻', '中', '强'][level],
                     key: ValueKey<String>('audio-fx-level-$id-$level'),
                     selected: value == level,
-                    onTap: () => onChanged(level),
+                    onTap: () => onChange(level),
                   ),
               ],
             ),
@@ -171,11 +181,10 @@ class AudioFxSection extends StatelessWidget {
       );
 }
 
-/// 频响曲线：横轴 31Hz→16kHz（等间距 = 对数刻度），纵轴 ±12 dB。
+/// 频响曲线：横轴 31Hz→16kHz 等间距（对数刻度），纵轴 ±12 dB。
 class AudioFxCurvePainter extends CustomPainter {
   AudioFxCurvePainter({required this.bands, required this.line, required this.grid});
 
-  /// 键 = `b31`..`b16k`；缺项按 0。
   final Map<String, double> bands;
   final Color line;
   final Color grid;
@@ -186,15 +195,15 @@ class AudioFxCurvePainter extends CustomPainter {
     final Paint gridPaint = Paint()
       ..color = grid.withValues(alpha: 0.6)
       ..strokeWidth = 1;
-    // 三条参考线：-12 / 0 / +12 dB。
     for (final double db in <double>[-12, 0, 12]) {
       final double y = _yFor(db, size.height);
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
     final Path path = Path();
-    for (int i = 0; i < kAudioFxBands.length; i++) {
-      final double gain = (bands[kAudioFxBands[i]] ?? 0).clamp(-12, 12).toDouble();
-      final double x = size.width * (i / (kAudioFxBands.length - 1));
+    for (int i = 0; i < shikiin.kAudioFxBands.length; i++) {
+      final double gain =
+          (bands[shikiin.kAudioFxBands[i]] ?? 0).clamp(-12, 12).toDouble();
+      final double x = size.width * (i / (shikiin.kAudioFxBands.length - 1));
       final double y = _yFor(gain, size.height);
       if (i == 0) {
         path.moveTo(x, y);
@@ -212,7 +221,6 @@ class AudioFxCurvePainter extends CustomPainter {
     );
   }
 
-  /// 0 dB 在中间；+12 贴顶、-12 贴底（留 2px 不压边）。
   double _yFor(double db, double height) {
     final double half = (height - 4) / 2;
     return height / 2 - (db.clamp(-12, 12) / 12) * half;

@@ -201,6 +201,28 @@ class AudioFxState {
   String toString() =>
       'AudioFxState(enabled=$enabled, preset=$presetId, compression=$compression, '
       'loudness=$loudness)';
+
+  /// 跨窗口传值用（主窗口 → 播放窗口走 args / method channel，都是纯 JSON）。
+  Map<String, Object?> toJson() => <String, Object?>{
+        'enabled': enabled,
+        if (presetId != null) 'presetId': presetId,
+        'compression': compression,
+        'loudness': loudness,
+      };
+
+  static AudioFxState fromJson(Object? raw) {
+    if (raw is! Map) return const AudioFxState();
+    final Object? enabled = raw['enabled'];
+    final Object? presetId = raw['presetId'];
+    final Object? compression = raw['compression'];
+    final Object? loudness = raw['loudness'];
+    return AudioFxState(
+      enabled: enabled is bool && enabled,
+      presetId: presetId is String && presetId.isNotEmpty ? presetId : null,
+      compression: compression is int ? compression.clamp(0, 3) : 0,
+      loudness: loudness is int ? loudness.clamp(0, 3) : 0,
+    );
+  }
 }
 
 /// 按状态挑出当前该下发的 `af` 串：关着 / 档位不存在 → 空串（原声）。

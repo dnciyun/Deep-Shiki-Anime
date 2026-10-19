@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
-import '../models/audio_fx.dart';
 import '../models/subtitle_preset.dart';
 import '../models/subtitle_style.dart';
 import '../models/theme_tokens.dart';
-import 'audio_fx_panel.dart';
 import 'styled_track.dart';
 
-/// 设置面板（极简）：**音量** / **音效**（装包才有）/ **字幕样式**。
+/// 设置面板（极简）：**音量** 与 **字幕样式**（＋宿主给的样式预设）。
 /// 主题/快捷键/文件关联/界面 Tab、播放结束行为、音量增强、附加按钮全部已删。
+///
+/// 音效（`audio-pack`）的配置**不在这里**：用户 2026-10-19 明确要求放到「扩展」页
+/// （主窗口），见 `app/lib/ui/extensions_page.dart` 的音效区。
 class SettingsPanel extends StatelessWidget {
   final ThemeTokens tokens;
   final double volume;
@@ -21,13 +22,6 @@ class SettingsPanel extends StatelessWidget {
   /// 预设的非致命提示（目前是「字体没加载上」）：显示在预设区下面，不挡预设。
   final List<String> presetNotes;
 
-  /// 音效档位（`audio-pack`）；空 = 不显示「音效」这一区。
-  final List<AudioFxPreset> audioPresets;
-  final AudioFxState audioFxState;
-  final ValueChanged<String?> onAudioFxPreset;
-  final ValueChanged<int> onAudioFxCompression;
-  final ValueChanged<int> onAudioFxLoudness;
-
   /// 可选关闭按钮（宿主也可用 Esc / 点外部关闭）。
   final VoidCallback? onClose;
 
@@ -40,16 +34,8 @@ class SettingsPanel extends StatelessWidget {
     required this.onSubtitleStyle,
     this.presets = const <SubtitlePreset>[],
     this.presetNotes = const <String>[],
-    this.audioPresets = const <AudioFxPreset>[],
-    this.audioFxState = const AudioFxState(),
-    this.onAudioFxPreset = _noPreset,
-    this.onAudioFxCompression = _noLevel,
-    this.onAudioFxLoudness = _noLevel,
     this.onClose,
   });
-
-  static void _noPreset(String? _) {}
-  static void _noLevel(int _) {}
 
   /// 按包名分组（保持 presets 原顺序；没有包名的归到空 key）。
   ///
@@ -115,22 +101,6 @@ class SettingsPanel extends StatelessWidget {
                 onChanged: (v) => onVolume(v * 100),
               ),
               SizedBox(height: t.spacing * 3),
-
-              // ── 音效（`audio-pack`；没装包时整区不出现）──────────────────
-              //
-              // 放在**音量下面**而不是面板最底：用户 2026-10-19 报「看不到音效包的
-              // 配置选项」——面板 480 高，排在样式预设/字幕样式之后就得滚才能看见。
-              if (audioPresets.isNotEmpty) ...[
-                AudioFxSection(
-                  tokens: t,
-                  presets: audioPresets,
-                  state: audioFxState,
-                  onPreset: onAudioFxPreset,
-                  onCompression: onAudioFxCompression,
-                  onLoudness: onAudioFxLoudness,
-                ),
-                SizedBox(height: t.spacing * 3),
-              ],
 
               // ── 样式预设（宿主从扩展包扫出来的；没有就不显示这一区）──────
               if (presets.isNotEmpty) ...[
