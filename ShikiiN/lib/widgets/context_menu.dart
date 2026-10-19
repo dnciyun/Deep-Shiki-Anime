@@ -57,6 +57,17 @@ class ContextEntry {
   }) =>
       ContextEntry._(null, label, icon, elementId, children);
 
+  /// 普通命令条目：**不占 [PlayerAction]**，点击时按 [elementId] 交给
+  /// `ContextMenuOverlay.onCommand`。
+  ///
+  /// 为什么需要它：`PlayerAction` 的取值被 `neo_guard_test` 钉死为「契约保留的 19 个」，
+  /// 临时 / 探针能力（例如 NV-VSR 开关）不该为了一个菜单项去改那份契约。
+  const ContextEntry.command({
+    required String label,
+    required IconData icon,
+    required String elementId,
+  }) : this._(null, label, icon, elementId, null);
+
   /// 分组分隔线（不可点击）。
   const ContextEntry.divider() : this._(null, '', Icons.remove, '', null, isDivider: true);
 
@@ -81,6 +92,10 @@ List<ContextEntry> defaultContextEntries({
   bool alwaysOnTop = false,
   bool fullscreen = false,
   bool pip = false,
+  /// 本构建有没有 NV-VSR 能力（没有就不显示这一项）。
+  bool nvVsrAvailable = false,
+  /// VSR 当前开着还是关着（决定文案是「关闭」还是「开启」）。
+  bool nvVsrEnabled = false,
 }) {
   final List<UpscaleScheme> schemes = upscaleSchemes ?? builtinUpscaleSchemes();
   return [
@@ -134,6 +149,15 @@ List<ContextEntry> defaultContextEntries({
         icon: Icons.tune_rounded,
         elementId: 'contextMenu.picture',
         children: pictureSubmenuItems(pictureMenu),
+      ),
+    // NV-VSR（NVIDIA 超分）：只在「本构建真有这条滤镜能力」时出现，直接一行开关。
+    // 它和「超分」子菜单里的 Anime4K 方案是叠加关系（vf 滤镜链 vs glsl-shaders），
+    // 所以放在这一层而不是塞进超分子菜单里。
+    if (nvVsrAvailable)
+      ContextEntry.command(
+        label: nvVsrEnabled ? '关闭 NV-VSR' : '开启 NV-VSR',
+        icon: nvVsrEnabled ? Icons.hd_rounded : Icons.hd_outlined,
+        elementId: 'contextMenu.nvVsr',
       ),
     ContextEntry.action(
       PlayerAction.toggleStats,
@@ -218,6 +242,9 @@ class ContextMenuOverlay extends StatefulWidget {
   final ValueChanged<PlayerAction> onAction;
   final void Function(String elementId, SubmenuItem item)? onSubmenuSelect;
 
+  /// 命令条目（[ContextEntry.command]，不占 [PlayerAction]）被点时回调 [ContextEntry.elementId]。
+  final ValueChanged<String>? onCommand;
+
   /// 子菜单向左弹（贴近屏幕右缘时由宿主决定）。
   final bool submenuOnLeft;
 
@@ -230,6 +257,7 @@ class ContextMenuOverlay extends StatefulWidget {
     required this.entries,
     required this.onAction,
     this.onSubmenuSelect,
+    this.onCommand,
     this.submenuOnLeft = false,
     this.maxHeight,
   });
@@ -292,8 +320,11 @@ class _ContextMenuOverlayState extends State<ContextMenuOverlay> {
             icon: e.icon,
             label: e.displayLabel,
             tokens: t,
-            // 空子菜单条目（如未注入轨道列表）：渲染成不可点的行，别让 action! 抛异常。
-            onTap: e.action == null ? () {} : () => widget.onAction(e.action!),
+            // 三种行：占动作的（onAction）/ 命令条目（onCommand）/ 都没有（不可点，
+            // 例如未注入轨道列表的空子菜单）。别让 action! 抛异常。
+            onTap: e.action != null
+                ? () => widget.onAction(e.action!)
+                : (widget.onCommand == null ? () {} : () => widget.onCommand!(e.elementId)),
           ),
     ];
 

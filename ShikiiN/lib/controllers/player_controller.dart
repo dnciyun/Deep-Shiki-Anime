@@ -58,7 +58,7 @@ class PlayerController {
     await player.open(Media(item.path));
     // 调试开关（见 models/debug_mpv_vf.dart）：只有设了 DSANIMA_MPV_VF 才下发，
     // 且用 `set` 而不是 `add` —— 每次 open 都下发也不会把滤镜叠加成一串。
-    await _applyDebugMpvVf();
+    await applyNvVsr();
     if (target == null) return;
     // 等不到（直播没有时长、或者超时）也**照试一次**：seek 失败只记日志，
     // 绝不让"开播"本身失败。
@@ -265,27 +265,53 @@ class PlayerController {
     }
   }
 
-  /// 调试：把 `DSANIMA_MPV_VF`（环境变量或程序目录下的同名 txt）指定的滤镜挂到播放链上。
+  /// 本构建有没有 NV-VSR 能力：滤镜串来自「环境变量 / 程序目录 txt / 编译期烘焙」三选一
+  /// （见 [debugMpvVf]）。没有 = 右键菜单不显示这一项，也不下发任何命令。
+  String get nvVsrSpec => debugMpvVf(fileText: debugMpvVfFile());
+
+  bool get nvVsrAvailable => nvVsrSpec.isNotEmpty;
+
+  /// VSR 当前是否开着。**没有能力时恒为 false**（菜单据此不显示）。
+  bool get nvVsrEnabled => nvVsrAvailable && _nvVsrEnabled;
+  bool _nvVsrEnabled = true;
+
+  /// 开关落盘回调（由宿主接 Hive；不注入 = 不持久化，只在本次会话有效）。
+  void Function(bool enabled)? onNvVsrChanged;
+
+  /// 用存下来的值初始化（不触发落盘/下发）。
+  void seedNvVsrEnabled(bool enabled) => _nvVsrEnabled = enabled;
+
+  /// 开/关 VSR：改内存值 → 落盘 → 立刻下发（用户点右键菜单时）。
+  Future<void> setNvVsrEnabled(bool enabled) async {
+    if (!nvVsrAvailable) return;
+    _nvVsrEnabled = enabled;
+    onNvVsrChanged?.call(enabled);
+    await applyNvVsr();
+  }
+
+  /// 按当前开关状态把 `vf` 链下发一次（开播后 / 用户切换后都走这里）。
   ///
   /// 只服务「新 libmpv 的 `d3d11vpp`（NVIDIA VSR）在 ANGLE/GLES 这条链上能不能用」
-  /// 这一次验证（docs/specs/2026-10-19-nv-vsr-spike.md）。顺手把判定依据写进日志：
-  /// `mpv-version`（证明 dll 真的换了）、`current-gpu-context`、`hwdec-current`。
+  /// 这一条，判定依据都写进 `[debug-vf]` 日志：`mpv-version`（dll 换成功了吗）、
+  /// `vf-now`（滤镜到底在不在链上）、`current-gpu-context`、`hwdec-current`。
   ///
-  /// 没启用时也要留一行：第一次真机验证就是「双击 exe → 环境变量没进进程 → 开关静默
+  /// 没有能力时也要留一行：第一次真机验证就是「双击 exe → 环境变量没进进程 → 开关静默
   /// 不生效」，白白多跑一轮。每个播放器进程只写这一行。
-  Future<void> _applyDebugMpvVf() async {
-    final String spec = debugMpvVf(fileText: debugMpvVfFile());
+  Future<void> applyNvVsr() async {
+    final String spec = nvVsrSpec;
     if (spec.isEmpty) {
       if (!_debugVfLogged) {
         _debugVfLogged = true;
         diag.info(
           'debug-vf',
-          '未启用（既没有 $kDebugMpvVfEnvVar 环境变量，也没有 ${defaultDebugMpvVfPath()}）',
+          '未启用（既没有 $kDebugMpvVfEnvVar 环境变量，也没有 ${defaultDebugMpvVfPath()}，'
+          '本构建也没有编译期烘焙值）',
         );
       }
       return;
     }
-    final int code = await runMpvCommand(<String>['set', 'vf', spec]);
+    final bool on = _nvVsrEnabled;
+    final int code = await runMpvCommand(nvVsrVfCommand(spec, enabled: on));
     // ⚠️ 只看 `set` 的返回码不够：media_kit 的 command() 不把 mpv 的「命令失败」
     // 当成异常，`set=0` 也可能是假的。回读 `vf` 才知道这条滤镜到底在不在链上。
     final String vfNow = await readMpvProperty('vf');
@@ -297,7 +323,7 @@ class PlayerController {
     final String height = await readMpvProperty('video-params/h');
     diag.info(
       'debug-vf',
-      'vf="$spec" set=$code vf-now="$vfNow" mpv-version="$version" '
+      'enabled=$on vf="$spec" set=$code vf-now="$vfNow" mpv-version="$version" '
       'gpu-context="$context" hwdec="$hwdec" pixelformat="$pixelFormat" size=${width}x$height',
     );
   }

@@ -7,13 +7,15 @@ import 'package:shikiin/models/theme_tokens.dart';
 import 'package:shikiin/models/upscale_scheme.dart';
 import 'package:shikiin/widgets/context_menu.dart';
 
-Widget _host(List<ContextEntry> entries, {ValueChanged<PlayerAction>? onAction}) => MaterialApp(
+Widget _host(List<ContextEntry> entries, {ValueChanged<PlayerAction>? onAction, ValueChanged<String>? onCommand}) =>
+    MaterialApp(
       home: Scaffold(
         body: ContextMenuOverlay(
           tokens: ThemeTokens.fallback,
           entries: entries,
           onAction: onAction ?? (_) {},
           onSubmenuSelect: (_, _) {},
+          onCommand: onCommand,
         ),
       ),
     );
@@ -124,5 +126,41 @@ void main() {
     ]));
     await tester.pumpAndSettle();
     expect(find.byType(Divider), findsOneWidget);
+  });
+
+  group('NV-VSR 开关行（契约外的探针能力）', () {
+    test('没有能力 → 菜单里没有这一项', () {
+      final entries = defaultContextEntries();
+      expect(entries.any((e) => e.elementId == 'contextMenu.nvVsr'), isFalse);
+    });
+
+    test('有能力且开着 → 文案是「关闭 NV-VSR」', () {
+      final entry = defaultContextEntries(nvVsrAvailable: true, nvVsrEnabled: true)
+          .firstWhere((e) => e.elementId == 'contextMenu.nvVsr');
+      expect(entry.displayLabel, '关闭 NV-VSR');
+      // 它必须是**命令条目**：不能占 PlayerAction（那份契约被 neo_guard 钉死为 19 项）。
+      expect(entry.action, isNull);
+      expect(entry.hasSubmenu, isFalse);
+    });
+
+    test('有能力但关着 → 文案是「开启 NV-VSR」', () {
+      final entry = defaultContextEntries(nvVsrAvailable: true, nvVsrEnabled: false)
+          .firstWhere((e) => e.elementId == 'contextMenu.nvVsr');
+      expect(entry.displayLabel, '开启 NV-VSR');
+    });
+
+    testWidgets('点它 → onCommand 收到 elementId（不走 onAction）', (tester) async {
+      PlayerAction? fired;
+      String? command;
+      await tester.pumpWidget(_host(
+        defaultContextEntries(nvVsrAvailable: true, nvVsrEnabled: true),
+        onAction: (a) => fired = a,
+        onCommand: (id) => command = id,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('关闭 NV-VSR'));
+      expect(command, 'contextMenu.nvVsr');
+      expect(fired, isNull, reason: '命令条目不该落进 PlayerAction 分支');
+    });
   });
 }

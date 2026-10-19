@@ -88,4 +88,20 @@ void main() {
       expect(debugMpvVfFile('Z:/definitely/not/here/DSANIMA_MPV_VF.txt'), isEmpty);
     });
   });
+
+  group('nvVsrVfCommand（开/关下发什么）', () {
+    test('开 → set vf <滤镜串>', () {
+      expect(
+        nvVsrVfCommand('d3d11vpp=format=nv12:scale=2:scaling-mode=nvidia', enabled: true),
+        <String>['set', 'vf', 'd3d11vpp=format=nv12:scale=2:scaling-mode=nvidia'],
+      );
+    });
+
+    test('关 → set vf 空串（清空链，不是发一条假的滤镜）', () {
+      expect(
+        nvVsrVfCommand('d3d11vpp=format=nv12:scale=2:scaling-mode=nvidia', enabled: false),
+        <String>['set', 'vf', ''],
+      );
+    });
+  });
 }

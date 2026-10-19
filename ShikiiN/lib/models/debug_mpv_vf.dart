@@ -27,6 +27,9 @@ const String kDebugMpvVfEnvVar = 'DSANIMA_MPV_VF';
 /// 程序目录下的文件名：内容同上（与环境变量同时存在时环境变量优先）。
 const String kDebugMpvVfFileName = 'DSANIMA_MPV_VF.txt';
 
+/// VSR 开关的持久化键（播放器 store；右键菜单里的「关闭/开启 NV-VSR」）。
+const String kNvVsrEnabledStoreKey = 'nv-vsr-enabled';
+
 /// 编译期烘焙值（`flutter build windows --release --dart-define=DSANIMA_MPV_VF=...`）。
 ///
 /// 用途：探针版要「双击 exe 就生效」，不能依赖环境变量或目录里的文件；正式版不带这个
@@ -72,3 +75,10 @@ String _clean(String raw) {
   if (spec.contains('\n') || spec.contains('\r')) return '';
   return spec;
 }
+
+/// 开/关这条滤镜链要下发的 mpv 命令（`set vf` 用空串 = 清空链）。
+///
+/// 提成纯函数是为了能离线测：`set vf` 的两种取值（滤镜串 / 空串）一旦写反，
+/// 表现是「点了关闭画面没变」而不是报错，很难在真机上定位。
+List<String> nvVsrVfCommand(String spec, {required bool enabled}) =>
+    <String>['set', 'vf', enabled ? spec : ''];

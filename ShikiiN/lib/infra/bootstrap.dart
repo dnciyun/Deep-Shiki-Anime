@@ -13,6 +13,7 @@ import '../controllers/anime4k_controller.dart';
 import '../controllers/player_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../models/app_settings.dart';
+import '../models/debug_mpv_vf.dart';
 import '../models/picture_menu.dart';
 import '../models/player_request.dart';
 import '../models/theme_tokens.dart';
@@ -98,6 +99,11 @@ class AppRuntime {
     final PlayerController p = PlayerController();
     // libmpv warn/error/fatal → Diag（原生崩溃前最值钱线索）。跟随创建时机挂。
     installMpvLogBridge(p.player.stream.log, diag);
+    // NV-VSR 开关（右键菜单里那一行）：上次的选择从 store 读回来，改动回写。
+    // 本构建没有那条滤镜能力时这些值不参与任何下发（见 PlayerController.nvVsrAvailable）。
+    final Object? nvVsrSaved = store.get(kNvVsrEnabledStoreKey);
+    if (nvVsrSaved is bool) p.seedNvVsrEnabled(nvVsrSaved);
+    p.onNvVsrChanged = (bool on) => store.put(kNvVsrEnabledStoreKey, on);
     return p;
   }
 

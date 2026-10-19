@@ -1191,6 +1191,8 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
       alwaysOnTop: _alwaysOnTop,
       fullscreen: fs,
       pip: _pip,
+      nvVsrAvailable: player.nvVsrAvailable,
+      nvVsrEnabled: player.nvVsrEnabled,
     );
     final overlay = Overlay.of(context);
     late OverlayEntry entry;
@@ -1201,6 +1203,7 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
         entries: entries,
         onAction: _dispatch,
         onSubmenuSelect: _onSubmenuSelect,
+        onCommand: _onMenuCommand,
         onDismiss: () {
           if (entry.mounted) entry.remove();
         },
@@ -1230,6 +1233,20 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
       ),
     );
     overlay.insert(entry);
+  }
+
+  /// 命令条目（不占 [PlayerAction] 的菜单行，见 `ContextEntry.command`）。
+  void _onMenuCommand(String elementId) {
+    if (elementId == 'contextMenu.nvVsr') {
+      unawaited(_toggleNvVsr());
+    }
+  }
+
+  /// 开/关 NV-VSR，并把结果落到 store（下次开窗口还是上次的选择）。
+  Future<void> _toggleNvVsr() async {
+    final PlayerController player = ref.read(playerProvider);
+    await player.setNvVsrEnabled(!player.nvVsrEnabled);
+    if (mounted) setState(() {}); // 菜单文案「关闭/开启」跟着换
   }
 
   void _onSubmenuSelect(String elementId, SubmenuItem item) {
@@ -1624,6 +1641,7 @@ class _MenuHost extends StatefulWidget {
   final List<ContextEntry> entries;
   final void Function(PlayerAction) onAction;
   final void Function(String, SubmenuItem) onSubmenuSelect;
+  final ValueChanged<String>? onCommand;
   final VoidCallback onDismiss;
 
   const _MenuHost({
@@ -1633,6 +1651,7 @@ class _MenuHost extends StatefulWidget {
     required this.onAction,
     required this.onSubmenuSelect,
     required this.onDismiss,
+    this.onCommand,
   });
 
   @override
@@ -1651,6 +1670,15 @@ class _MenuHostState extends State<_MenuHost> with SingleTickerProviderStateMixi
     await _c.reverse();
     if (a != null) widget.onAction(a);
     widget.onDismiss();
+  }
+
+  /// 命令条目：先收起菜单再执行（执行里可能要发 mpv 命令，别让菜单动画卡着）。
+  Future<void> _closeCommand(String elementId) async {
+    if (_closing) return;
+    _closing = true;
+    await _c.reverse();
+    widget.onDismiss();
+    widget.onCommand?.call(elementId);
   }
 
   @override
@@ -1690,6 +1718,7 @@ class _MenuHostState extends State<_MenuHost> with SingleTickerProviderStateMixi
               maxHeight: maxH,
               submenuOnLeft: widget.position.dx > screen.width * 0.55,
               onAction: (a) => _close(a),
+              onCommand: (eid) => _closeCommand(eid),
               onSubmenuSelect: (eid, item) {
                 _close();
                 widget.onSubmenuSelect(eid, item);
