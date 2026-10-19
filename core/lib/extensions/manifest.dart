@@ -44,8 +44,11 @@
 library;
 
 import '../update/version.dart';
+import 'issues.dart';
 import 'package_guard.dart';
 import 'picture.dart';
+
+export 'issues.dart';
 
 /// 已知扩展类型 → 界面上的中文名。
 ///
@@ -221,19 +224,7 @@ class ExtensionManifest {
   Map<String, Object?> toJson() => raw;
 }
 
-/// 一条**致命**问题（装了也用不了 / 根本不该装）或**非致命**提醒。
-class ManifestIssue {
-  const ManifestIssue(this.field, this.message);
-
-  /// 出问题的字段路径（`files[2].path`），日志与界面都用它定位。
-  final String field;
-
-  /// 给用户看的一句话（中文，带"怎么办"）。
-  final String message;
-
-  @override
-  String toString() => '$field: $message';
-}
+// （`ManifestIssue` 定义在 `issues.dart`；本文件顶部 `export 'issues.dart';` 保持旧导入可用。）
 
 /// 一次清单解析的结果。[ok] 为 true 才能装。
 class ManifestParseResult {
