@@ -33,6 +33,9 @@ class PlayerController {
   String? _currentPath;
   String? get currentPath => _currentPath;
 
+  /// 调试开关「没启用」只记一次日志（每个播放器进程一条，不刷屏）。
+  bool _debugVfLogged = false;
+
   /// 当前媒体是否已有带尺寸的视频轨（纯音频/未加载 → false）。
   bool get hasVideo =>
       (player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0;
@@ -262,14 +265,26 @@ class PlayerController {
     }
   }
 
-  /// 调试：把 `DSANIMA_MPV_VF` 指定的滤镜挂到播放链上（默认什么都不做）。
+  /// 调试：把 `DSANIMA_MPV_VF`（环境变量或程序目录下的同名 txt）指定的滤镜挂到播放链上。
   ///
   /// 只服务「新 libmpv 的 `d3d11vpp`（NVIDIA VSR）在 ANGLE/GLES 这条链上能不能用」
   /// 这一次验证（docs/specs/2026-10-19-nv-vsr-spike.md）。顺手把判定依据写进日志：
   /// `mpv-version`（证明 dll 真的换了）、`current-gpu-context`、`hwdec-current`。
+  ///
+  /// 没启用时也要留一行：第一次真机验证就是「双击 exe → 环境变量没进进程 → 开关静默
+  /// 不生效」，白白多跑一轮。每个播放器进程只写这一行。
   Future<void> _applyDebugMpvVf() async {
-    final String spec = debugMpvVf();
-    if (spec.isEmpty) return;
+    final String spec = debugMpvVf(fileText: debugMpvVfFile());
+    if (spec.isEmpty) {
+      if (!_debugVfLogged) {
+        _debugVfLogged = true;
+        diag.info(
+          'debug-vf',
+          '未启用（既没有 $kDebugMpvVfEnvVar 环境变量，也没有 ${defaultDebugMpvVfPath()}）',
+        );
+      }
+      return;
+    }
     final int code = await runMpvCommand(<String>['set', 'vf', spec]);
     final String version = await readMpvProperty('mpv-version');
     final String context = await readMpvProperty('current-gpu-context');

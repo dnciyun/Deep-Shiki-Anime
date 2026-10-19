@@ -3,10 +3,15 @@
 /// 背景：`docs/specs/2026-10-19-nv-vsr-spike.md` 已证明 NVIDIA RTX VSR 在 mpv CLI
 /// （`vo=gpu` + `gpu-context=d3d11`）上能实时跑；但我们的播放器走 media_kit 的
 /// ANGLE/GLES 纹理链，`d3d11vpp` 输出的 D3D11 纹理能不能被这条链接住**没有验证过**。
-/// 验证需要：换一个带 NVIDIA 模式的 libmpv，再在 app 里下发一次真实的 `vf`。
 ///
-/// 所以这个开关只做一件事：把环境变量 [_envVar] 里的 mpv `vf` 串读出来。
-/// **没有这个变量 = 空串 = 调用方什么都不做**，行为与之前逐字一致。
+/// 来源有两个（优先级从高到低）：
+/// 1. 环境变量 [kDebugMpvVfEnvVar]；
+/// 2. 程序目录下的 [kDebugMpvVfFileName] 文本文件（**只有一行滤镜串**）。
+///
+/// 为什么加第 2 个：第一次真机验证时，用户双击 `dsanima.exe` 启动 → 环境变量没进进程，
+/// 开关静默不生效、界面上完全看不出来。txt 跟着程序目录走，双击就有。
+///
+/// **两种来源都没有 = 空串 = 调用方什么都不做**，行为与之前逐字一致。
 ///
 /// 判据（宁可不加，也不发一条会炸的滤镜串）：
 /// * 空/纯空白 → 空串；
@@ -16,12 +21,42 @@ library;
 
 import 'dart:io';
 
-/// 环境变量名：值是 mpv 的 `vf` 滤镜串（例：`d3d11vpp=format=nv12:scale=2:scaling-mode=nvidia`）。
+/// 环境变量名：值是 mpv 的 `vf` 滤镜串。
 const String kDebugMpvVfEnvVar = 'DSANIMA_MPV_VF';
 
-/// 读 [kDebugMpvVfEnvVar]；[env] 只给单测注入，生产调用不传。
-String debugMpvVf([Map<String, String>? env]) {
-  final String raw = (env ?? Platform.environment)[kDebugMpvVfEnvVar] ?? '';
+/// 程序目录下的文件名：内容同上（与环境变量同时存在时环境变量优先）。
+const String kDebugMpvVfFileName = 'DSANIMA_MPV_VF.txt';
+
+/// 解析开关：[env] / [fileText] 只给单测注入，生产调用不传。
+String debugMpvVf({Map<String, String>? env, String? fileText}) {
+  final Map<String, String> values = env ?? Platform.environment;
+  final String fromEnv = _clean(values[kDebugMpvVfEnvVar] ?? '');
+  if (fromEnv.isNotEmpty) return fromEnv;
+  return _clean(fileText ?? '');
+}
+
+/// 读程序目录下的 [kDebugMpvVfFileName]；不存在/读不出 → 空串（永不抛）。
+String debugMpvVfFile([String? path]) {
+  try {
+    final String target = path ?? defaultDebugMpvVfPath();
+    final File file = File(target);
+    if (!file.existsSync()) return '';
+    return file.readAsStringSync();
+  } catch (_) {
+    // 调试开关读不到就是「没开」，不能因为它让开播失败。
+    return '';
+  }
+}
+
+/// 默认路径：`<exe 目录>/DSANIMA_MPV_VF.txt`。
+String defaultDebugMpvVfPath() {
+  final String exe = Platform.resolvedExecutable;
+  final int cut = exe.lastIndexOf(Platform.pathSeparator);
+  if (cut <= 0) return kDebugMpvVfFileName;
+  return '${exe.substring(0, cut)}${Platform.pathSeparator}$kDebugMpvVfFileName';
+}
+
+String _clean(String raw) {
   final String spec = raw.trim();
   if (spec.isEmpty) return '';
   if (spec.contains('\n') || spec.contains('\r')) return '';
