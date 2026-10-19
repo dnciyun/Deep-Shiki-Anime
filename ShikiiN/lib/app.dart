@@ -17,6 +17,7 @@ import 'models/episode_switch_notice.dart';
 import 'models/media_item.dart';
 import 'models/picture_menu.dart';
 import 'models/player_request.dart';
+import 'models/subtitle_preset.dart';
 import 'models/theme_tokens.dart';
 
 final storeProvider = Provider<KeyValueStore>((_) => throw UnimplementedError());
@@ -28,6 +29,14 @@ final anime4kProvider = Provider<Anime4kController>((_) => throw UnimplementedEr
 /// 为什么可空而不是像其它 provider 那样 throw：没装扩展是最常见的情况，
 /// 播放器该**安静地不显示**这一项，而不是要求宿主必须装配它。
 final pictureMenuProvider = Provider<PictureMenu?>((_) => null);
+
+/// 宿主注入：字幕样式预设（通用扩展包 `preset-pack` / `player.subtitle` 面）。
+///
+/// 与 [pictureMenuProvider] 同一个理由：没装预设包是最常见的情况，播放器该**安静地
+/// 不显示**「样式预设」这一区，而不是要求宿主必须装配。宿主扫完扩展目录后把预设
+/// 数组 override 进来；装卸包后重新 override（热刷新由宿主推）。
+final subtitlePresetsProvider =
+    Provider<List<SubtitlePreset>>((_) => const <SubtitlePreset>[]);
 
 /// 宿主投递播放请求的通道。默认 null = 无请求。
 ///

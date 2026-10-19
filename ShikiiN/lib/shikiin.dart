@@ -43,6 +43,7 @@ export 'app.dart'
         playerProvider,
         playerRequestProvider,
         storeProvider,
+        subtitlePresetsProvider,
         switchNoticeProvider,
         tokensProvider;
 
@@ -71,6 +72,8 @@ export 'models/upscale_scheme.dart'
         mergedUpscaleSchemes,
         kAnime4kSchemeId;
 export 'models/theme_tokens.dart' show ThemeTokens;
+export 'models/subtitle_preset.dart' show SubtitlePreset;
+export 'models/subtitle_style.dart' show SubtitleStyle;
 export 'models/track.dart' show TrackInfo, TrackKind;
 export 'models/picture_menu.dart'
     show

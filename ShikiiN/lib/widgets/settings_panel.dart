@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/subtitle_preset.dart';
 import '../models/subtitle_style.dart';
 import '../models/theme_tokens.dart';
 import 'styled_track.dart';
@@ -12,6 +13,9 @@ class SettingsPanel extends StatelessWidget {
   final SubtitleStyle subtitleStyle;
   final ValueChanged<SubtitleStyle> onSubtitleStyle;
 
+  /// 宿主从扩展包扫出来的字幕样式预设；空 = 不显示「样式预设」这一区。
+  final List<SubtitlePreset> presets;
+
   /// 可选关闭按钮（宿主也可用 Esc / 点外部关闭）。
   final VoidCallback? onClose;
 
@@ -22,6 +26,7 @@ class SettingsPanel extends StatelessWidget {
     required this.onVolume,
     required this.subtitleStyle,
     required this.onSubtitleStyle,
+    this.presets = const <SubtitlePreset>[],
     this.onClose,
   });
 
@@ -77,6 +82,25 @@ class SettingsPanel extends StatelessWidget {
                 onChanged: (v) => onVolume(v * 100),
               ),
               SizedBox(height: t.spacing * 3),
+
+              // ── 样式预设（宿主从扩展包扫出来的；没有就不显示这一区）──────
+              if (presets.isNotEmpty) ...[
+                _header(t, '样式预设', trailing: '${presets.length} 套'),
+                SizedBox(height: t.spacing),
+                Wrap(
+                  spacing: t.spacing,
+                  runSpacing: t.spacing,
+                  children: <Widget>[
+                    for (final SubtitlePreset preset in presets)
+                      _PresetChip(
+                        tokens: t,
+                        preset: preset,
+                        onTap: () => onSubtitleStyle(preset.style),
+                      ),
+                  ],
+                ),
+                SizedBox(height: t.spacing * 3),
+              ],
 
               // ── 字幕样式 ─────────────────────────────────────────────────
               _header(t, '字幕样式', trailing: '字号 ${s.scale.toStringAsFixed(1)}×'),
@@ -259,6 +283,38 @@ class _NeoSwitch extends StatelessWidget {
               color: t.raised,
               borderRadius: BorderRadius.circular(t.radiusPill),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 一个字幕样式预设：凹槽底、点击即套用（扁平风格，颜色全取 token）。
+class _PresetChip extends StatelessWidget {
+  final ThemeTokens tokens;
+  final SubtitlePreset preset;
+  final VoidCallback onTap;
+
+  const _PresetChip({required this.tokens, required this.preset, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          key: ValueKey<String>('subtitle-preset-${preset.id}'),
+          padding: EdgeInsets.symmetric(horizontal: t.spacing * 1.5, vertical: t.spacing),
+          decoration: BoxDecoration(
+            color: t.sunken,
+            borderRadius: BorderRadius.circular(t.radiusPill),
+          ),
+          child: Text(
+            preset.name,
+            style: TextStyle(color: t.text, fontSize: t.fontSizeSmall, height: 1.2),
           ),
         ),
       ),
