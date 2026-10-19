@@ -44,6 +44,7 @@
 library;
 
 import '../update/version.dart';
+import 'generic.dart';
 import 'issues.dart';
 import 'package_guard.dart';
 import 'picture.dart';
@@ -70,10 +71,18 @@ class ExtensionKind {
   /// 宿主按用户取值现场渲染成 .glsl 再挂载（见 `picture.dart`）。
   static const String picturePack = kPicturePackKind;
 
+  /// 通用「预设包」：命名预设喂给某个面（见 `generic.dart` 的 surface 白名单）。
+  static const String presetPack = kPresetPackKind;
+
+  /// 通用「列表包」：数据列表喂给某个面（见 `generic.dart` 的 surface 白名单）。
+  static const String listPack = kListPackKind;
+
   static const Map<String, String> labels = <String, String>{
     shaderPack: '着色器包',
     dataPack: '数据包',
     picturePack: '画面调节包',
+    presetPack: '预设包',
+    listPack: '列表包',
   };
 
   static bool isKnown(String kind) => labels.containsKey(kind);
@@ -166,6 +175,7 @@ class ExtensionManifest {
     this.minAppVersion,
     this.shader,
     this.picture,
+    this.generic,
   });
 
   /// 清单格式版本；本版本只认 1。
@@ -202,6 +212,9 @@ class ExtensionManifest {
   /// `picture-pack` 必需的画面调节描述（模板 + 参数 + 预设）；其他类型为 null。
   final PictureSpec? picture;
 
+  /// `preset-pack` / `list-pack` 解析出的通用载荷；其他类型为 null。
+  final GenericPayload? generic;
+
   /// 原始 json（**原样**存进 `state.json`，宿主新增字段时不用改这套模型，
   /// 也不存在 `toJson` 漂移）。
   final Map<String, Object?> raw;
@@ -210,10 +223,15 @@ class ExtensionManifest {
   bool get isKnownKind => ExtensionKind.isKnown(kind);
 
   /// 装上之后能不能真的用起来：`shader-pack` 要看 shader 描述，
-  /// `picture-pack` 要看画面调节描述；其余类型装上也没有运行时行为。
+  /// `picture-pack` 要看画面调节描述，通用包要看宿主认不认识它声明的面；
+  /// 其余类型装上也没有运行时行为。
   bool get isUsable {
     if (kind == ExtensionKind.shaderPack) return shader != null;
     if (kind == ExtensionKind.picturePack) return picture != null;
+    if (kind == ExtensionKind.presetPack || kind == ExtensionKind.listPack) {
+      final GenericPayload? payload = generic;
+      return payload != null && extensionSurfaceOf(payload.surface) != null;
+    }
     return false;
   }
 
@@ -394,13 +412,24 @@ ManifestParseResult parseExtensionManifest(
     }
   }
 
+  // 通用包必须写 minAppVersion：老宿主不认识这两个 kind，装上也只会"没有运行时效果"。
+  if ((kind == ExtensionKind.presetPack || kind == ExtensionKind.listPack) &&
+      (minAppVersion == null || minAppVersion.isEmpty)) {
+    issues.add(const ManifestIssue(
+      'minAppVersion',
+      '通用包必须写 minAppVersion（如 1.1.0）：老宿主不认识这种类型，装上也用不了',
+    ));
+  }
+
   // ── files ───────────────────────────────────────────────────────────────
   final List<ExtensionFile> files = <ExtensionFile>[];
   final Set<String> seenPaths = <String>{};
   final Object? rawFiles = map['files'];
   if (rawFiles is! List) {
     issues.add(const ManifestIssue('files', '缺少 files 列表（每个要落盘的文件 + 大小 + sha256）'));
-  } else if (rawFiles.isEmpty) {
+  } else if (rawFiles.isEmpty &&
+      kind != ExtensionKind.presetPack &&
+      kind != ExtensionKind.listPack) {
     issues.add(const ManifestIssue('files', 'files 是空的：扩展至少要有一个文件'));
   } else if (rawFiles.length > kPackageMaxEntries) {
     issues.add(ManifestIssue('files', '文件太多（上限 $kPackageMaxEntries 个）'));
@@ -508,6 +537,39 @@ ManifestParseResult parseExtensionManifest(
     ));
   }
 
+  // ── payload.preset / payload.list（通用包）───────────────────────────────
+  GenericPayload? generic;
+  final bool genericKind = kind == ExtensionKind.presetPack || kind == ExtensionKind.listPack;
+  if (genericKind) {
+    if (rawPayload == null) {
+      issues.add(const ManifestIssue(
+        'payload',
+        '通用包必须带 payload（surface + surfaceSchema + presets/lists）',
+      ));
+    } else if (payloadMap != null) {
+      final GenericPayloadParseResult parsed = parseGenericPayload(
+        kind,
+        rawPayload,
+        declaredPathsLower: <String>{
+          for (final ExtensionFile file in files) file.path.toLowerCase(),
+        },
+      );
+      generic = parsed.payload;
+      issues.addAll(parsed.issues);
+      warnings.addAll(parsed.warnings);
+    }
+  } else {
+    for (final String key in <String>['surface', 'presets', 'lists']) {
+      if (payloadMap?.containsKey(key) ?? false) {
+        warnings.add(ManifestIssue(
+          'payload.$key',
+          '类型「$kind」不使用通用载荷（$key 已忽略；通用载荷只在 '
+              '$kPresetPackKind / $kListPackKind 里生效）',
+        ));
+      }
+    }
+  }
+
   // ── 可选元信息 ───────────────────────────────────────────────────────────
   final String? homepage = _readString(map['homepage'])?.trim();
   if (homepage != null && homepage.isNotEmpty) {
@@ -536,6 +598,7 @@ ManifestParseResult parseExtensionManifest(
       files: List<ExtensionFile>.unmodifiable(files),
       shader: shader,
       picture: picture,
+      generic: generic,
       raw: map,
     ),
     warnings: warnings,

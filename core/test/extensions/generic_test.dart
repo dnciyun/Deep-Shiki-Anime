@@ -5,7 +5,6 @@
 /// 断言精确到 [ManifestIssue.field]，而不是只看 `issues.isEmpty`。
 library;
 
-import 'package:dsanima_core/extensions/generic.dart';
 import 'package:dsanima_core/dsanima_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 

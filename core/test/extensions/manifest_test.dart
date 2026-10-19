@@ -108,6 +108,59 @@ List<Object?> _files(int count) => <Object?>[
       for (int i = 0; i < count; i++) _file('f$i.bin'),
     ];
 
+// ── 通用包（preset-pack / list-pack）夹具 ───────────────────────────────────
+
+/// 合法 preset-pack 清单：默认空 `files[]` + 一个 `player.subtitle` 预设。
+Map<String, Object?> _presetManifest({
+  Map<String, Object?>? payload,
+  String? minAppVersion = '1.1.0',
+}) =>
+    <String, Object?>{
+      'schema': 1,
+      'id': 'sub-cinema',
+      'name': '影院字幕',
+      'version': '1.0.0',
+      'kind': 'preset-pack',
+      'minAppVersion': ?minAppVersion,
+      'files': <Object?>[],
+      'payload': payload ??
+          <String, Object?>{
+            'surface': 'player.subtitle',
+            'surfaceSchema': 1,
+            'presets': <Object?>[
+              <String, Object?>{
+                'id': 'cinema',
+                'name': '影院',
+                'values': <String, Object?>{'scale': 1.6},
+              },
+            ],
+          },
+    };
+
+/// 合法 list-pack 清单（默认注册表里没有该面 → 会走「未知 surface」分支）。
+Map<String, Object?> _listManifest() => <String, Object?>{
+      'schema': 1,
+      'id': 'picks',
+      'name': '精选',
+      'version': '1.0.0',
+      'kind': 'list-pack',
+      'minAppVersion': '1.1.0',
+      'files': <Object?>[],
+      'payload': <String, Object?>{
+        'surface': 'home.recommend',
+        'surfaceSchema': 1,
+        'lists': <Object?>[
+          <String, Object?>{
+            'id': 'weekly',
+            'name': '本周',
+            'items': <Object?>[
+              <String, Object?>{'bangumiId': 1},
+            ],
+          },
+        ],
+      },
+    };
+
 // ── catalog 夹具 ────────────────────────────────────────────────────────────
 
 final Uri _catalogBase = Uri.parse('https://example.com/ext/catalog.json');
@@ -792,12 +845,15 @@ void main() {
         const ManifestIssue('files[0].path', '路径不可用').toString(),
         'files[0].path: 路径不可用',
       );
-      expect(ExtensionKind.labels, hasLength(3));
+      expect(ExtensionKind.labels, hasLength(5));
       expect(ExtensionKind.labels[ExtensionKind.shaderPack], '着色器包');
       expect(ExtensionKind.labelOf(ExtensionKind.dataPack), '数据包');
       expect(ExtensionKind.labelOf(ExtensionKind.picturePack), '画面调节包');
+      expect(ExtensionKind.labelOf(ExtensionKind.presetPack), '预设包');
+      expect(ExtensionKind.labelOf(ExtensionKind.listPack), '列表包');
       expect(ExtensionKind.isKnown(ExtensionKind.shaderPack), isTrue);
       expect(ExtensionKind.isKnown(ExtensionKind.picturePack), isTrue);
+      expect(ExtensionKind.isKnown(ExtensionKind.presetPack), isTrue);
       expect(ExtensionKind.isKnown('future-pack'), isFalse);
     });
 
@@ -1103,6 +1159,86 @@ void main() {
           parseExtensionManifest(_validManifest()..['id'] = 'a..b');
       expect(result.ok, isTrue);
       expect(result.manifest!.id, 'a..b');
+    });
+  });
+
+  group('通用扩展载荷（preset-pack / list-pack）', () {
+    test('preset-pack 允许空 files[]，能装且 usable', () {
+      final ManifestParseResult result = _accepted(_presetManifest());
+      expect(result.manifest!.files, isEmpty);
+      expect(result.manifest!.isUsable, isTrue);
+      expect(result.manifest!.generic!.surface, 'player.subtitle');
+      expect(result.warnings, isEmpty);
+    });
+
+    test('data-pack 仍然不允许空 files[]', () {
+      final ManifestParseResult result =
+          parseExtensionManifest(_validManifest()..['files'] = <Object?>[]);
+      expect(result.ok, isFalse);
+      expect(
+        result.issues.where((ManifestIssue issue) => issue.field == 'files'),
+        isNotEmpty,
+      );
+    });
+
+    test('通用包缺 minAppVersion → 拒（老宿主装上也用不了）', () {
+      final ManifestParseResult result =
+          parseExtensionManifest(_presetManifest(minAppVersion: null));
+      expect(result.ok, isFalse);
+      expect(
+        result.issues.where((ManifestIssue issue) => issue.field == 'minAppVersion'),
+        isNotEmpty,
+      );
+      expect(_issueMessage(result, 'minAppVersion'), contains('1.1.0'));
+    });
+
+    test('未知 surface 的 preset-pack 可装、但 isUsable=false，warning 指向 payload.surface', () {
+      final ManifestParseResult result = _accepted(_presetManifest(
+        payload: <String, Object?>{
+          'surface': 'future.thing',
+          'surfaceSchema': 1,
+          'presets': <Object?>[
+            <String, Object?>{
+              'id': 'a',
+              'name': 'A',
+              'values': <String, Object?>{},
+            },
+          ],
+        },
+      ));
+      expect(result.manifest!.isUsable, isFalse);
+      expect(result.warnings.single.field, 'payload.surface');
+      expect(result.manifest!.generic!.surface, 'future.thing');
+    });
+
+    test('preset-pack 缺 payload → 拒；payload 里带 shader → 拒', () {
+      final Map<String, Object?> noPayload = _presetManifest()..remove('payload');
+      _rejected(noPayload, 'payload');
+
+      _rejected(
+        _presetManifest(
+          payload: <String, Object?>{
+            'surface': 'player.subtitle',
+            'surfaceSchema': 1,
+            'presets': <Object?>[
+              <String, Object?>{
+                'id': 'cinema',
+                'name': '影院',
+                'values': <String, Object?>{},
+              },
+            ],
+            'shader': <String, Object?>{},
+          },
+        ),
+        'payload.shader',
+      );
+    });
+
+    test('list-pack：默认注册表没有列表面 → 可装、warning、isUsable=false', () {
+      final ManifestParseResult result = _accepted(_listManifest());
+      expect(result.manifest!.isUsable, isFalse);
+      expect(result.warnings.single.field, 'payload.surface');
+      expect(result.manifest!.generic!.lists.single.id, 'weekly');
     });
   });
 }
