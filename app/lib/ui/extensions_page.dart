@@ -713,7 +713,10 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
             children: <Widget>[
               DsChip(label: 'v${item.manifest.version}', hue: _hue),
               // 类型用 core 的中文表：认不出的类型也要如实写「未知类型（…）」。
-              DsChip(label: core.ExtensionKind.labelOf(item.manifest.kind), hue: _hue),
+              // 包名本来就叫「音效包 / 画面调节包」时不再重复一遍（用户 2026-10-19：
+              // 「名字不要这么叫，就叫音效包 画面调节包 超分包」——两行同名很难看）。
+              if (core.ExtensionKind.labelOf(item.manifest.kind) != item.manifest.name)
+                DsChip(label: core.ExtensionKind.labelOf(item.manifest.kind), hue: _hue),
               DsChip(label: formatBytes(item.bytes)),
               DsChip(label: '来源：${item.origin.label}'),
             ],
@@ -821,8 +824,10 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
 
   Widget _catalogRow(DsTokens t, core.CatalogEntry entry, bool installed, bool busy) {
     final core.ExtensionManifest m = entry.manifest;
+    final String kindLabel = core.ExtensionKind.labelOf(m.kind);
     final String meta = <String>[
-      core.ExtensionKind.labelOf(m.kind),
+      // 包名就叫「音效包」这类时不再重复类型（同已装列表）。
+      if (kindLabel != m.name) kindLabel,
       formatBytes(entry.size),
       // 目录没给 sha256 时必须如实写出来（只有大小校验，弱一档）。
       entry.sha256 == null ? '未提供哈希' : 'sha256 校验',

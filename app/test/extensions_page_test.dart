@@ -718,4 +718,28 @@ void main() {
       expect(find.byKey(dsExtensionsProblemKey), findsNothing);
     });
   });
+
+  group('包名与类型同名（用户 2026-10-19：就叫音效包 / 画面调节包 / 超分包）', () {
+    testWidgets('画面调节包：名字只出现一次，不再重复类型 chip', (WidgetTester tester) async {
+      final _FakeExtensionsPort port = _FakeExtensionsPort()
+        ..installed = <InstalledExtension>[
+          _installedPicture(id: 'dsanima-picture', name: '画面调节包'),
+        ];
+      await _pump(tester, port);
+
+      // 若仍重复，标题 + 类型 chip 会命中两次。
+      expect(find.text('画面调节包'), findsOneWidget);
+    });
+
+    testWidgets('超分包：名字与类型不同，类型 chip 照常显示', (WidgetTester tester) async {
+      final _FakeExtensionsPort port = _FakeExtensionsPort()
+        ..installed = <InstalledExtension>[
+          _installed(id: 'dsanima-sr', name: '超分包', kind: 'shader-pack'),
+        ];
+      await _pump(tester, port);
+
+      expect(find.text('超分包'), findsOneWidget);
+      expect(find.text('着色器包'), findsOneWidget);
+    });
+  });
 }
