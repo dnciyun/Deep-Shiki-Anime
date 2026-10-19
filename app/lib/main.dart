@@ -44,6 +44,7 @@ import 'state/cover_cache.dart';
 import 'state/desktop_integration.dart';
 import 'state/engine_bootstrap.dart';
 import 'state/extension_schemes.dart';
+import 'state/audio_presets.dart';
 import 'state/generic_packs.dart';
 import 'state/picture_menu_attach.dart';
 import 'state/subtitle_presets.dart';
@@ -841,6 +842,21 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
     }
   } catch (error) {
     trace('player window: 字幕预设扫描失败（不影响开播）：$error');
+  }
+  // 通用扩展包：音效档位（`audio-pack` / `player.audio` 面）。
+  // 同一套口径：扫一遍灌进子窗口 notifier；空清单 = 右键菜单不出现「音效」。
+  try {
+    final AudioPresetConsumer audioConsumer = AudioPresetConsumer(
+      onChanged: (List<shikiin.AudioFxPreset> presets) =>
+          windowAudioPresetsNotifier.value = presets,
+    );
+    await audioConsumer.setPacks(await scanGenericPacks(supportDir));
+    trace('player window: 音效 ${audioConsumer.summary}');
+    for (final String note in audioConsumer.notes) {
+      trace('player window: $note');
+    }
+  } catch (error) {
+    trace('player window: 音效包扫描失败（不影响开播）：$error');
   }
   // 任务栏 / Alt-Tab 的图标与标题（第十七轮），见 [_applyPlayerWindowChrome]。
   await _applyPlayerWindowChrome(args, trace, dataRoot.path);

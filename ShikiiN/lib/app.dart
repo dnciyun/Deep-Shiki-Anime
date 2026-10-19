@@ -14,6 +14,7 @@ import 'controllers/player_controller.dart';
 import 'controllers/playlist_controller.dart';
 import 'infra/persistence.dart';
 import 'models/episode_switch_notice.dart';
+import 'models/audio_fx.dart';
 import 'models/media_item.dart';
 import 'models/picture_menu.dart';
 import 'models/player_request.dart';
@@ -37,6 +38,13 @@ final pictureMenuProvider = Provider<PictureMenu?>((_) => null);
 /// 数组 override 进来；装卸包后重新 override（热刷新由宿主推）。
 final subtitlePresetsProvider =
     Provider<List<SubtitlePreset>>((_) => const <SubtitlePreset>[]);
+
+/// 宿主注入：音效档位（通用扩展包 `audio-pack` / `player.audio` 面）。
+///
+/// 与 [subtitlePresetsProvider] 同一个口径：没装音效包是最常见的情况，播放器该
+/// **安静地不显示**「音效」这一项，而不是要求宿主必须装配。
+final audioPresetsProvider =
+    Provider<List<AudioFxPreset>>((_) => const <AudioFxPreset>[]);
 
 /// 宿主注入：字幕预设的**非致命提示**（目前是「字体没加载上」）。
 ///

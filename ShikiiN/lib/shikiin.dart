@@ -37,6 +37,7 @@ export 'infra/file_open_channel.dart' show bindFileOpenRequests, kFileOpenChanne
 export 'app.dart'
     show
         anime4kProvider,
+        audioPresetsProvider,
         episodeGroupProvider,
         episodeSelectProvider,
         pictureMenuProvider,

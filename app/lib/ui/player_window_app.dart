@@ -26,6 +26,7 @@ import 'package:shikiin/shikiin.dart' as shikiin;
 import 'package:window_manager/window_manager.dart' as wm;
 
 import '../state/extension_schemes.dart';
+import '../state/audio_presets.dart';
 import '../state/generic_packs.dart';
 import '../state/player_window.dart';
 import '../state/store_layout.dart';
@@ -63,6 +64,14 @@ final ValueNotifier<List<shikiin.SubtitlePreset>> windowSubtitlePresetsNotifier 
 /// 设置面板显示在预设区下面 —— 失败但不拖垮预设，也不能只在日志里。
 final ValueNotifier<List<String>> windowSubtitlePresetNotesNotifier =
     ValueNotifier<List<String>>(const <String>[]);
+
+/// 音效档位（通用扩展包 `audio-pack` / `player.audio` 面）。
+///
+/// 与字幕预设同一套推法：开窗扫一次、这扇窗开着时装/卸包走
+/// `kMethodExtensionsChanged` → `_reloadExtensionSchemes` 现场重扫。
+/// 空列表 = 没装音效包，右键菜单里「音效」整项不出现。
+final ValueNotifier<List<shikiin.AudioFxPreset>> windowAudioPresetsNotifier =
+    ValueNotifier<List<shikiin.AudioFxPreset>>(const <shikiin.AudioFxPreset>[]);
 
 /// 播放窗口的根：把主窗口下发的请求喂给 `PlayerSurface`。
 class PlayerWindowApp extends ConsumerStatefulWidget {
@@ -244,6 +253,21 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
         );
       } catch (e) {
         _trace('扩展变更后重扫字幕预设失败（设置面板保持旧清单）：$e');
+      }
+      // 音效档位（通用扩展包 `audio-pack`）：同一时刻重扫 —— 装卸包后右键菜单的
+      // 「音效」子菜单立刻跟上。空清单时播放器会自己把音效关掉并清空 af。
+      try {
+        final AudioPresetConsumer consumer = AudioPresetConsumer(
+          onChanged: (List<shikiin.AudioFxPreset> presets) =>
+              windowAudioPresetsNotifier.value = presets,
+        );
+        await consumer.setPacks(await scanGenericPacks(Directory(dataRoot.path)));
+        _trace(
+          '扩展变更：${consumer.summary}'
+          '${consumer.notes.isEmpty ? '' : '（${consumer.notes.join('；')}）'}',
+        );
+      } catch (e) {
+        _trace('扩展变更后重扫音效包失败（右键菜单保持旧清单）：$e');
       }
       // 方案清单变了：控制栏胶囊文案/菜单都读它，重建一次让界面跟上。
       if (mounted) setState(() {});
@@ -584,6 +608,9 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
             // 字体没加载上之类的提示：显示在设置面板预设区下面。
             shikiin.subtitlePresetNotesProvider
                 .overrideWith((Ref ref) => ref.watch(windowSubtitlePresetNotesProvider)),
+            // 通用扩展包的音效档位（装卸包后同样走现场重扫）。
+            shikiin.audioPresetsProvider
+                .overrideWith((Ref ref) => ref.watch(windowAudioPresetsProvider)),
           ],
           child: MaterialApp(
             debugShowCheckedModeBanner: false,
@@ -685,6 +712,19 @@ final NotifierProvider<_NotifierBridge<List<String>>, List<String>>
     _windowSubtitlePresetNotesProvider =
     NotifierProvider<_NotifierBridge<List<String>>, List<String>>(
   () => _NotifierBridge<List<String>>(windowSubtitlePresetNotesNotifier),
+);
+
+/// 音效档位：接给右键菜单/设置面板（子窗口 `ProviderScope` 里 override `audioPresetsProvider`）。
+final Provider<List<shikiin.AudioFxPreset>> windowAudioPresetsProvider =
+    Provider<List<shikiin.AudioFxPreset>>(
+  (Ref ref) => ref.watch(_windowAudioPresetsProvider),
+);
+
+final NotifierProvider<_NotifierBridge<List<shikiin.AudioFxPreset>>,
+        List<shikiin.AudioFxPreset>> _windowAudioPresetsProvider =
+    NotifierProvider<_NotifierBridge<List<shikiin.AudioFxPreset>>,
+        List<shikiin.AudioFxPreset>>(
+  () => _NotifierBridge<List<shikiin.AudioFxPreset>>(windowAudioPresetsNotifier),
 );
 
 /// 切集失败的通知（第三十八轮，主窗口 → 本窗口，见 `kMethodSwitchFailed`）。
