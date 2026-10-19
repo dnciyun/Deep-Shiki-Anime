@@ -3,6 +3,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import '../models/audio_fx.dart';
 import '../models/debug_mpv_vf.dart';
+import '../models/mpv_stream_tuning.dart';
 import '../models/media_item.dart';
 import '../models/track.dart' as app;
 import '../models/video_fit_mode.dart';
@@ -53,6 +54,10 @@ class PlayerController {
     // 「0 → 新值」的顺序，不会漏。
     final Future<bool>? ready =
         target == null ? null : waitUntilMediaReady(player.stream.duration);
+    // 边下边播：先把网络容忍度调宽、关掉磁盘缓存（原因与实测见
+    // `models/mpv_stream_tuning.dart`）。不这么做 media_kit 的 5 秒超时会把
+    // 「等分片」当断流 —— 用户看到的就是「下载中点了播放，等下完才出画面」。
+    await applyStreamTuning();
     await player.open(Media(item.path));
     // 调试开关（见 models/debug_mpv_vf.dart）：只有设了 DSANIMA_MPV_VF 才下发，
     // 且用 `set` 而不是 `add` —— 每次 open 都下发也不会把滤镜叠加成一串。
@@ -108,6 +113,16 @@ class PlayerController {
   }
 
   Future<void> seekTo(Duration position) => player.seek(position);
+
+  /// 把 libmpv 的网络容忍度调宽并关掉磁盘缓存（开播前一次）。
+  ///
+  /// 见 `models/mpv_stream_tuning.dart`：media_kit 默认 `network-timeout=5`，
+  /// 边下边播等分片常超过 5 秒，mpv 会把这条流当断流放弃。
+  Future<void> applyStreamTuning() async {
+    for (final List<String> cmd in mpvStreamTuningCommands()) {
+      await runMpvCommand(cmd);
+    }
+  }
 
   /// 相对关键帧 seek：快且画面跟随（mpv `seek <n> relative+keyframes`）。
   /// 用于长按连续快进退（契约 §6）——精确 absolute seek 每 tick 一发会卡顿
