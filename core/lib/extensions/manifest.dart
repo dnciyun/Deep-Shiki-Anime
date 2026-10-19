@@ -77,12 +77,16 @@ class ExtensionKind {
   /// 通用「列表包」：数据列表喂给某个面（见 `generic.dart` 的 surface 白名单）。
   static const String listPack = kListPackKind;
 
+  /// 「音效包」：载荷与 [presetPack] 同构，面必须是 `player.audio`。
+  static const String audioPack = kAudioPackKind;
+
   static const Map<String, String> labels = <String, String>{
     shaderPack: '着色器包',
     dataPack: '数据包',
     picturePack: '画面调节包',
     presetPack: '预设包',
     listPack: '列表包',
+    audioPack: '音效包',
   };
 
   static bool isKnown(String kind) => labels.containsKey(kind);
@@ -228,7 +232,9 @@ class ExtensionManifest {
   bool get isUsable {
     if (kind == ExtensionKind.shaderPack) return shader != null;
     if (kind == ExtensionKind.picturePack) return picture != null;
-    if (kind == ExtensionKind.presetPack || kind == ExtensionKind.listPack) {
+    if (kind == ExtensionKind.presetPack ||
+        kind == ExtensionKind.listPack ||
+        kind == ExtensionKind.audioPack) {
       final GenericPayload? payload = generic;
       return payload != null && extensionSurfaceOf(payload.surface) != null;
     }
@@ -413,7 +419,9 @@ ManifestParseResult parseExtensionManifest(
   }
 
   // 通用包必须写 minAppVersion：老宿主不认识这两个 kind，装上也只会"没有运行时效果"。
-  if ((kind == ExtensionKind.presetPack || kind == ExtensionKind.listPack) &&
+  if ((kind == ExtensionKind.presetPack ||
+          kind == ExtensionKind.listPack ||
+          kind == ExtensionKind.audioPack) &&
       (minAppVersion == null || minAppVersion.isEmpty)) {
     issues.add(const ManifestIssue(
       'minAppVersion',
@@ -429,7 +437,8 @@ ManifestParseResult parseExtensionManifest(
     issues.add(const ManifestIssue('files', '缺少 files 列表（每个要落盘的文件 + 大小 + sha256）'));
   } else if (rawFiles.isEmpty &&
       kind != ExtensionKind.presetPack &&
-      kind != ExtensionKind.listPack) {
+      kind != ExtensionKind.listPack &&
+      kind != ExtensionKind.audioPack) {
     issues.add(const ManifestIssue('files', 'files 是空的：扩展至少要有一个文件'));
   } else if (rawFiles.length > kPackageMaxEntries) {
     issues.add(ManifestIssue('files', '文件太多（上限 $kPackageMaxEntries 个）'));
@@ -539,9 +548,23 @@ ManifestParseResult parseExtensionManifest(
 
   // ── payload.preset / payload.list（通用包）───────────────────────────────
   GenericPayload? generic;
-  final bool genericKind = kind == ExtensionKind.presetPack || kind == ExtensionKind.listPack;
+  final bool genericKind = kind == ExtensionKind.presetPack ||
+      kind == ExtensionKind.listPack ||
+      kind == ExtensionKind.audioPack;
   if (genericKind) {
-    if (rawPayload == null) {
+    final String declaredSurface =
+        (_readString(payloadMap?['surface']) ?? '').trim();
+    // kind 与面绑定：音效包只能喂播放器音效面。先判这个、再解析载荷 ——
+    // 否则会把音效字段拿去对字幕面的 schema，报出一串看不懂的「没有这个字段」。
+    final bool surfaceMismatch = kind == ExtensionKind.audioPack &&
+        declaredSurface.isNotEmpty &&
+        declaredSurface != kPlayerAudioSurfaceId;
+    if (surfaceMismatch) {
+      issues.add(ManifestIssue(
+        'payload.surface',
+        '音效包必须用面「$kPlayerAudioSurfaceId」（收到「$declaredSurface」）',
+      ));
+    } else if (rawPayload == null) {
       issues.add(const ManifestIssue(
         'payload',
         '通用包必须带 payload（surface + surfaceSchema + presets/lists）',

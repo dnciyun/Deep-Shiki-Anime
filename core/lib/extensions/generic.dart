@@ -35,6 +35,19 @@ const String kPresetPackKind = 'preset-pack';
 /// `list-pack`：数据列表，喂给某个面。
 const String kListPackKind = 'list-pack';
 
+/// `audio-pack`：音效档位。载荷与 [kPresetPackKind] **完全同构**，单独一个 kind
+/// 只为扩展页叫得准（「音效包」而不是「预设包」），不为多一套解析。
+///
+/// 为什么不是 `preset-pack` 换个面就完事：kind 决定界面文案与可用性判断，
+/// 用户装完看到「预设包」会以为装错了东西。
+const String kAudioPackKind = 'audio-pack';
+
+/// 播放器字幕样式面（第一个落地的通用面）。
+const String kPlayerSubtitleSurfaceId = 'player.subtitle';
+
+/// 播放器音效面（`audio-pack` 必须绑这个面）。
+const String kPlayerAudioSurfaceId = 'player.audio';
+
 /// 通用包的默认上限（面自己声明了就用面的）。
 const int kGenericMaxPresets = 32;
 const int kGenericMaxLists = 8;
@@ -118,7 +131,7 @@ class ExtensionSurface {
 /// 本版本认识的「面」。首版只有播放器字幕样式（主题/片单/追番清单/RSS 源在后续版本各自补）。
 const List<ExtensionSurface> kExtensionSurfaces = <ExtensionSurface>[
   ExtensionSurface(
-    id: 'player.subtitle',
+    id: kPlayerSubtitleSurfaceId,
     payloadKind: SurfacePayloadKind.preset,
     schema: 1,
     label: '播放器字幕样式',
@@ -136,6 +149,33 @@ const List<ExtensionSurface> kExtensionSurfaces = <ExtensionSurface>[
       SurfaceField(key: 'bold', type: SurfaceValueType.boolean),
       SurfaceField(key: 'italic', type: SurfaceValueType.boolean),
       SurfaceField(key: 'font', type: SurfaceValueType.string),
+    ],
+  ),
+  // 音效面（`audio-pack`）：10 段固定 ISO 增益 + 预增益 + 交叉馈电强度。
+  // 全部是**有界数字**，宿主据此拼 `af` 链 —— 包写不进任意 lavfi（理由见
+  // `docs/specs/2026-10-19-dsanima-audio-packs-design.md` §3.5、§5）。
+  ExtensionSurface(
+    id: kPlayerAudioSurfaceId,
+    payloadKind: SurfacePayloadKind.preset,
+    schema: 1,
+    label: '播放器音效',
+    hostHint: '装完在播放器设置 →「音效」里选档，右键菜单也能切',
+    hostWindow: 'player',
+    maxPresets: 12,
+    maxAssets: 0,
+    fields: <SurfaceField>[
+      SurfaceField(key: 'b31', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b63', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b125', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b250', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b500', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b1k', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b2k', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b4k', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b8k', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'b16k', type: SurfaceValueType.number, min: -12, max: 12),
+      SurfaceField(key: 'preamp', type: SurfaceValueType.number, min: -12, max: 6),
+      SurfaceField(key: 'crossfeed', type: SurfaceValueType.number, min: 0, max: 1),
     ],
   ),
 ];
@@ -258,10 +298,12 @@ GenericPayloadParseResult parseGenericPayload(
   final List<ManifestIssue> issues = <ManifestIssue>[];
   final List<ManifestIssue> warnings = <ManifestIssue>[];
 
-  if (kind != kPresetPackKind && kind != kListPackKind) {
+  if (kind != kPresetPackKind &&
+      kind != kListPackKind &&
+      kind != kAudioPackKind) {
     issues.add(ManifestIssue(
       'kind',
-      '「$kind」不是通用包类型（只认 $kPresetPackKind / $kListPackKind）',
+      '「$kind」不是通用包类型（只认 $kPresetPackKind / $kListPackKind / $kAudioPackKind）',
     ));
     return GenericPayloadParseResult(issues: issues);
   }
@@ -317,7 +359,7 @@ GenericPayloadParseResult parseGenericPayload(
     ));
   }
 
-  final bool isPreset = kind == kPresetPackKind;
+  final bool isPreset = kind == kPresetPackKind || kind == kAudioPackKind;
 
   if (surface != null &&
       surface.payloadKind !=
