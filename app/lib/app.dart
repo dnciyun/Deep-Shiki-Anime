@@ -188,9 +188,12 @@ class _WindowEnvBridgeState extends ConsumerState<_WindowEnvBridge> {
     // 当前集所在的那一组变了（换集/换片）就重推一次。
     ref.listen<EpisodeGrouping?>(currentEpisodeGroupProvider,
         (EpisodeGrouping? _, EpisodeGrouping? next) {
-      unawaited(ref
-          .read(playerWindowServiceProvider)
-          .pushArgs(episodeGroup: encodeEpisodeGroup(next)));
+      unawaited(ref.read(playerWindowServiceProvider).pushArgs(
+            episodeGroup: encodeEpisodeGroup(
+              next,
+              autoNext: ref.read(settingsProvider).autoPlayNext,
+            ),
+          ));
     });
     // 「设置 → 播放器 → 画面正中也唤起」改了（第二十七轮）：正在开着的播放窗口要立刻
     // 跟上 —— 子窗口是独立 isolate，只能靠推送（同值不推由 `pushArgs` 把关）。

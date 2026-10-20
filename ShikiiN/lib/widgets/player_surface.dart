@@ -365,6 +365,17 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
   StreamSubscription<bool>? _playSub;
   StreamSubscription<double>? _volSub;
 
+  /// 播完（EOF）→ 自动下一集。
+  ///
+  /// 为什么订在这里：窗口拆分之后**宿主那一侧没有任何播放信号**
+  ///（`PlayerWindowPort.signals` 是空流），`PlaybackSignals → autoPlayNext` 那条
+  /// 宿主逻辑永远收不到 `PlaybackCompleted` —— 自动下一集在弹窗模式下一直是坏的。
+  StreamSubscription<bool>? _completedSub;
+
+  /// 已经为哪一条 path 触发过自动下一集（`completed` 可能连续多次为 true，
+  /// 不去重会把"下一集"连着点两次，直接跳过一集）。
+  String? _autoNextFiredFor;
+
   PlayerRequestNotifier? _playerReq;
   PlayerRequest? _lastPlayerRequest;
 
@@ -481,6 +492,10 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
     _volSub = player.player.stream.volume.listen((v) {
       if (mounted) setState(() => _volume = v);
     });
+    _completedSub = player.player.stream.completed.listen((bool done) {
+      if (!done || !mounted) return;
+      _maybeAutoNext();
+    });
 
     // 启动设置：音量 + 字幕样式（超分档位由 bootstrap 按持久化值恢复）。
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -514,6 +529,7 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
     _durSub?.cancel();
     _playSub?.cancel();
     _volSub?.cancel();
+    _completedSub?.cancel();
     _hideTimer?.cancel();
     _statsTimer?.cancel();
     _volumeSaveTimer?.cancel();
@@ -658,11 +674,41 @@ class _PlayerSurfaceState extends ConsumerState<PlayerSurface> {
     if (channel != null) {
       // 走宿主那条唯一开播链路（PlayerPort.open → PlayerRequestNotifier），
       // 避免两边各自 open 造成双开。
-      channel.request(PlayerRequest(uri: target, title: item.title, nonce: ++_requestNonce));
+      channel.request(PlayerRequest(
+        uri: target,
+        title: item.title,
+        // 本地文件的同名字幕：换集也要挂上（宿主把每一集的字幕都配好带过来了）。
+        subtitlePath: item.subtitlePath,
+        nonce: ++_requestNonce,
+      ));
       return;
     }
     // 没有宿主请求通道（纯独立用法）：直接开。播放器只播这一条，不会双开。
-    unawaited(_openMedia(MediaItem(path: target, title: item.title, streamUrl: item.streamUrl)));
+    unawaited(_openMedia(
+      MediaItem(
+        path: target,
+        title: item.title,
+        streamUrl: item.streamUrl,
+        subtitlePath: item.subtitlePath,
+      ),
+    ));
+  }
+
+  /// 播完（EOF）之后要不要自己往下走一集（「播完自动下一集」，口径 = 设置页开关）。
+  ///
+  /// 为什么用"当前在放的 path"在中找下标，而不是直接用 [EpisodeGroup.currentIndex]：
+  /// 子窗口自己换集时（本地文件、同一个 torrent 里的其它集）宿主并不知道换了，
+  /// 那份 `currentIndex` 会停在旧值 —— 拿它取"下一集"会原地打转。
+  void _maybeAutoNext() {
+    final EpisodeGroup? group = ref.read(episodeGroupProvider);
+    if (group == null || !group.autoNext || group.items.length < 2) return;
+    final String? path = _currentPath;
+    if (path == null || path.isEmpty) return;
+    if (_autoNextFiredFor == path) return;
+    final int index = group.items.indexWhere((MediaItem item) => item.path == path);
+    if (index < 0 || index + 1 >= group.items.length) return;
+    _autoNextFiredFor = path;
+    _playEpisode(group.items[index + 1]);
   }
 
   /// 开始等宿主把「这一集」准备好（跨种子切集，第三十八轮）。

@@ -443,10 +443,11 @@ void main() {
     // 第二十一轮：「已缓存」页按用户要求整页删掉（侧栏随之少一项）。
     // `ShellTab.values` 是侧栏与 IndexedStack 的**唯一出处**（`tab.index` 就是下标），
     // 所以这里钉住它的形状 —— 以后谁要加回来，必须同时补 IndexedStack 里的那一页。
-    expect(ShellTab.values.length, 9,
-        reason: '主页/动漫库/搜索/正在追/队列/已完成/扩展/观看记录/设置 = 9'
+    expect(ShellTab.values.length, 10,
+        reason: '主页/动漫库/搜索/正在追/队列/已完成/本地/扩展/观看记录/设置 = 10'
             '（第三十三轮新增「动漫库」，排在主页下面；第二十七轮：订阅页删掉、新增观看记录；'
-            '**1.1.0 M3/T15**：新增「扩展」，排在「已完成」之后）');
+            '**1.1.0 M3/T15**：新增「扩展」，排在「已完成」之后；'
+            '**2026-10-20**：新增「本地」，排在「已完成」之后、「扩展」之前）');
     expect(ShellTab.values.map((ShellTab t) => t.label), isNot(contains('已缓存')),
         reason: '侧栏不该再有「已缓存」这一项');
     expect(ShellTab.values.map((ShellTab t) => t.label), isNot(contains('订阅')),
@@ -1607,8 +1608,8 @@ void main() {
 
   // ── 1.1.0 M1/T1：内容区**懒挂载**（启动只建当前 tab） ────────────────────────
   //
-  // 为什么要改：`IndexedStack` 会把九个孩子**全 build 一遍**（只是不画），于是启动即刻付出
-  // 九页的挂载代价 —— 设置页 `initState` 同步读一遍设置 box + 数一遍 KV 缓存占用、
+  // 为什么要改：`IndexedStack` 会把十个孩子**全 build 一遍**（只是不画），于是启动即刻付出
+  // 十页的挂载代价 —— 设置页 `initState` 同步读一遍设置 box + 数一遍 KV 缓存占用、
   // 「正在追」挂载即订阅 mikan 排期、每个页面的 provider 全常驻。用户要的是"切页不丢状态"
   // （`IndexedStack` 的意义），不是"启动把九页全跑一遍"；懒挂载两样都保住。
   group('内容区懒挂载：首帧只建当前 tab，进过的页常驻保状态（1.1.0 M1/T1）', () {
@@ -1666,7 +1667,7 @@ void main() {
       expect(find.byType(HomePage, skipOffstage: false), findsOneWidget);
     });
 
-    testWidgets('九个 tab 逐个点一遍：每一页第一次进都能挂载，且进过之后都在树里', (WidgetTester tester) async {
+    testWidgets('十个 tab 逐个点一遍：每一页第一次进都能挂载，且进过之后都在树里', (WidgetTester tester) async {
       _sizeTo(tester, const Size(1600, 1400));
       await tester.pumpWidget(harness(const DsShell()));
       await tester.pumpAndSettle();
@@ -1686,7 +1687,7 @@ void main() {
         expect(tester.takeException(), isNull, reason: '「${tab.label}」首次挂载抛异常了');
       }
 
-      // 九页都进过了 → 九页全在树里（懒挂载只在"第一次进"花一次钱）。
+      // 十页都进过了 → 十页全在树里（懒挂载只在"第一次进"花一次钱）。
       // 此刻可见的是设置页，其余八页在 `Offstage` 里，所以要 `skipOffstage: false`。
       expect(find.byType(HomePage, skipOffstage: false), findsOneWidget);
       expect(find.byType(LibraryPage, skipOffstage: false), findsOneWidget);

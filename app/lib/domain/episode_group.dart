@@ -26,6 +26,7 @@ class EpisodeEntry {
     required this.path,
     this.streamUri,
     this.episode,
+    this.subtitlePath,
   });
 
   /// 显示标题（一般用文件名去掉扩展名）。
@@ -34,11 +35,17 @@ class EpisodeEntry {
   /// 本地路径；网流场景下是 URL 文本（保持与 `MediaItem.path` 一致）。
   final String path;
 
-  /// 网流：带 token 的完整串流 URL。本地文件为 null。
+  /// 网流：带 token 的完整串流 URL。本地文件为 null（本地播放的地址就是 path）。
   final Uri? streamUri;
 
   /// 解析出的集号（归组内部用；null = 没解析出来）。
   final int? episode;
+
+  /// 外挂字幕的绝对路径（本地文件自动配到的同名字幕；网流为 null）。
+  ///
+  /// 为什么跟着条目走：子窗口点「下一集」时是它**自己**开盘的（不走宿主），
+  /// 没有这个字段，换集之后字幕就丢了（只有第一次打开的那一集带字幕）。
+  final String? subtitlePath;
 
   @override
   String toString() => 'EpisodeEntry($episode, $title)';
@@ -215,6 +222,7 @@ EpisodeGrouping? groupEpisodes(
       path: e.path,
       streamUri: e.streamUri,
       episode: ep,
+      subtitlePath: e.subtitlePath,
     ));
   }
   if (group.length <= 1) return null;

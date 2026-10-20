@@ -62,8 +62,13 @@ shikiin.EpisodeGroup? toShikiinEpisodeGroup(EpisodeGrouping? grouping) {
           path: e.path,
           title: e.title,
           streamUrl: e.streamUri,
+          episode: e.episode,
+          subtitlePath: e.subtitlePath,
         ),
     ],
     currentIndex: grouping.currentIndex,
+    // 内嵌宿主（不走弹窗）同样受播放器自己的"自动下一集"约束；默认关，
+    // 需要的话由调用方在 group 上打开（弹窗那条路径见 `encodeEpisodeGroup`）。
+    autoNext: false,
   );
 }

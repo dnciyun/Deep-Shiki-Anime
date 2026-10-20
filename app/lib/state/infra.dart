@@ -28,6 +28,13 @@ final Provider<Directory?> supportDirProvider =
 final Provider<PickerPort> pickerPortProvider =
     Provider<PickerPort>((Ref ref) => const UnavailablePickerPort());
 
+/// 本地文件夹扫描（真实实现 `IoLocalMediaScanner` 由 main.dart 注入）。
+///
+/// 未注入时返回空清单 + 不支持：本地页会显示"这个平台/这次装配不支持扫描"，
+/// 而不是假装扫过一遍然后列表空空。
+final Provider<LocalMediaScannerPort> localMediaScannerProvider =
+    Provider<LocalMediaScannerPort>((Ref ref) => const UnavailableLocalMediaScanner());
+
 /// 系统托盘（spec §7.3 Q14）。未注入时「后台常驻」不可用，设置页会明确说明。
 final Provider<TrayPort> trayPortProvider =
     Provider<TrayPort>((Ref ref) => const UnavailableTrayPort());

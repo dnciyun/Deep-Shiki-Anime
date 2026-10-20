@@ -55,6 +55,7 @@ import 'state/global_failure.dart';
 import 'state/hive_store.dart';
 import 'state/host_data.dart';
 import 'state/library_provider.dart';
+import 'state/local_media_scanner.dart';
 import 'state/player_adapter.dart';
 import 'state/player_window_geometry.dart';
 import 'state/playback.dart';
@@ -328,6 +329,8 @@ Future<void> main(List<String> args) async {
       ),
       supportDirProvider.overrideWithValue(runtime.supportDir),
       pickerPortProvider.overrideWithValue(const FilePickerPort()),
+      // 本地文件夹扫描（「本地」页）：真实实现 = dart:io 递归扫，跳过系统目录。
+      localMediaScannerProvider.overrideWithValue(const IoLocalMediaScanner()),
       enginePortProvider.overrideWithValue(enginePort),
       engineBootstrapPortProvider.overrideWithValue(CoreEngineBootstrap(engineHolder)),
       // 播放只走弹出窗口：宿主这一侧的播放器端口 = 跨窗口投递。
@@ -340,6 +343,8 @@ Future<void> main(List<String> args) async {
           readWakeChromeAtCenter: () => ref.read(settingsProvider).wakeChromeAtCenter,
           // 音效配置在扩展页（主窗口）里，开窗时把当前那份带过去。
           readAudioFx: () => ref.read(audioFxSettingsProvider).toJson(),
+          // 播完自动下一集（设置页开关）：随分组带给子窗口（它自己订 completed）。
+          readAutoPlayNext: () => ref.read(settingsProvider).autoPlayNext,
         ),
       ),
       // 源 / 订阅 / 队列 / 主页追番表：core 真实现

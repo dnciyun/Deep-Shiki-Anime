@@ -18,7 +18,13 @@ class EpisodeGroup {
   /// 当前正在播的那一集在 [items] 里的下标。
   final int currentIndex;
 
-  const EpisodeGroup({required this.items, this.currentIndex = 0});
+  /// 播完这一集要不要自动播下一集（宿主把设置页那个开关带过来）。
+  ///
+  /// 由**播放器自己**执行（见 `PlayerSurface` 里订 `completed` 的那一段）：
+  /// 窗口拆分之后宿主那边的播放信号是空流，没有别的地方能做这件事。
+  final bool autoNext;
+
+  const EpisodeGroup({required this.items, this.currentIndex = 0, this.autoNext = false});
 
   bool get isEmpty => items.isEmpty;
   bool get isNotEmpty => items.isNotEmpty;
@@ -32,9 +38,10 @@ class EpisodeGroup {
 
   MediaItem? get next => hasNext ? items[currentIndex + 1] : null;
 
-  EpisodeGroup copyWith({List<MediaItem>? items, int? currentIndex}) =>
+  EpisodeGroup copyWith({List<MediaItem>? items, int? currentIndex, bool? autoNext}) =>
       EpisodeGroup(
         items: items ?? this.items,
         currentIndex: currentIndex ?? this.currentIndex,
+        autoNext: autoNext ?? this.autoNext,
       );
 }

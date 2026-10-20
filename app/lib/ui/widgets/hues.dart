@@ -21,7 +21,8 @@ import '../../theme/tokens.dart';
 /// 每个导航目的地一个色相（侧栏图标、页面标题、内容区顶部洗色都用它）。
 ///
 /// 排序刻意让相邻 tab 不同色：主页橙 / 动漫库紫 / 搜索青 / 追番粉 / 队列蓝 /
-/// 已完成绿 / 扩展玫红（1.1.0 M3/T15：插在「已完成」后面，挑一个既不撞上面的绿、
+/// 已完成绿 / 本地青绿（2026-10-20 插在「已完成」后面：下完的和自己盘上的相邻，
+/// 但用不同色相区分两套数据源）/ 扩展玫红（1.1.0 M3/T15：挑一个既不撞上面的绿、
 /// 也不撞左下角「观看记录」金的色相；紫色系留给「动漫库」，不抢）/ 观看记录金 / 设置灰。
 DsHue hueOfTab(ShellTab tab) => switch (tab) {
       ShellTab.home => DsHue.orange,
@@ -30,6 +31,9 @@ DsHue hueOfTab(ShellTab tab) => switch (tab) {
       ShellTab.following => DsHue.pink,
       ShellTab.queue => DsHue.blue,
       ShellTab.completed => DsHue.emerald,
+      // 「本地」（2026-10-20）：青绿。与「已完成」的绿不同族（那是引擎下完的），
+      // 也不撞「搜索」的青与「扩展」的玫红。
+      ShellTab.local => DsHue.teal,
       ShellTab.extensions => DsHue.rose,
       ShellTab.history => DsHue.gold,
       ShellTab.settings => DsHue.slate,

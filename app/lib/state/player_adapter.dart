@@ -27,6 +27,7 @@ class PlayerWindowPort implements PlayerPort {
     required this.readTokens,
     this.readWakeChromeAtCenter,
     this.readAudioFx,
+    this.readAutoPlayNext,
   });
 
   final PlayerWindowService service;
@@ -44,6 +45,14 @@ class PlayerWindowPort implements PlayerPort {
   /// 读音效状态（扩展页里配置的那一份）。null = 组件测试，不带。
   final Map<String, Object?>? Function()? readAudioFx;
 
+  /// 读「播完自动下一集」（设置页那个开关，默认开）。
+  ///
+  /// 为什么要带进分组里：窗口拆分之后宿主侧那条 `PlaybackSignals → autoPlayNext`
+  /// 是死路（`PlayerWindowPort.signals` 是空流），子窗口里根本没有完成事件；
+  /// 现在由子窗口自己订 `completed` 往下走，开关值只能随分组一起过去。
+  /// null = 组件测试/未注入，按关处理（与旧行为一致，不多跳一集）。
+  final bool Function()? readAutoPlayNext;
+
   @override
   bool get isAvailable => true;
 
@@ -55,7 +64,7 @@ class PlayerWindowPort implements PlayerPort {
       startAtMs: request.startAt?.inMilliseconds,
       subtitlePath: request.subtitlePath,
       tokens: encodeTokens(readTokens()),
-      episodeGroup: encodeEpisodeGroup(episodeGroup),
+      episodeGroup: encodeEpisodeGroup(episodeGroup, autoNext: readAutoPlayNext?.call() ?? false),
       wakeChromeAtCenter: readWakeChromeAtCenter?.call(),
       audioFx: readAudioFx?.call(),
     ));

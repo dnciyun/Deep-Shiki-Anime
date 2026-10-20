@@ -852,6 +852,7 @@ shikiin.EpisodeGroup? decodeEpisodeGroup(Map<Object?, Object?>? map) {
     if (path is! String || path.isEmpty) continue;
     final Object? url = raw['streamUrl'];
     final Object? episode = raw['episode'];
+    final Object? subtitle = raw['subtitlePath'];
     items.add(
       shikiin.MediaItem(
         path: path,
@@ -859,12 +860,19 @@ shikiin.EpisodeGroup? decodeEpisodeGroup(Map<Object?, Object?>? map) {
         streamUrl: url is String && url.isNotEmpty ? Uri.tryParse(url) : null,
         // 真实集号由宿主算好带过来（播放器不自己解析标题，免同一集两处显示不一样）。
         episode: episode is num ? episode.toInt() : null,
+        // 本地文件的同名字幕：跟着条目走，播放器自己换集时也能挂上。
+        subtitlePath: subtitle is String && subtitle.isNotEmpty ? subtitle : null,
       ),
     );
   }
   if (items.length <= 1) return null;
   final int index = (map['currentIndex'] as num?)?.toInt() ?? 0;
-  return shikiin.EpisodeGroup(items: items, currentIndex: index.clamp(0, items.length - 1));
+  return shikiin.EpisodeGroup(
+    items: items,
+    currentIndex: index.clamp(0, items.length - 1),
+    // 播完自动下一集：宿主把设置页那个开关随分组带过来（缺省 = 不多跳一集）。
+    autoNext: (map['autoNext'] as bool?) ?? false,
+  );
 }
 
 /// 关窗请求的**入口**：把原生 `WM_CLOSE` 转给 [_hideSelf]（见那里的说明）。

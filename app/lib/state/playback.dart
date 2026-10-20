@@ -10,6 +10,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show File;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,11 +20,13 @@ import '../domain/episode_group.dart';
 import '../domain/episodes.dart';
 import '../domain/error_text.dart';
 import '../domain/format.dart' show formatEpisodeHints;
+import '../domain/local_media.dart';
 import '../domain/models.dart';
 import '../domain/playlist.dart';
 import '../domain/ports.dart';
 import '../domain/watch_history.dart';
 import 'last_playback.dart';
+import 'local_library.dart';
 import 'providers.dart';
 import 'series_loader.dart';
 
@@ -282,6 +285,98 @@ class PlaybackController extends Notifier<PlaybackUiState> {
     }
   }
 
+  /// 播一条**本地文件**（「本地」页里点的）。
+  ///
+  /// 与 [playItem] 的区别：不碰引擎（没有入队/磁力/串流 URL），地址就是磁盘上的
+  /// 路径 —— 交给播放窗口时转成 `file:` URI（见 `domain/local_media.dart` 里
+  /// [localFileUriText] 的说明：`Uri.parse(r'F:\a.mkv')` 会得到垃圾 URI）。
+  ///
+  /// 三件"跟在线对齐"的事：
+  /// * **续播**：[startPositionMs] 由调用方（本地页，读 `local.progress`）给；
+  /// * **上一集/下一集**：同目录的视频按 `episode_group.dart` 的规则归组，每项都带上
+  ///   `streamUri`（= 自己的 `file:` URI）⇒ 子窗口能自己换集，不用回来找宿主；
+  /// * **同名字幕**：归组里每一项都带自己的字幕路径，换集之后字幕不会丢。
+  ///
+  /// `engineId = -1`：本地文件在引擎里没有对应条目，`nowPlayingProgressProvider`
+  /// 查不到就自然不显示引擎进度浮层（不是假装在下载）。
+  Future<void> playLocal({
+    required String showTitle,
+    required List<LocalVideo> videos,
+    required LocalVideo current,
+    int? startPositionMs,
+  }) async {
+    state = state.copyWith(busy: true, clearFailure: true);
+    try {
+      // 换集时按省流量策略处理上一集（本地播不涉及引擎，但上一次可能是在线播的）。
+      await _stopSeedingOnSwitch();
+      // 本地播放没有"播放列表"（那份是 mikan 条目 id 的列表），先清掉，
+      // 免得侧栏/播放列表 UI 拿上一次在线的列表去点（点了必然失败）。
+      _playlist = null;
+
+      final List<LocalVideo> ordered = List<LocalVideo>.of(videos)..sort(compareLocalVideos);
+      final Map<String, LocalVideo> byPath = <String, LocalVideo>{
+        for (final LocalVideo video in ordered) video.path: video,
+      };
+      final EpisodeGrouping? grouped = groupEpisodes(
+        localEpisodeEntries(ordered),
+        current.path,
+      );
+      final EpisodeGrouping? group = _localGrouping(grouped, byPath);
+      final int index = group?.currentIndex ?? 0;
+      final Uri uri = Uri.parse(localFileUriText(current.path));
+      final int? resumeMs = (startPositionMs != null && startPositionMs > 0) ? startPositionMs : null;
+
+      await ref.read(playerPortProvider).open(
+        PlayerRequest(
+          streamUrl: uri,
+          title: current.title,
+          engineId: -1,
+          fileIndex: index,
+          subtitlePath: current.subtitlePath,
+          startAt: resumeMs == null ? null : Duration(milliseconds: resumeMs),
+        ),
+        episodeGroup: group,
+      );
+      state = PlaybackUiState(
+        nowPlaying: NowPlaying(
+          title: (showTitle.trim().isEmpty ? current.title : showTitle.trim()),
+          engineId: -1,
+          fileIndex: index,
+          isLocal: true,
+        ),
+      );
+    } catch (error, stackTrace) {
+      state = state.copyWith(
+        busy: false,
+        failure: describeFailure(error, stackTrace: stackTrace),
+      );
+    }
+  }
+
+  /// 本地归组 → 播放器那份（**path 与 streamUri 都换成 `file:` URI**）。
+  ///
+  /// 为什么两者都要换：子窗口换集时它自己按 `streamUri` 开盘，而之后由 `_currentPath`
+  /// 反查"现在放的是分组里的第几项"（自动下一集就这么找）。`_currentPath` 是它开盘用的
+  /// 那个字符串 —— 只换 `streamUri` 不换 `path`，两边就永远对不上，自动下一集会一直
+  /// 停在同一集。归组本身仍旧按**真实路径**算（目录/指纹规则是按真实路径写的）。
+  EpisodeGrouping? _localGrouping(EpisodeGrouping? raw, Map<String, LocalVideo> byPath) {
+    if (raw == null) return null;
+    final List<EpisodeEntry> entries = <EpisodeEntry>[];
+    for (final EpisodeEntry entry in raw.entries) {
+      final Uri uri = Uri.parse(localFileUriText(entry.path));
+      entries.add(
+        EpisodeEntry(
+          title: entry.title,
+          path: uri.toString(),
+          streamUri: uri,
+          episode: entry.episode,
+          subtitlePath: byPath[entry.path]?.subtitlePath ?? entry.subtitlePath,
+        ),
+      );
+    }
+    return EpisodeGrouping(entries, raw.currentIndex);
+  }
+
   /// 排障 / 截图专用（`--play=<url>`）：把一条**不经过引擎**的 URL 当成本次点播投出去。
   ///
   /// 为什么要有这条：`main.dart` 的 `--play` 原来只调 `playerWindow.open()`，
@@ -293,8 +388,11 @@ class PlaybackController extends Notifier<PlaybackUiState> {
   /// 找进度，引擎里必然没有 -1 这条 ⇒ 没有进度浮层，正是探针要的（不是真实点播）。
   Future<void> debugPlayUrl(String url, {String? title}) async {
     final String label = (title ?? '').trim().isEmpty ? url : title!.trim();
+    // 本地路径（`--play=F:\a.mkv` 这种排障用法）同样要转 `file:` URI：
+    // `Uri.parse` 会把它当成 scheme=`f` 的 URI，播放器那边就变成"打不开"。
+    final Uri uri = File(url).existsSync() ? Uri.parse(localFileUriText(url)) : Uri.parse(url);
     await ref.read(playerPortProvider).open(
-          PlayerRequest(streamUrl: Uri.parse(url), title: label, engineId: -1, fileIndex: 0),
+          PlayerRequest(streamUrl: uri, title: label, engineId: -1, fileIndex: 0),
         );
     state = PlaybackUiState(nowPlaying: NowPlaying(title: label, engineId: -1, fileIndex: 0));
   }
@@ -660,6 +758,20 @@ class PlaybackController extends Notifier<PlaybackUiState> {
         decodeWatchProgress(raw);
     if (progress == null) return;
     final NowPlaying? current = state.nowPlaying;
+    // 本地文件：进度记到 `local.progress`（键 = 真实路径），**不写观看记录**
+    // —— 观看记录那条链要番剧 id / infoHash，本地文件两样都没有（见 spec §4）。
+    if (current != null && current.isLocal) {
+      try {
+        await ref.read(localLibraryProvider.notifier).recordProgress(
+              progress.path ?? '',
+              positionMs: progress.positionMs,
+              durationMs: progress.durationMs,
+            );
+      } catch (_) {
+        // 记不上进度不该影响播放（与观看记录同一口径）。
+      }
+      return;
+    }
     WatchMeta? watch = current?.watch;
     // 子窗口自己换集时（同一个 torrent 里的其它文件），进度要归到**它真正在放的那一集**；
     // 顺便把那一集的记录补上（开播时宿主并不知道它会换集）。
@@ -1246,9 +1358,12 @@ class PlaybackController extends Notifier<PlaybackUiState> {
   /// 下次开窗会带着新的组过去。
   void _pushSeriesGroup(Playlist list) {
     try {
-      unawaited(ref
-          .read(playerWindowServiceProvider)
-          .pushArgs(episodeGroup: encodeEpisodeGroup(_groupingOf(list))));
+      unawaited(ref.read(playerWindowServiceProvider).pushArgs(
+            episodeGroup: encodeEpisodeGroup(
+              _groupingOf(list),
+              autoNext: ref.read(settingsProvider).autoPlayNext,
+            ),
+          ));
     } catch (_) {
       // 推环境失败不影响播放（`pushArgs` 内部也吞了通道异常，这里只是兜底）。
     }

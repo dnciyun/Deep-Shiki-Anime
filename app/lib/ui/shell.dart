@@ -45,6 +45,7 @@ import 'following_page.dart';
 import 'history_page.dart';
 import 'home_page.dart';
 import 'library_page.dart';
+import 'local_page.dart';
 import 'queue_page.dart';
 import 'search_page.dart';
 import 'settings_page.dart';
@@ -241,10 +242,10 @@ class _DsShellState extends ConsumerState<DsShell> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 内容区：九个 tab 的**懒挂载**栈
+// 内容区：十个 tab 的**懒挂载**栈
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 九个内容页，**顺序必须与 `ShellTab.values` 一一对应**（`tab.index` 就是下标）。
+/// 十个内容页，**顺序必须与 `ShellTab.values` 一一对应**（`tab.index` 就是下标）。
 ///
 /// 写成顶层 `const` 是为了懒挂载时反复取到**同一个实例**：`IndexedStack` 靠位置认
 /// element，实例不变才能保证"进过的页切走再切回来仍是原来那个 State"。
@@ -259,6 +260,7 @@ const List<Widget> _tabPages = <Widget>[
   FollowingPage(),
   QueuePage(),
   CompletedPage(),
+  LocalPage(),
   ExtensionsPage(),
   HistoryPage(),
   SettingsPage(),
@@ -266,16 +268,16 @@ const List<Widget> _tabPages = <Widget>[
 
 /// 内容区栈：**首帧只建当前 tab，别的页第一次进去才建，建过就常驻**（1.1.0 M1/T1）。
 ///
-/// 为什么不再一股脑全建：`IndexedStack` 会**把九个孩子全 build 一遍**（它只是不画），
-/// 于是启动即付出九个页面的挂载代价 ——
+/// 为什么不再一股脑全建：`IndexedStack` 会**把十个孩子全 build 一遍**（它只是不画），
+/// 于是启动即付出十个页面的挂载代价 ——
 /// * 设置页 `initState` 同步读一遍 10 MB 的设置 box + 数一遍 KV 缓存占用；
 /// * 「正在追」挂载即按订阅数发请求（N 条订阅 = 启动就 N 个出站请求）；
 /// * 每个页面的 provider 全常驻（首页推荐、轮播、种子块…）。
-/// 用户要的是"切页不丢状态"（`IndexedStack` 的意义），而不是"启动就把九页全跑一遍"：
+/// 用户要的是"切页不丢状态"（`IndexedStack` 的意义），而不是"启动就把十页全跑一遍"：
 /// 懒挂载两样都保住 —— 没进过的页不花一分钱，进过的页切走也不销毁。
 ///
 /// `SizedBox.shrink()` 占位而不是 `null`/跳过：`IndexedStack.index` 是**位置下标**，
-/// 长度必须恒为 `ShellTab.values.length`（现在是 9），否则下标会错位。
+/// 长度必须恒为 `ShellTab.values.length`（现在是 10），否则下标会错位。
 class _LazyTabStack extends StatefulWidget {
   const _LazyTabStack({required this.index});
 
@@ -616,6 +618,7 @@ class _NavItemState extends State<_NavItem> {
       ShellTab.following => Icons.favorite_border,
       ShellTab.queue => Icons.downloading,
       ShellTab.completed => Icons.task_alt,
+      ShellTab.local => Icons.folder_open,
       ShellTab.extensions => Icons.extension_outlined,
       ShellTab.history => Icons.history,
       ShellTab.settings => Icons.settings_outlined,

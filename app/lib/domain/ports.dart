@@ -18,6 +18,7 @@ import 'package:flutter/widgets.dart';
 import 'bangumi.dart';
 import 'bangumi_library.dart';
 import 'episode_group.dart';
+import 'local_media.dart';
 import 'models.dart';
 
 /// 端口未接通 / 上游依赖未就绪。UI 必须把 [message] + [hint] 直接展示给用户。
@@ -297,6 +298,22 @@ abstract interface class PickerPort {
   Future<String?> pickDirectory({String? title});
 
   Future<String?> pickFile({String? title, List<String> extensions = const <String>[]});
+}
+
+/// 本地文件夹扫描端口（`dart:io` 的真实实现 + 测试用假实现）。
+///
+/// 为什么单独一个端口而不是在 `local_library.dart` 里直接 `Directory.list`：
+/// 扫描是**唯一**的磁盘 IO，把它关在端口后面，控制器那套（文件夹增删 / 进度 /
+/// 错误提示）就能在测试里用一份内存目录跑满。返回的是**文件清单**（视频 + 字幕
+/// 两类扩展名都收），"哪些是视频、字幕怎么配"是 `domain/local_media.dart` 的纯逻辑。
+abstract interface class LocalMediaScannerPort {
+  /// 递归扫描 [folder]。目录不存在 / 没权限时抛异常（调用方把它显示在该行上）。
+  ///
+  /// 实现必须**容错**：某个子目录读不了就跳过它，不要让整次扫描失败。
+  Future<List<LocalFileStat>> scan(String folder);
+
+  /// 平台支持（桌面才有意义；false 时页面直接说明"这个平台不支持"）。
+  bool get isSupported;
 }
 
 /// 一次「拉起边车」的结果。失败必须带可行动提示。

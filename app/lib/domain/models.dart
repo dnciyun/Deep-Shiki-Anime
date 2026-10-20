@@ -1369,6 +1369,13 @@ class NowPlaying {
   /// 否则观看记录里那一行的「继续播放」没有可播的目标。
   final Map<String, ({WatchMeta watch, int? fileIndex})> watchByUrl;
 
+  /// 这一次播的是**本地文件**（「本地」页里点的）。
+  ///
+  /// 为什么要这个标记：本地播放不写观看记录（没有番剧 id / infoHash），
+  /// 但**要记进度**到 `local.progress`（本地页行上那个"看到 12:34"）。
+  /// 播放窗口回推进度时宿主只有这一条线索能分辨"该记哪儿"。
+  final bool isLocal;
+
   const NowPlaying({
     required this.title,
     required this.engineId,
@@ -1376,6 +1383,7 @@ class NowPlaying {
     this.upNext = const <SourceItemView>[],
     this.watch,
     this.watchByUrl = const <String, ({WatchMeta watch, int? fileIndex})>{},
+    this.isLocal = false,
   });
 
   NowPlaying copyWith({
@@ -1385,6 +1393,7 @@ class NowPlaying {
     List<SourceItemView>? upNext,
     WatchMeta? watch,
     Map<String, ({WatchMeta watch, int? fileIndex})>? watchByUrl,
+    bool? isLocal,
   }) => NowPlaying(
     title: title ?? this.title,
     engineId: engineId ?? this.engineId,
@@ -1392,5 +1401,6 @@ class NowPlaying {
     upNext: upNext ?? this.upNext,
     watch: watch ?? this.watch,
     watchByUrl: watchByUrl ?? this.watchByUrl,
+    isLocal: isLocal ?? this.isLocal,
   );
 }

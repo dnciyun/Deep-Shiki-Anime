@@ -976,10 +976,15 @@ Rect? decodeGeometry(Object? raw) {
 /// 宿主归组结果 → 可 JSON 传输的分组（子窗口是独立 isolate，只能传值）。///
 /// 每集的 `streamUrl` 由宿主填好（引擎的 per-file 地址只有主窗口拿得到），
 /// 子窗口点上一集/下一集时直接用这个地址（决策 B31）。
-Map<String, Object?>? encodeEpisodeGroup(EpisodeGrouping? group) {
+///
+/// [autoNext] = 「播完自动下一集」（设置页那个开关）。为什么放在分组里而不是
+/// 另开一条环境通道：自动下一集必须是**分组级别**的语义（同一部番的相邻两集），
+/// 而分组已经是随播放请求一起过去的那一份；子窗口按它决定要不要往下走。
+Map<String, Object?>? encodeEpisodeGroup(EpisodeGrouping? group, {bool autoNext = false}) {
   if (group == null || group.entries.length <= 1) return null;
   return <String, Object?>{
     'currentIndex': group.currentIndex,
+    'autoNext': autoNext,
     'items': <Map<String, Object?>>[
       for (final EpisodeEntry e in group.entries)
         <String, Object?>{
@@ -989,6 +994,8 @@ Map<String, Object?>? encodeEpisodeGroup(EpisodeGrouping? group) {
           // 「播放列表太小了看不到集数了」）。
           'episode': ?e.episode,
           if (e.streamUri != null) 'streamUrl': e.streamUri.toString(),
+          // 本地文件自动配到的同名字幕：跟着条目走，换集之后字幕不丢。
+          'subtitlePath': ?e.subtitlePath,
         },
     ],
   };

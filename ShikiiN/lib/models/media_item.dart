@@ -20,11 +20,18 @@ class MediaItem {
   /// 播放器**不自己解析标题**（同一集不能两处显示不一样），宿主给什么就显示什么。
   final int? episode;
 
+  /// 这一集的外挂字幕绝对路径（宿主自己配好的同名字幕；null = 没有）。
+  ///
+  /// 为什么挂在条目上：本地文件夹里点「下一集」是**播放器自己**开盘的（`streamUrl`
+  /// 已经填好），不走宿主那条链路 —— 没有这个字段，换集之后字幕就丢了。
+  final String? subtitlePath;
+
   const MediaItem({
     required this.path,
     required this.title,
     this.streamUrl,
     this.episode,
+    this.subtitlePath,
   });
 
   // 既有语义（勿改）：同一路径即同一项；streamUrl 不参与比较。

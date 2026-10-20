@@ -18,6 +18,7 @@ import 'bangumi_library.dart';
 import 'episode_group.dart';
 import 'extensions.dart';
 import 'extensions_port.dart';
+import 'local_media.dart';
 import 'models.dart';
 import 'ports.dart';
 
@@ -312,6 +313,20 @@ class UnavailablePickerPort implements PickerPort {
     List<String> extensions = const <String>[],
   }) async =>
       throw failure;
+}
+
+/// 本地扫描未接通（测试 / 未装配）。
+///
+/// 与选择器不同：这里**不抛异常**，返回空清单 + `isSupported = false`，
+/// 因为"扫描不到东西"本身是页面要正常显示的一种状态（空态），不是失败。
+class UnavailableLocalMediaScanner implements LocalMediaScannerPort {
+  const UnavailableLocalMediaScanner();
+
+  @override
+  bool get isSupported => false;
+
+  @override
+  Future<List<LocalFileStat>> scan(String folder) async => const <LocalFileStat>[];
 }
 
 /// 边车启动器未接通（真实实现由 main.dart 注入 core 的 `EngineRuntime`）。
