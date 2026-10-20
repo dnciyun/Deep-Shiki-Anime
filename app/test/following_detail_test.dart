@@ -92,7 +92,7 @@ class _Queue implements QueuePort {
       throw UnimplementedError('测试替身：${invocation.memberName}');
 
   @override
-  Future<QueueJobView> enqueueDownload(SourceItemView item) async {
+  Future<QueueJobView> enqueueDownload(SourceItemView item, {List<int>? onlyFiles}) async {
     enqueued.add(item.id);
     return QueueJobView(
       id: 'job-${item.id}',

@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dsanima_core/sources/kv.dart' show KeyValueStore;
+import 'package:dsanima_core/subs/queue.dart' show kMaxConcurrent;
 import 'package:dsanima_core/update/update.dart' as core_update;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1260,25 +1261,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       (bool v) => setState(() => _draft = _draft.copyWith(autoPlayNext: v)),
                     ),
                     const SizedBox(height: 16),
+                    // 2026-10-20（用户：「优化同时下载为输入数字方式」）：下拉 → 数字输入。
+                    // 上限由 core 的 `kMaxConcurrent`（10）定义，越界就地标红、不静默夹紧。
                     _row(<Widget>[
-                      SizedBox(
-                        width: 200,
-                        child: DropdownButtonFormField<int>(
-                          initialValue: _draft.bandwidth.maxConcurrent,
-                          decoration: const InputDecoration(labelText: '并发下载数（1–3）'),
-                          isExpanded: true,
-                          dropdownColor: t.surfaceAlt,
-                          style: dsControlTextStyle(t, fontSize: kSettingsBodySize),
-                          iconSize: 18,
-                          items: const <DropdownMenuItem<int>>[
-                            DropdownMenuItem<int>(value: 1, child: Text('1')),
-                            DropdownMenuItem<int>(value: 2, child: Text('2')),
-                            DropdownMenuItem<int>(value: 3, child: Text('3')),
-                          ],
-                          onChanged: (int? value) => setState(
-                            () => _draft = _draft.copyWith(
-                              bandwidth: _draft.bandwidth.copyWith(maxConcurrent: value ?? 1),
-                            ),
+                      _numberField(
+                        t,
+                        name: 'maxConcurrent',
+                        value: _draft.bandwidth.maxConcurrent,
+                        label: '并发下载数（1–$kMaxConcurrent）',
+                        min: 1,
+                        max: kMaxConcurrent,
+                        onChanged: (num parsed) => setState(
+                          () => _draft = _draft.copyWith(
+                            bandwidth: _draft.bandwidth.copyWith(maxConcurrent: parsed.toInt()),
                           ),
                         ),
                       ),
@@ -2119,6 +2114,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// * 提示只在状态真的变了才 `setState`（这一页刻意避免每次按键重铺整页）。
   ///
   /// [integer] false 时按小数解析（做种比那种）。
+  ///
+  /// [min]/[max]：有范围的设置（并发下载数 1–10）。越界与非法一样**不写草稿**、
+  /// 就地标红说明范围 —— 不静默夹紧（夹紧会让框里写着 99、实际生效 10，用户以为
+  /// 自己设成了 99）。
   Widget _numberField(
     DsTokens t, {
     required String name,
@@ -2127,6 +2126,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     required void Function(num parsed) onChanged,
     double width = 200,
     bool integer = true,
+    num? min,
+    num? max,
   }) {
     return SizedBox(
       width: width,
@@ -2148,7 +2149,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   ? '只认数字${integer ? '（整数）' : ''}：这一项还用着上一个值'
                   : parsed < 0
                       ? '不能是负数：这一项还用着上一个值'
-                      : null;
+                      : (min != null && parsed < min)
+                          ? '至少要 $min：这一项还用着上一个值'
+                          : (max != null && parsed > max)
+                              ? '最多 $max：这一项还用着上一个值'
+                              : null;
           if (_fieldErrors[name] != error) {
             setState(() {
               if (error == null) {

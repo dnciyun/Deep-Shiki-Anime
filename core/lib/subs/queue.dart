@@ -74,6 +74,7 @@ class QueueJob {
     this.priority = QueueManager.playbackPriority,
     this.attempts = 0,
     this.error,
+    this.onlyFiles,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -89,6 +90,15 @@ class QueueJob {
   int priority;
   int attempts;
   String? error;
+
+  /// 只下这些文件序号（引擎的 `onlyFiles`；null = 全下）。
+  ///
+  /// 2026-10-20：拖入 `.torrent` 时用户在确认框里勾掉了不需要的文件（nfo / 图片 /
+  /// 其它版本的同一集），这份选择要**跟着任务走到底** —— 不只是入队那一刻，
+  /// 而是 [QueueManager.pump] 真正把任务交给引擎时也要带上，否则重启过一次
+  /// （任务回到 `queued`）就变成整包下。
+  List<int>? onlyFiles;
+
   DateTime createdAt;
   DateTime updatedAt;
 
@@ -108,6 +118,7 @@ class QueueJob {
         'priority': priority,
         'attempts': attempts,
         if (error != null) 'error': error,
+        if (onlyFiles != null && onlyFiles!.isNotEmpty) 'onlyFiles': onlyFiles,
         'createdAt': createdAt.toUtc().toIso8601String(),
         'updatedAt': updatedAt.toUtc().toIso8601String(),
       };
@@ -129,6 +140,9 @@ class QueueJob {
             QueueManager.playbackPriority,
         attempts: (json['attempts'] as num?)?.toInt() ?? 0,
         error: json['error'] as String?,
+        onlyFiles: (json['onlyFiles'] as List?)
+            ?.map((dynamic e) => (e as num).toInt())
+            .toList(growable: false),
         createdAt: _requiredDate(json['createdAt'], 'createdAt'),
         updatedAt: _requiredDate(json['updatedAt'], 'updatedAt'),
       );
@@ -361,6 +375,13 @@ RegExp? _excludeRegex(String pattern) {
   return compiled;
 }
 
+/// 并发下载数的硬上限（1–10）。
+///
+/// 用户 2026-10-20：「同时下载改成填数字」。上限放在 core：UI 让用户随便填，
+/// 但真正决定同时启动几条的是这里的 [BandwidthPolicy.effectiveMaxConcurrent]，
+/// 所以配置文件/旧版本里的大数字不会把带宽和磁盘打爆。
+const int kMaxConcurrent = 10;
+
 /// 省流量策略（spec §4.3「设置加入省流量列表」）。
 class BandwidthPolicy {  const BandwidthPolicy({
     this.preheatAhead = 0,
@@ -410,14 +431,19 @@ class BandwidthPolicy {  const BandwidthPolicy({
   /// true ⇒ 播放结束后删除任务与文件。
   final bool deleteAfterPlayed;
 
-  /// 并发下载数（spec：可调 1–3，超出范围会被夹到 [1,3]）。
+  /// 并发下载数（可调 1–[kMaxConcurrent]，超出范围会被夹到 `[1, kMaxConcurrent]`）。
+  ///
+  /// 2026-10-20：用户要求「同时下载改成填数字」—— 上限从 3 放宽到 [kMaxConcurrent]，
+  /// UI 由下拉换成数字输入。夹紧逻辑仍然是**唯一**的真相来源：配置文件被手改成
+  /// 999 也只按 [kMaxConcurrent] 跑，不会把边车/磁盘打爆。
   final int maxConcurrent;
 
   /// 命中的番剧/规则一律不预取（省流量列表，UI 可编辑）。
   final List<String> excludePatterns;
 
   /// 生效的并发数。
-  int get effectiveMaxConcurrent => maxConcurrent < 1 ? 1 : (maxConcurrent > 3 ? 3 : maxConcurrent);
+  int get effectiveMaxConcurrent =>
+      maxConcurrent < 1 ? 1 : (maxConcurrent > kMaxConcurrent ? kMaxConcurrent : maxConcurrent);
 
   /// 生效的预热量：0（关）… 3。再多既吃带宽也吃磁盘，档位就到这里。
   int get effectivePreheatAhead => preheatAhead < 0 ? 0 : (preheatAhead > 3 ? 3 : preheatAhead);
@@ -716,6 +742,7 @@ class QueueManager {
     int priority = playbackPriority,
     String? saveSubFolder,
     bool explicit = false,
+    List<int>? onlyFiles,
   }) async {
     final QueueJob? open = _openJobFor(item);
     if (open != null) return open;
@@ -736,6 +763,9 @@ class QueueManager {
       priority: priority,
       createdAt: _clock(),
       updatedAt: _clock(),
+      onlyFiles: (onlyFiles == null || onlyFiles.isEmpty)
+          ? null
+          : (List<int>.of(onlyFiles)..sort()),
     );
     _jobs.add(job);
     await _afterMutation();
@@ -998,7 +1028,7 @@ class QueueManager {
             _emit();
             continue;
           }
-          starting.add(_start(next, magnet: magnet));
+          starting.add(_start(next, magnet: magnet, onlyFiles: next.onlyFiles));
         }
         if (starting.isEmpty) continue; // 没得启动：等 do-while 条件收尾
         await Future.wait(starting);

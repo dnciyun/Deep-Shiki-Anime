@@ -962,7 +962,10 @@ class CoreQueuePort implements QueuePort {
   }
 
   @override
-  Future<domain.QueueJobView> enqueueDownload(domain.SourceItemView item) async {
+  Future<domain.QueueJobView> enqueueDownload(
+    domain.SourceItemView item, {
+    List<int>? onlyFiles,
+  }) async {
     // 用户手点「下载」= 明确要（explicit），所以不会返回 null（墓碑会被清掉）。
     // mikan 搜索结果同样先在详情页补磁力，否则入队后永远起不来（见 ensurePlayable）。
     final core.SourceItem rich = await _require().ensurePlayable(_toCoreItem(item));
@@ -980,6 +983,8 @@ class CoreQueuePort implements QueuePort {
       subscriptionId: item.sourceId,
       priority: core.QueueManager.playbackPriority + 10,
       explicit: true,
+      // 拖入 .torrent 时勾选的文件序号（null = 全下）。存进任务，pump 时带给引擎。
+      onlyFiles: onlyFiles,
     ))!;
     return toJobView(queued);
   }

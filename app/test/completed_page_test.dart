@@ -87,7 +87,7 @@ class _FakeQueue implements QueuePort {
       throw const PortUnavailableException('测试替身');
 
   @override
-  Future<QueueJobView> enqueueDownload(SourceItemView item) async =>
+  Future<QueueJobView> enqueueDownload(SourceItemView item, {List<int>? onlyFiles}) async =>
       throw const PortUnavailableException('测试替身');
 
   @override

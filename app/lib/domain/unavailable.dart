@@ -183,7 +183,8 @@ class UnavailableQueuePort implements QueuePort {
       throw failure;
 
   @override
-  Future<QueueJobView> enqueueDownload(SourceItemView item) async => throw failure;
+  Future<QueueJobView> enqueueDownload(SourceItemView item, {List<int>? onlyFiles}) async =>
+      throw failure;
 
   @override
   Future<void> attachToSubsRule(SourceItemView item) async => throw failure;

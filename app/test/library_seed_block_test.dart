@@ -124,7 +124,7 @@ class _FakeQueue extends UnavailableQueuePort {
       Stream<List<QueueJobView>>.value(jobs);
 
   @override
-  Future<QueueJobView> enqueueDownload(SourceItemView item) async {
+  Future<QueueJobView> enqueueDownload(SourceItemView item, {List<int>? onlyFiles}) async {
     enqueued.add(item);
     return QueueJobView(
       id: 'job${enqueued.length}',

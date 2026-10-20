@@ -116,7 +116,7 @@ class _QueuePort implements QueuePort {
       Stream<List<QueueJobView>>.value(const <QueueJobView>[]);
 
   @override
-  Future<QueueJobView> enqueueDownload(SourceItemView item) async =>
+  Future<QueueJobView> enqueueDownload(SourceItemView item, {List<int>? onlyFiles}) async =>
       throw const PortUnavailableException('测试替身：未实现下载');
 
   @override

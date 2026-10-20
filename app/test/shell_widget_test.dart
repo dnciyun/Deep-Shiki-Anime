@@ -26,7 +26,6 @@ import 'package:dsanima/ui/settings_page.dart';
 import 'package:dsanima/ui/shell.dart';
 import 'package:dsanima/ui/widgets/ds_theme_reveal.dart';
 import 'package:dsanima/ui/widgets/neo.dart';
-import 'package:dsanima/ui/widgets/neo_dropdown.dart';
 import 'package:dsanima/ui/widgets/search_sections.dart';
 import 'package:dsanima_core/sources/kv.dart' show InMemoryKeyValueStore;
 import 'package:flutter/gestures.dart';
@@ -106,7 +105,7 @@ class FakeQueuePort implements QueuePort {
   }) async => throw const PortUnavailableException('测试替身：不真正点播');
 
   @override
-  Future<QueueJobView> enqueueDownload(SourceItemView item) async {
+  Future<QueueJobView> enqueueDownload(SourceItemView item, {List<int>? onlyFiles}) async {
     calls.add('download:${item.id}');
     if (downloadFails) throw const PortUnavailableException('测试替身：未实现下载');
     return QueueJobView(
@@ -238,7 +237,7 @@ class PlayingQueuePort implements QueuePort {
   }) async => job;
 
   @override
-  Future<QueueJobView> enqueueDownload(SourceItemView item) async => job;
+  Future<QueueJobView> enqueueDownload(SourceItemView item, {List<int>? onlyFiles}) async => job;
 
   @override
   Future<void> attachToSubsRule(SourceItemView item) async {}
@@ -997,15 +996,16 @@ void main() {
     await tester.pumpAndSettle();
 
     // 默认 1 条（`BandwidthPolicy.maxConcurrent` 的默认值 = 同时只下一条）。
-    expect(find.text('一起下载 · 1 条'), findsOneWidget);
+    final Finder field = find.byKey(const ValueKey<String>('queue-max-concurrent'));
+    expect(field, findsOneWidget);
+    expect(tester.widget<TextField>(field).controller!.text, '1');
 
-    // 下拉里选 3：触发器和菜单项文案相同，所以选菜单项要取 `.last`。
-    await tester.tap(find.byType(NeoDropdown<int>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('一起下载 3 条').last);
+    // 2026-10-20：下拉改成**数字输入**（回车提交）。
+    await tester.enterText(field, '3');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
-    expect(find.text('一起下载 · 3 条'), findsOneWidget);
+    expect(tester.widget<TextField>(field).controller!.text, '3');
     // 写进的是**同一份设置**（设置页「并发下载数」读的就是它）……
     final ProviderContainer container =
         ProviderScope.containerOf(tester.element(find.byType(QueuePage)));
@@ -1014,6 +1014,13 @@ void main() {
     // 但会到 `queue.setPolicy` → `pump()`，新上限当场生效）。
     expect(lifecycle.applied, 1);
     expect(lifecycle.payloads.single.bandwidth.maxConcurrent, 3);
+
+    // 越界（>10）夹到 10，并且框里也跟着变成 10（框里写的 = 真正生效的）。
+    await tester.enterText(field, '42');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(field).controller!.text, '10');
+    expect(container.read(settingsProvider).bandwidth.maxConcurrent, 10);
 
     // 排掉 SnackBar 的自动关闭定时器。
     await tester.pump(const Duration(seconds: 3));

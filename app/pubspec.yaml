@@ -92,6 +92,14 @@ dependencies:
   desktop_multi_window: ^0.3.1
   # 与 shikiin 保持一致（该包 8.0.0 与 8.3.x API 有差异，锁定同一版本避免解析冲突）
   file_picker: 8.0.0
+  # 拖放：拖入视频直接播、拖入 `.torrent` 先确认再入队（用户 2026-10-20）。
+  #
+  # ⚠️ 这个包曾经因为"全仓零导入"被删过（见 shikiin/pubspec.yaml 的说明）—— 现在
+  # 真的用了（`ui/drop_intake.dart`），按那条规矩加回来。代价是一个插件 DLL
+  # （`desktop_drop_plugin.dll`）+ 注册项；换来的是 Windows 上**正确的 OLE 拖放**
+  # （`IDropTarget` 注册在 Flutter view 上），而不是拿旧式 `WM_DROPFILES` 在子窗口
+  # 上赌一把（view 盖满客户区，`DragAcceptFiles` 挂在 frame 上收不到）。
+  desktop_drop: ^0.7.1
   tray_manager: ^0.5.3
   local_notifier: ^0.1.6
 

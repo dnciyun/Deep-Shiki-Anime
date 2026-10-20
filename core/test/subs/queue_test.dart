@@ -205,7 +205,7 @@ void main() {
     await h.tearDown();
   });
 
-  test('并发数：maxConcurrent=2 启动两个；>3 被夹到 3', () async {
+  test('并发数：maxConcurrent=2 启动两个；大于 10 被夹到 10', () async {
     final h = Harness(policy: const BandwidthPolicy(maxConcurrent: 2));
     for (final n in <String>['01', '02', '03']) {
       await h.manager.enqueue(ep(n), subscriptionId: 's');
@@ -215,15 +215,49 @@ void main() {
         hasLength(2));
     expect(h.engine.addCalls, hasLength(2));
 
+    // 2026-10-20：上限从 3 放宽到 10（设置页/队列页改成填数字）。
+    expect(const BandwidthPolicy(maxConcurrent: 5).effectiveMaxConcurrent, 5);
+    expect(const BandwidthPolicy(maxConcurrent: 42).effectiveMaxConcurrent, 10);
     final h3 = Harness(policy: const BandwidthPolicy(maxConcurrent: 5));
-    expect(h3.manager.policy.effectiveMaxConcurrent, 3);
-    for (final n in <String>['01', '02', '03', '04', '05']) {
+    for (final n in <String>['01', '02', '03', '04', '05', '06']) {
       await h3.manager.enqueue(ep(n), subscriptionId: 's');
     }
     await h3.manager.pump();
-    expect(h3.engine.addCalls, hasLength(3));
+    expect(h3.engine.addCalls, hasLength(5));
     await h.tearDown();
     await h3.tearDown();
+  });
+
+  test('只下选中的文件：onlyFiles 跟着任务走，pump 交给引擎时也带上', () async {
+    // 2026-10-20：拖入 .torrent 时用户在确认框里勾掉了不要的文件（nfo / 图片），
+    // 这份选择必须跟到**真正交给引擎**的那一刻（重启后任务回到 queued 也一样）。
+    final h = Harness(policy: const BandwidthPolicy(maxConcurrent: 1));
+    final QueueJob? job = await h.manager.enqueue(
+      ep('01'),
+      subscriptionId: 'dropped',
+      priority: 20,
+      explicit: true,
+      onlyFiles: <int>[2, 0],
+    );
+    expect(job!.onlyFiles, <int>[0, 2], reason: '存进去时排序，引擎那边序号是稳定序');
+    await h.manager.pump();
+    expect(h.engine.lastOnlyFiles, <int>[0, 2]);
+
+    // 落盘 / 读回：重启后 still 只下这两条。
+    final Map<String, dynamic> json = job.toJson();
+    expect(json['onlyFiles'], <int>[0, 2]);
+    final QueueJob restored = QueueJob.fromJson(json);
+    expect(restored.onlyFiles, <int>[0, 2]);
+
+    // 全下（null / 空）不写这个键：老配置文件里没有它，读出来也是 null。
+    final QueueJob? all = await h.manager.enqueue(
+      ep('02'),
+      subscriptionId: 'dropped',
+      explicit: true,
+    );
+    expect(all!.onlyFiles, isNull);
+    expect(all.toJson().containsKey('onlyFiles'), isFalse);
+    await h.tearDown();
   });
 
   test('并发启动：一条卡在等元数据，不挡住下一条交给引擎（第二十三轮）', () async {
@@ -866,6 +900,7 @@ void main() {
       expect(const BandwidthPolicy(maxConcurrent: 0).effectiveMaxConcurrent, 1);
       expect(const BandwidthPolicy(maxConcurrent: -3).effectiveMaxConcurrent, 1);
       expect(const BandwidthPolicy(maxConcurrent: 3).effectiveMaxConcurrent, 3);
+      expect(const BandwidthPolicy(maxConcurrent: 10).effectiveMaxConcurrent, 10);
     });
 
     test('preheatAhead 的边界：0/负数 = 关，上限 3', () {

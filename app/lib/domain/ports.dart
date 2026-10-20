@@ -91,7 +91,11 @@ abstract interface class QueuePort {
   });
 
   /// 只下载不播放（priority 20）。
-  Future<QueueJobView> enqueueDownload(SourceItemView item);
+  ///
+  /// [onlyFiles] = 只下这些文件序号（引擎的 `onlyFiles`；null/空 = 全下）。
+  /// 拖入 `.torrent` 时用户在确认框里勾掉的文件不进下载队列 —— 这份选择会存进任务、
+  /// 并在真正交给引擎时带上（见 core `QueueJob.onlyFiles`），所以重启后不会被整包覆盖。
+  Future<QueueJobView> enqueueDownload(SourceItemView item, {List<int>? onlyFiles});
 
   /// 只订阅过滤（交给订阅规则，不入队）。
   Future<void> attachToSubsRule(SourceItemView item);

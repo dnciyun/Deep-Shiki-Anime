@@ -28,6 +28,7 @@ import 'state/playback.dart';
 import 'state/providers.dart';
 import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
+import 'ui/drop_intake.dart';
 import 'ui/first_run.dart';
 import 'ui/preview_page.dart';
 import 'ui/shell.dart';
@@ -150,8 +151,14 @@ class DsanimaApp extends ConsumerWidget {
       // 再外面套一层 [DsGlobalFailureListener]（第四十二轮 §2.1）：未捕获异常原来只写
       // stderr，用户侧零反馈；这一层把它变成一条带「怎么办」的提示。位置就在
       // `ScaffoldMessenger` 里面、业务树与所有弹层外面 —— 向导页和主外壳都覆盖得到。
-      builder: (BuildContext context, Widget? child) => DsGlobalFailureListener(
-        child: DsThemeRevealHost(child: child ?? const SizedBox.shrink()),
+      //
+      // 最外层再套一层 [DsDropIntake]（用户 2026-10-20：拖入视频直接播 / 拖入种子
+      // 先确认再入队）。放在 builder 的最外面 = **整窗**都能接住拖放，包括正开着的
+      // 对话框上面（`DropTarget` 靠 native 的 OLE 拖放，与 Flutter 的点击区域无关）。
+      builder: (BuildContext context, Widget? child) => DsDropIntake(
+        child: DsGlobalFailureListener(
+          child: DsThemeRevealHost(child: child ?? const SizedBox.shrink()),
+        ),
       ),
       home: _WindowEnvBridge(
         child: previewMode ? const PreviewPage() : const DsanimaHome(),

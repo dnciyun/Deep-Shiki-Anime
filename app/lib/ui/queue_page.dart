@@ -7,7 +7,9 @@ library;
 
 import 'dart:async';
 
+import 'package:dsanima_core/subs/queue.dart' show kMaxConcurrent;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show FilteringTextInputFormatter, TextInputFormatter;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/error_text.dart';
@@ -25,44 +27,61 @@ import 'widgets/neo.dart';
 import 'widgets/neo_dropdown.dart';
 import 'widgets/state_views.dart';
 
-/// 「一起下载 N 条」选择器（用户 2026-10-12 第二十三轮：「队列则是一起下载的数量」）。
+/// 「一起下载 N 条」输入框（用户 2026-10-20：「优化同时下载为输入数字方式」）。
 ///
 /// 它写的是**同一份设置**（`settings.bandwidth.maxConcurrent`）——设置页的
-/// 「并发下载数（1–3）」与这里显示的永远是同一个数，不存在两套并发上限。
-/// 改完立刻走 `applySettings`（与设置页「保存并生效」同一条链路）：并发数不是进程
-/// 参数，**不会重启边车**，但会走到 `queue.setPolicy` → `pump()`，
-/// 于是新上限**当场生效**（排队中的任务马上按新数量开始，不用等下一次队列变化）。
-class _ConcurrentPicker extends ConsumerWidget {
+/// 「并发下载数（1–10）」与这里显示的永远是同一个数，不存在两套并发上限。
+///
+/// 交互取定（数字输入特有的坑都在这里）：
+/// * 回车 / 失去焦点都算提交（只输入不提交等于没改，用户会以为生效了）；
+/// * 非法输入（空、字母）**回显当前值**；越界（<1 或 > [kMaxConcurrent]）夹到边界
+///   并**立刻把框里也改成夹后的数** —— 让框里写的和真正生效的是同一个值；
+/// * 值没变就什么都不做（不重复写设置、不重复 `applySettings`）。
+class _ConcurrentPicker extends ConsumerStatefulWidget {
   const _ConcurrentPicker();
 
-  /// 可选值 = 设置页那三个（`effectiveMaxConcurrent` 也是夹到 1–3，见 core 队列）。
-  static const List<int> choices = <int>[1, 2, 3];
+  @override
+  ConsumerState<_ConcurrentPicker> createState() => _ConcurrentPickerState();
+}
+
+class _ConcurrentPickerState extends ConsumerState<_ConcurrentPicker> {
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focus = FocusNode();
+
+  static int _clamp(int raw) => raw < 1 ? 1 : (raw > kMaxConcurrent ? kMaxConcurrent : raw);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final int raw = ref.watch(settingsProvider).bandwidth.maxConcurrent;
-    final int current = raw < 1 ? 1 : (raw > 3 ? 3 : raw);
-    return NeoDropdown<int>(
-      width: 176,
-      height: 32,
-      fontSize: DsTypeScale.caption,
-      // 第五十二轮：页面级下拉跟队列页身份色（蓝）走，不再是 accent。
-      hue: hueOfTab(ShellTab.queue),
-      value: current,
-      tooltip: '一起下载几条：队列每次按这个数把任务交给引擎（= 设置里的「并发下载数」）',
-      label: '一起下载 · $current 条',
-      items: <NeoDropdownItem<int>>[
-        for (final int n in choices) NeoDropdownItem<int>(n, '一起下载 $n 条'),
-      ],
-      onSelected: (int n) => _select(context, ref, n),
-    );
+  void initState() {
+    super.initState();
+    _focus.addListener(_onFocusChanged);
   }
 
-  Future<void> _select(BuildContext context, WidgetRef ref, int value) async {
-    final AppSettings current = ref.read(settingsProvider);
-    if (current.bandwidth.maxConcurrent == value) return;
-    final AppSettings next = current.copyWith(
-      bandwidth: current.bandwidth.copyWith(maxConcurrent: value),
+  @override
+  void dispose() {
+    _focus.removeListener(_onFocusChanged);
+    _focus.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChanged() {
+    if (!_focus.hasFocus) unawaited(_apply());
+  }
+
+  Future<void> _apply() async {
+    final int current = _clamp(ref.read(settingsProvider).bandwidth.maxConcurrent);
+    final String raw = _controller.text.trim();
+    final int? typed = int.tryParse(raw);
+    if (typed == null || typed == current) {
+      if (_controller.text != '$current') _controller.text = '$current';
+      return;
+    }
+    final int value = _clamp(typed);
+    if (_controller.text != '$value') _controller.text = '$value';
+    if (value == current) return;
+    final AppSettings settings = ref.read(settingsProvider);
+    final AppSettings next = settings.copyWith(
+      bandwidth: settings.bandwidth.copyWith(maxConcurrent: value),
     );
     await runGuarded(
       context,
@@ -71,6 +90,50 @@ class _ConcurrentPicker extends ConsumerWidget {
         await ref.read(lifecyclePortProvider).applySettings(next);
       },
       success: '一起下载 $value 条',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final DsTokens t = context.ds;
+    final int current = _clamp(ref.watch(settingsProvider).bandwidth.maxConcurrent);
+    // 别处改了并发数（设置页保存 / 别的入口）：没在编辑就跟着变。
+    if (!_focus.hasFocus && _controller.text != '$current') _controller.text = '$current';
+    return Tooltip(
+      message: '一起下载几条（= 设置里的「并发下载数」，1–$kMaxConcurrent）：'
+          '回车或点开别处生效',
+      child: SizedBox(
+        width: 122,
+        height: 32,
+        child: TextField(
+          key: const ValueKey<String>('queue-max-concurrent'),
+          controller: _controller,
+          focusNode: _focus,
+          textAlign: TextAlign.center,
+          keyboardType: TextInputType.number,
+          inputFormatters: <TextInputFormatter>[FilteringTextInputFormatter.digitsOnly],
+          style: TextStyle(
+            color: t.text,
+            fontSize: DsTypeScale.caption,
+            fontFeatures: DsTokens.tabular,
+          ),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            prefixText: '一起下载 ',
+            prefixStyle: TextStyle(color: t.text2, fontSize: DsTypeScale.caption),
+            suffixText: ' 条',
+            suffixStyle: TextStyle(color: t.text2, fontSize: DsTypeScale.caption),
+            filled: true,
+            fillColor: t.sunken,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(t.radiusControl),
+              borderSide: BorderSide.none,
+            ),
+          ),
+          onSubmitted: (_) => unawaited(_apply()),
+        ),
+      ),
     );
   }
 }

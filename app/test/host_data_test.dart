@@ -261,7 +261,15 @@ void main() {
     expect(core1.preheatAhead, 2);
     expect(core1.isExcluded('某番 合集 1080p'), isTrue);
     expect(core1.isExcluded('某番 第01话'), isFalse);
-    expect(core1.effectiveMaxConcurrent, 3, reason: '并发被夹到 1–3');
+    expect(core1.effectiveMaxConcurrent, 9, reason: '2026-10-20：上限放宽到 10，9 原样生效');
+    expect(
+      toCorePolicy(
+        const domain.BandwidthPolicy(maxConcurrent: 42),
+        stopSeedingAfterDownload: false,
+      ).effectiveMaxConcurrent,
+      10,
+      reason: '超过 10 才夹到上限',
+    );
     expect(core1.stopSeedingAfterPlayback, isTrue);
     expect(
       core1.stopSeedingAfterDownload,

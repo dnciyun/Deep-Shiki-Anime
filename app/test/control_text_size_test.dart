@@ -325,7 +325,9 @@ void main() {
   });
 
   group('设置页的 Material 下拉：13 + 主题字体族', () {
-    testWidgets('代理模式 / 默认源 / 搜索模式 / 并发下载数 四个都是 13', (WidgetTester tester) async {
+    testWidgets('代理模式 / 默认源 / 搜索模式 三个是 13（并发下载数改成数字输入框了）', (
+      WidgetTester tester,
+    ) async {
       await _pumpSettings(tester);
 
       // 四个分布在两个分组里（① 引擎·下载·网络 与 ② 外观·省流量·缓存），
@@ -342,8 +344,21 @@ void main() {
       // 「搜索模式」那句长选项在 13 下装得下（17 时它被截成「聚合（全部 / 动漫 / 全…」）。
       expect(find.text('聚合（全部 / 动漫 / 全集）'), findsOneWidget);
 
+      // 2026-10-20：并发下载数从下拉改成**数字输入框**（1–10），所以这里不再有
+      // 第 4 个 Material 下拉；改成断言那一刻的输入框字号与字体族仍然是 13。
       await _scrollTo(tester, find.textContaining('并发下载数'));
       _expectDropdownsAtSettingsSize(tester);
+      // TextFormField 本身不暴露 style/decoration：找它内部真正那个 TextField。
+      final Finder field = find.ancestor(
+        of: find.textContaining('并发下载数'),
+        matching: find.byType(TextField),
+      );
+      expect(field, findsOneWidget, reason: '「并发下载数」现在应该是数字输入框');
+      expect(
+        tester.widget<TextField>(field).style?.fontSize,
+        kSettingsBodySize,
+        reason: '输入框与同一行的其它设置项同档（13）',
+      );
     });
   });
 }
