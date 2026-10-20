@@ -93,7 +93,7 @@ void main() {
   }
 
   group('音效页', () {
-    testWidgets('装上音效包 → 档位、总强度、包名行都在；强度默认 100%',
+    testWidgets('装上音效包 → 档位、总强度、包名行都在；强度默认 50%（中性点）',
         (WidgetTester tester) async {
       await pumpPage(tester);
 
@@ -109,8 +109,8 @@ void main() {
         tester
             .widget<Slider>(find.byKey(const ValueKey<String>('audio-fx-intensity')))
             .value,
-        100,
-        reason: '老配置没有 intensity 字段 ⇒ 100%，不许一进来就变小',
+        shikiin.kAudioFxIntensityNeutral,
+        reason: '老配置没有 intensity 字段 ⇒ 中性点 50%（= 包里原值），不许一进来就变调',
       );
       expect(find.byKey(dsAudioFxEmptyKey), findsNothing);
     });
@@ -130,19 +130,21 @@ void main() {
       expect(window.sentAudioFx.length, 1, reason: '一次改动只推一条');
       expect(window.sentAudioFx.single['presetId'], 'audio-a/vocal');
       expect(window.sentAudioFx.single['enabled'], true);
-      expect(window.sentAudioFx.single['intensity'], 100);
+      expect(window.sentAudioFx.single['intensity'], shikiin.kAudioFxIntensityNeutral);
     });
 
-    testWidgets('拖总强度到中间 → provider 与推送里都是连续值，不是四档',
+    testWidgets('拖总强度到 3/4 处 → provider 与推送里都是连续值，不是四档',
         (WidgetTester tester) async {
       await pumpPage(tester);
 
       final Finder slider = find.byKey(const ValueKey<String>('audio-fx-intensity'));
-      await tester.tapAt(tester.getCenter(slider));
+      // 默认就是中性点 50%，点正中间等于"没变"（Slider 不会回调），所以点 3/4 处。
+      final Rect rect = tester.getRect(slider);
+      await tester.tapAt(Offset(rect.left + rect.width * 0.75, rect.center.dy));
       await tester.pump();
 
       final int intensity = container.read(audioFxSettingsProvider).intensity;
-      expect(intensity, inInclusiveRange(45, 55));
+      expect(intensity, inInclusiveRange(65, 85));
       expect(window.sentAudioFx.single['intensity'], intensity);
       // 只改强度：档位与开关原样（强度不是开关键）。
       expect(window.sentAudioFx.single['enabled'], isFalse);

@@ -116,32 +116,63 @@ class AudioFxSelection {
   int get hashCode => presetId.hashCode;
 }
 
+/// 总强度的**中性点**：50 = 包里的原值（2026-10-20 用户：「当前100的强度移动到50，
+/// 默认强度在50，拉大效果更明显」）。
+///
+/// 为什么中性点不是 100：滑杆原本只有"变淡"那半边可用（100 已是上限，再往上一格余量
+/// 都没有），用户想"比包里这档更猛"时无处可去。把原值放在中点、两边都留余量之后：
+/// 0 = 不施加 EQ，50 = 包里的原值，100 = 原值的两倍。
+const int kAudioFxIntensityNeutral = 50;
+
+/// 总强度滑块的下限 / 上限（页面滑杆与夹值都用它们，别在别处写 0 / 100）。
+const int kAudioFxIntensityMin = 0;
+const int kAudioFxIntensityMax = 100;
+
+/// 强度**尺度**的版本号，只用于读老文件（见 [AudioFxState.fromJson]）。
+///
+/// 1（隐含、不写进文件）= `100 = 包里原值`，只能变淡；
+/// 2 = `50 = 原值`，两边都能调（本轮）。老文件没有这个字段 ⇒ 按 1 换算。
+const int kAudioFxIntensityScheme = 2;
+
+/// 总强度 → 10 段增益的缩放系数：50 → 1.0（原值）、100 → 2.0（更明显）、0 → 0（平直）。
+///
+/// 界面（曲线）与滤镜链**必须走同一个函数**：各算一份的话，用户会看到曲线比耳朵里
+/// 更猛/更淡，然后怀疑音效坏了。
+double audioFxIntensityScale(int intensity) {
+  final int clamped = intensity.clamp(kAudioFxIntensityMin, kAudioFxIntensityMax);
+  return clamped / kAudioFxIntensityNeutral;
+}
+
 /// 拼 mpv `af` 属性的值；`preset == null` → 空串（原声，调用方负责清空）。
 ///
 /// 形如：
 /// `lavfi=[equalizer=f=31:width_type=o:width=1:g=-2,…,volume=-3.5dB,alimiter=limit=0.97]`
 ///
-/// [intensity]（0–100，100 = 包里的原值）：只按比例缩放 10 段 EQ 的增益。
-/// **预增益不参与缩放** —— 那正是 2026-10-19「改的音效没效果，都是把声音变小了」
-/// 那个事故的形状；这里再跟着缩一次，用户把强度从 100% 拖到 60% 就会听到
+/// [intensity]（0–100，**50 = 包里的原值**，见 [kAudioFxIntensityNeutral]）：只按比例
+/// 缩放 10 段 EQ 的增益。**预增益不参与缩放** —— 那正是 2026-10-19「改的音效没效果，
+/// 都是把声音变小了」那个事故的形状；这里再跟着缩一次，用户把强度从中点拉低就会听到
 /// 音效没变多少、音量先掉下去，旋钮的语义就退化成"音量"了。
 String audioFxFilterSpec(
   AudioFxPreset? preset, {
   int compression = 0,
   int loudness = 0,
-  int intensity = 100,
+  int intensity = kAudioFxIntensityNeutral,
 }) {
   if (preset == null) return '';
   // 夹一次再除：滑杆之外的来源（老配置手改、跨窗口传值）也可能给出 250 / -5，
   // 让越界值在这里停下，比在链里拼出 g=52.5 再由 mpv 报错要稳。
-  final double scale = intensity.clamp(0, 100) / 100;
+  final double scale = audioFxIntensityScale(intensity);
   final List<String> parts = <String>[];
   for (final String band in kAudioFxBands) {
     final int freq = kAudioFxBandFrequencies[band]!;
     final double gain = _clamp(preset.bands[band] ?? 0, kAudioFxBandMin, kAudioFxBandMax);
     // 只缩 EQ：0% 时 EQ 平直（0 dB）但压缩 / 均衡 / 限幅照旧，所以"0%"不是静音。
-    // 同时缩放仍落在 ±12 dB 内，不需要二次夹值。
-    parts.add('equalizer=f=$freq:width_type=o:width=1:g=${_num(gain * scale)}');
+    //
+    // ⚠️ 缩放之后**再夹回 ±12 dB**：100% 是原值的两倍，一个 9 dB 的频段会变成 18 dB，
+    // 而 `equalizer` 的增益是有界的。越界值的失败形态不是报错，而是**整条 af 链初始化
+    // 失败、一点声音都没有**（见本文件开头那段探针结论）。"封顶了"远好过没声。
+    final double scaled = _clamp(gain * scale, kAudioFxBandMin, kAudioFxBandMax);
+    parts.add('equalizer=f=$freq:width_type=o:width=1:g=${_num(scaled)}');
   }
   final double preamp = _clamp(preset.preamp, kAudioFxPreampMin, kAudioFxPreampMax);
   // 0 dB 不写 `volume`：链短一条、也避免「预增益吃掉抬升」那种听感事故
@@ -176,7 +207,7 @@ class AudioFxState {
     this.presetId,
     this.compression = 0,
     this.loudness = 0,
-    this.intensity = 100,
+    this.intensity = kAudioFxIntensityNeutral,
   });
 
   final bool enabled;
@@ -184,10 +215,11 @@ class AudioFxState {
   final int compression;
   final int loudness;
 
-  /// 总强度 0–100（100 = 包里的原值，只缩 EQ、不缩预增益；0 = EQ 平直但压缩照旧）。
+  /// 总强度 0–100：**50 = 包里的原值**（见 [kAudioFxIntensityNeutral]），100 = 原值两倍，
+  /// 只缩 EQ、不缩预增益；0 = EQ 平直但压缩/均衡照旧。
   ///
-  /// 默认 100 而不是 0：老的 `audio-fx.json` 没有这个字段时读成 100，
-  /// 否则升级一次所有人的音效都会"突然变小"（spec Review Focus 第 5 条）。
+  /// 默认 50 而不是 0：中点是"不动"，与滑杆的视觉中点重合；老 `audio-fx.json` 没有这个
+  /// 字段时也读成 [kAudioFxIntensityNeutral]，升级一次不至于让音效"突然变大/变小"。
   final int intensity;
 
   AudioFxState copyWith({
@@ -204,7 +236,7 @@ class AudioFxState {
         compression: compression ?? this.compression,
         loudness: loudness ?? this.loudness,
         // 不传 = 保持：播放窗口右键切档走的是 copyWith，强度是主窗口页面上的设置，
-        // 切一档就把它冲回 100% 会让"页面调的"和"右键切的"互相打架。
+        // 切一档就把它冲回中性点会让"页面调的"和"右键切的"互相打架。
         intensity: intensity ?? this.intensity,
       );
 
@@ -232,6 +264,7 @@ class AudioFxState {
         'compression': compression,
         'loudness': loudness,
         'intensity': intensity,
+        'intensityScheme': kAudioFxIntensityScheme,
       };
 
   static AudioFxState fromJson(Object? raw) {
@@ -240,14 +273,25 @@ class AudioFxState {
     final Object? presetId = raw['presetId'];
     final Object? compression = raw['compression'];
     final Object? loudness = raw['loudness'];
-    final Object? intensity = raw['intensity'];
+    final Object? rawIntensity = raw['intensity'];
+    final Object? scheme = raw['intensityScheme'];
+    // 缺字段 ⇒ 中性点（50 = 原值）：老配置的听感应是"不变"。
+    // 越界 ⇒ 夹到 0–100 而不是丢掉整份设置（手改过文件的人不该整份配置被清掉）。
+    final int stored = rawIntensity is num
+        ? rawIntensity.round().clamp(kAudioFxIntensityMin, kAudioFxIntensityMax)
+        : kAudioFxIntensityNeutral;
+    // 强度的**尺度改过一次**（2026-10-20：`100 = 原值` → `50 = 原值`，往上变成加强）。
+    // 老文件里那个数字是按旧尺度写的：不换算的话，用户升级一次就会听到音效突然变成两倍
+    // —— 这与"静默变小"是同一类事故，只是方向相反。没有 `intensityScheme`（或小于当前
+    // 版本）就说明是旧尺度，折半换算；缺整个字段时两种尺度都指向"原值"，不用换算。
+    final bool legacyScale =
+        rawIntensity is num && !(scheme is num && scheme.toInt() >= kAudioFxIntensityScheme);
     return AudioFxState(
       enabled: enabled is bool && enabled,
       presetId: presetId is String && presetId.isNotEmpty ? presetId : null,
       compression: compression is int ? compression.clamp(0, 3) : 0,
       loudness: loudness is int ? loudness.clamp(0, 3) : 0,
-      // 缺字段 ⇒ 100（老配置语义不变）；越界 ⇒ 夹到 0–100 而不是丢掉整份设置。
-      intensity: intensity is num ? intensity.round().clamp(0, 100) : 100,
+      intensity: legacyScale ? (stored / 2).round() : stored,
     );
   }
 }

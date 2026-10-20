@@ -99,15 +99,17 @@ void main() {
     final Slider slider = tester.widget<Slider>(
       find.byKey(const ValueKey<String>('audio-fx-intensity')),
     );
-    expect(slider.min, 0);
-    expect(slider.max, 100);
+    expect(slider.min, shikiin.kAudioFxIntensityMin);
+    expect(slider.max, shikiin.kAudioFxIntensityMax);
     expect(slider.divisions, 20);
-    // 老状态（没有 intensity 字段）默认 100%，不许一进来就是 0。
-    expect(slider.value, 100);
-    expect(find.text('100%'), findsOneWidget);
+    // 默认 = 中性点 50%（= 包里的原值）。2026-10-20 用户：「当前100的强度移动到50，
+    // 默认强度在50，拉大效果更明显」—— 滑块两头都有余量，中点才是"不动"。
+    expect(slider.value, shikiin.kAudioFxIntensityNeutral);
+    expect(slider.value, 50);
+    expect(find.text('50%'), findsOneWidget);
   });
 
-  testWidgets('拖到中间 → 回传的 intensity 落在 45–55（连续值，不是只有四档）', (tester) async {
+  testWidgets('拖到四分之三 → 回传的 intensity 落在 65–85（连续值，不是只有四档）', (tester) async {
     shikiin.AudioFxState? got;
     await tester.pumpWidget(_host(
       state: const shikiin.AudioFxState(enabled: true, presetId: 'audio-a/vocal'),
@@ -116,12 +118,15 @@ void main() {
     await tester.pumpAndSettle();
 
     final Finder slider = find.byKey(const ValueKey<String>('audio-fx-intensity'));
-    // 点滑块正中间 = 50%。不用 drag：那要按轨道像素算偏移，换个主题高度就飘。
-    await tester.tapAt(tester.getCenter(slider));
+    // 点 3/4 处 ≈ 75%。**不能点正中间**：默认就是中性点 50，值没变 Slider 不会回调
+    // （`onChanged` 只在值真的变了时触发），那样断言的是"没变化"而不是"能连续调"。
+    // 也不用 drag：那要按轨道像素算偏移，换个主题高度就飘。
+    final Rect rect = tester.getRect(slider);
+    await tester.tapAt(Offset(rect.left + rect.width * 0.75, rect.center.dy));
     await tester.pump();
 
     expect(got, isNotNull);
-    expect(got!.intensity, inInclusiveRange(45, 55));
+    expect(got!.intensity, inInclusiveRange(65, 85));
     // 改强度不该顺手改掉总开关或当前档（那是两件事）。
     expect(got!.enabled, isTrue);
     expect(got!.presetId, 'audio-a/vocal');
@@ -142,6 +147,35 @@ void main() {
     expect(got!.enabled, isFalse);
     expect(got!.presetId, isNull);
     expect(got!.intensity, 40);
+  });
+
+  testWidgets('曲线用同一个缩放函数：50% = 原值、100% = 两倍', (tester) async {
+    Future<AudioFxCurvePainter> painterAt(int intensity) async {
+      await tester.pumpWidget(_host(
+        state: shikiin.AudioFxState(
+          enabled: true,
+          presetId: 'audio-a/vocal',
+          intensity: intensity,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final CustomPaint paint = tester.widget<CustomPaint>(
+        find.byWidgetPredicate(
+          (Widget w) => w is CustomPaint && w.painter is AudioFxCurvePainter,
+        ),
+      );
+      return paint.painter! as AudioFxCurvePainter;
+    }
+
+    // 档位：b2k +3 / b63 -1。
+    final AudioFxCurvePainter neutral = await painterAt(shikiin.kAudioFxIntensityNeutral);
+    expect(neutral.bands['b2k'], 3);
+    expect(neutral.bands['b63'], -1);
+
+    // 100% = 原值两倍：曲线必须跟着变猛，否则"拉大更明显"只发生在耳朵里。
+    final AudioFxCurvePainter max = await painterAt(shikiin.kAudioFxIntensityMax);
+    expect(max.bands['b2k'], 6);
+    expect(max.bands['b63'], -2);
   });
 
   testWidgets('曲线跟着强度缩：0% 时画出来的 10 个点全在 0 dB', (tester) async {

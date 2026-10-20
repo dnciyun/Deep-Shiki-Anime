@@ -43,8 +43,9 @@ class AudioFxSection extends StatelessWidget {
     final DsTokens t = tokens;
     final shikiin.AudioFxPreset? current = _current;
     // 总强度的缩放只作用于 10 段 EQ（与 `audioFxFilterSpec` 同一条口径），所以曲线也
-    // 用同一份缩放后的增益画：否则用户把强度拖到 0% 时，曲线还立在那儿、耳朵里已经平了。
-    final double scale = state.intensity.clamp(0, 100) / 100;
+    // 用同一个缩放函数画：50% = 包里原值、100% = 两倍、0% = 平直。
+    // 各算一份的话，用户会看到曲线和耳朵里的力度对不上，然后怀疑音效坏了。
+    final double scale = shikiin.audioFxIntensityScale(state.intensity);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -104,11 +105,11 @@ class AudioFxSection extends StatelessWidget {
         const SizedBox(height: 12),
         _intensityRow(t),
         const SizedBox(height: 4),
-        // 0% 的语义必须写出来：「不动 EQ」很容易被读成「关掉音效」或「静音」，
-        // 而实际是压缩/均衡照旧（spec §4.1）。
+        // 中性点必须在界面上说清楚：滑块两头都"能调大/调小"，而 50% 才是包里的原值。
+        // 不写出来的话，用户会以为"拖到 100% 才是这档该有的样子"（那是原值两倍）。
         Text(
-          '总强度只缩 EQ 的 10 段增益，不缩预增益、也不缩下面两个强度；'
-          '0% = 频响平直，压缩与音量均衡照常生效。',
+          '50% = 包里的原值；往右更明显（100% = 原值两倍），往左更淡（0% = 频响平直）。'
+          '只缩 EQ 的 10 段增益，不缩预增益、也不缩下面两个强度。',
           style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption, height: 1.4),
         ),
         const SizedBox(height: 8),
@@ -136,8 +137,12 @@ class AudioFxSection extends StatelessWidget {
   ///
   /// 为什么是滑块而不是 4 档 chips：这是**连续**的力度（"再多一点/再少一点"），
   /// 而下面两个强度是**互斥的档位语义**（关/轻/中/强，右键菜单里也是这四档）。
+  ///
+  /// ⚠️ 中点（50%）是"不动"，不是"关"：滑块两头都有余量，往右是**加强**到原值两倍
+  /// （2026-10-20 用户：「当前100的强度移动到50，默认强度在50，拉大效果更明显」）。
   Widget _intensityRow(DsTokens t) {
-    final int value = state.intensity.clamp(0, 100);
+    final int value = state.intensity
+        .clamp(shikiin.kAudioFxIntensityMin, shikiin.kAudioFxIntensityMax);
     return Row(
       children: <Widget>[
         SizedBox(
@@ -149,8 +154,8 @@ class AudioFxSection extends StatelessWidget {
           child: Slider(
             key: const ValueKey<String>('audio-fx-intensity'),
             value: value.toDouble(),
-            min: 0,
-            max: 100,
+            min: shikiin.kAudioFxIntensityMin.toDouble(),
+            max: shikiin.kAudioFxIntensityMax.toDouble(),
             divisions: 20,
             label: '$value%',
             onChanged: (double v) =>
