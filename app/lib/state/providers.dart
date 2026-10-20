@@ -610,6 +610,21 @@ List<ShellTab> get shellNavTabs => <ShellTab>[
     if (tab != ShellTab.settings && tab != ShellTab.history) tab,
 ];
 
+/// 收进侧栏「插件」收纳组的目的地（2026-10-20 用户：「在侧边栏做一个收纳按钮，点开后
+/// 展开插件的功能，不然侧边栏会越做越多」）。
+///
+/// **只收插件带来的页面**（画面调节 / 音效，以及以后新插件加的页）：
+/// * 「扩展」是插件**管理器**本身，留在顶部一级 —— 收起来之后用户找不到装/卸入口，
+///   比侧栏多两行糟得多（用户原话也是"收的是插件新增的"）；
+/// * 以后有新的插件页，往这个列表加一行即可：侧栏不会跟着长高。
+///
+/// 不变式（`shell_widget_test` 钉着）：
+/// `shellNavTabs = 顶部一级 + shellPluginTabs`，每个目的地恰好出现一处。
+List<ShellTab> get shellPluginTabs => const <ShellTab>[
+  ShellTab.picture,
+  ShellTab.audioFx,
+];
+
 /// 侧栏**左下角那一块**（设置那一行的上面）列出的项。
 ///
 /// ⚠️ **第二十七轮补记**（用户：「观看记录改到左下角设置的上面」）：

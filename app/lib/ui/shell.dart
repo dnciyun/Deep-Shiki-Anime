@@ -37,6 +37,7 @@ import '../domain/models.dart';
 import '../domain/ports.dart';
 import '../state/last_playback.dart';
 import '../state/packs_available.dart';
+import '../state/plugin_group.dart';
 import '../state/playback.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
@@ -98,6 +99,22 @@ ValueKey<String> dsSidebarFooterRowKey(ShellTab tab) =>
 /// 与左下角的 [dsSidebarFooterRowKey] 同一套命名。
 ValueKey<String> dsSidebarNavRowKey(ShellTab tab) =>
     ValueKey<String>('ds-sidebar-nav-${tab.name}');
+
+/// 侧栏「插件」收纳组**组头**那一行的 key（2026-10-20）。
+///
+/// 测试要用它区分"组头"和"子项"：两者形态相近，按文字找「插件」会被别处的词撞上。
+const ValueKey<String> dsSidebarPluginGroupKey = ValueKey<String>('ds-sidebar-plugin-group');
+
+/// 「插件」组里的这一项现在能不能进（= 装上对应的包了没有）。
+///
+/// 单独一个函数而不是写在渲染处：以后往 [shellPluginTabs] 加页面时，**这里不补一个
+/// case 就会漏判**（Dart 的 `switch` 对新枚举值是穷尽检查，能当场报出来）。
+bool _pluginTabAvailable(ShellTab tab, PackAvailability available) => switch (tab) {
+      ShellTab.picture => available.hasPicture,
+      ShellTab.audioFx => available.hasAudioFx,
+      // 不是插件页（不该被 `shellPluginTabs` 收录）：按"可用"处理，不静默藏东西。
+      _ => true,
+    };
 
 class _DsShellState extends ConsumerState<DsShell> {
   /// 已通知过的任务 id（本轮会话；避免同一集反复弹通知）。
@@ -351,14 +368,20 @@ class _Sidebar extends ConsumerWidget {
     final ShellTab active = ref.watch(navProvider);
     final QueueSummary summary = ref.watch(queueSummaryProvider);
     final int followingCount = ref.watch(followingCountProvider);
-    // 2026-10-20：「画面调节 / 音效」两行**装上对应的包才出现**（没装就没有这一行，
-    // 不是灰的、也不是空页）。`shellNavTabs` 仍然是"全部顶部目的地"的唯一出处，
-    // 这里只按运行期状态筛掉那两个"包页面"——其余项无条件显示。
+    // 2026-10-20：「画面调节 / 音效」这类**插件带来的页面**不再各占一行，而是收进
+    // 侧栏的「插件」收纳组（用户：「在侧边栏做一个收纳按钮，点开后展开插件的功能，
+    // 不然侧边栏会越做越多」）。判据两条：
+    // * **装上对应的包才出现**（没装就没有这一项；整组都没有就不出现组头）；
+    // * 「扩展」**不收进去** —— 它是插件管理器本身，收起来之后连装/卸入口都找不到。
     final PackAvailability available = ref.watch(packAvailabilityProvider);
+    final bool pluginExpanded = ref.watch(pluginGroupExpandedProvider);
+    final List<ShellTab> pluginTabs = <ShellTab>[
+      for (final ShellTab tab in shellPluginTabs)
+        if (_pluginTabAvailable(tab, available)) tab,
+    ];
     final List<ShellTab> navTabs = <ShellTab>[
       for (final ShellTab tab in shellNavTabs)
-        if (tab != ShellTab.picture || available.hasPicture)
-          if (tab != ShellTab.audioFx || available.hasAudioFx) tab,
+        if (!shellPluginTabs.contains(tab)) tab,
     ];
     return Container(
       width: 184,
@@ -427,6 +450,30 @@ class _Sidebar extends ConsumerWidget {
                       },
                       onTap: () => unawaited(_selectTab(ref, context, tab)),
                     ),
+                  // 「插件」收纳组：一个组头 + 展开后的子项（子项缩进 12px 表示归属）。
+                  //
+                  // 收起时如果人正待在某子页里，组头标成选中（用户选的那条）：
+                  // 否则侧栏看起来像"停在上一页"，而正文已经是另一个地方了。
+                  if (pluginTabs.isNotEmpty) ...<Widget>[
+                    _PluginGroupRow(
+                      key: dsSidebarPluginGroupKey,
+                      expanded: pluginExpanded,
+                      selected: !pluginExpanded && pluginTabs.contains(active),
+                      count: pluginTabs.length,
+                      onTap: () => unawaited(
+                        ref.read(pluginGroupExpandedProvider.notifier).toggle(),
+                      ),
+                    ),
+                    if (pluginExpanded)
+                      for (final ShellTab tab in pluginTabs)
+                        _NavItem(
+                          key: dsSidebarNavRowKey(tab),
+                          tab: tab,
+                          indent: 12,
+                          selected: tab == active,
+                          onTap: () => unawaited(_selectTab(ref, context, tab)),
+                        ),
+                  ],
                 ],
               ),
             ),
@@ -601,15 +648,127 @@ Future<void> _selectTab(WidgetRef ref, BuildContext context, ShellTab tab) async
   ref.read(navProvider.notifier).select(tab);
 }
 
+/// 「插件」组的图标与文字（组头那一行）。
+///
+/// 与「扩展」的 `extension_outlined` 刻意不同：那颗图标属于"管理已装的包"，组头表示
+/// "插件给我的页面"，混用会让人以为点组头就是进扩展页。放 UI 层而不是 `providers.dart`：
+/// 那边是状态层，不该为了一个图标去 import material。
+const IconData kPluginGroupIcon = Icons.widgets_outlined;
+const String kPluginGroupLabel = '插件';
+
+/// 侧栏「插件」收纳组的组头（2026-10-20，用户：「在侧边栏做一个收纳按钮，点开后展开
+/// 插件的功能，不然侧边栏会越做越多」）。
+///
+/// 为什么是**同一列里就地展开**而不是浮层/抽屉：侧栏只有 184px，浮层会盖住内容区；
+/// 就地展开时"组头在上面、子项缩进在下面"本身就说明了归属关系，不需要额外交互去理解。
+///
+/// 色相取「扩展」那一支（玫红）：组里的页面都是插件给的，与插件管理页同族；
+/// 图标刻意不用 `extension`（那是"管理已装的包"，组头是"插件给我的页面"）。
+class _PluginGroupRow extends StatefulWidget {
+  const _PluginGroupRow({
+    super.key,
+    required this.expanded,
+    required this.selected,
+    required this.count,
+    required this.onTap,
+  });
+
+  final bool expanded;
+
+  /// 收起时人正待在某子页里 → 组头标成选中，免得侧栏看起来像"停在上一页"。
+  final bool selected;
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  State<_PluginGroupRow> createState() => _PluginGroupRowState();
+}
+
+class _PluginGroupRowState extends State<_PluginGroupRow> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final DsTokens t = context.ds;
+    final DsHue hue = hueOfTab(ShellTab.extensions);
+    final Color fg = widget.selected ? t.hueInk(hue) : (_hover ? t.text : t.text2);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Container(
+              // 与 `_NavItem` 同一套内边距（两行挨着时图标才能对齐）。
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              decoration: BoxDecoration(
+                color: widget.selected
+                    ? t.hueSoft(hue)
+                    : (_hover ? t.sunken : Colors.transparent),
+                borderRadius: BorderRadius.circular(t.radiusControl),
+              ),
+              child: Row(
+                children: <Widget>[
+                  Container(
+                    width: 24,
+                    height: 24,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: widget.selected ? t.hueFill(hue) : t.hueSoft(hue),
+                      borderRadius: BorderRadius.circular(t.radiusBadge),
+                    ),
+                    child: Icon(
+                      kPluginGroupIcon,
+                      size: 15,
+                      color: widget.selected ? t.hueOnFill(hue) : t.hueInk(hue),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      kPluginGroupLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: fg,
+                        fontSize: DsTypeScale.secondary,
+                        fontWeight: widget.selected ? FontWeight.w600 : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                  // 收起/展开的指示（静止图标，不做旋转动画：悬停那套已经证明过渡帧
+                  // 在半透明底上会"闪一下"，这里不重犯）。
+                  Icon(
+                    widget.expanded ? Icons.expand_more : Icons.chevron_right,
+                    size: 16,
+                    color: widget.selected ? t.hueInk(hue) : t.text3,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 一个导航项（顶部导航区与左下角那一块共用同一个形态）。
 ///
 /// 每个 [ShellTab] 的 label 文本是回归测试盯着的（每一项都必须可见）；
 /// 视觉改造只动观感：选中 = 凹进去 + 强调色（决策 A40），
 /// 未选中 = 透明 + `text2`（规范 §7 导航项）。
 ///
-/// ⚠️ 它现在被用在**两处**：顶部导航区（`shellNavTabs`）与左下角那一块
-/// （`shellFooterTabs`，第二十七轮补记之后 = 只有「观看记录」一行，在设置上面）。
-/// `key` 由调用方给（左下角那块用 `dsSidebarFooterRowKey`，测试靠它定位）。
+/// ⚠️ 它现在被用在**三处**：顶部导航区（`shellNavTabs` 去掉插件组那几项）、「插件」收纳组
+/// 展开后的子项（[indent] 12px，表示归属）、左下角那一块（`shellFooterTabs` = 只有
+/// 「观看记录」一行，在设置上面）。`key` 由调用方给（左下角那块用
+/// `dsSidebarFooterRowKey`，测试靠它定位）。
 class _NavItem extends StatefulWidget {
   const _NavItem({
     super.key,
@@ -617,12 +776,16 @@ class _NavItem extends StatefulWidget {
     required this.selected,
     required this.onTap,
     this.badge,
+    this.indent = 0,
   });
 
   final ShellTab tab;
   final bool selected;
   final VoidCallback onTap;
   final String? badge;
+
+  /// 额外左缩进（逻辑像素）。只给「插件」组展开后的子项用：缩进 = "我属于上面那组"。
+  final double indent;
 
   @override
   State<_NavItem> createState() => _NavItemState();
@@ -670,7 +833,8 @@ class _NavItemState extends State<_NavItem> {
       // ⚠️ 侧栏固定 184px（回归测试盯着这个宽度）。四条中文 label（「正在播放」）在
       // 12px 字号下离边界只有几像素余量 —— 真机实测会折行。这里把导航项左右内边距
       // 收到 8px 换回余量（改为写在下面的内层内边距里）。
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      // [indent] 只给「插件」组的子项：缩进 12px，184px 仍有 172px 给文字。
+      padding: EdgeInsets.only(left: 4 + widget.indent, right: 4),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),

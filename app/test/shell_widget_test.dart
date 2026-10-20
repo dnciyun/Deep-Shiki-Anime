@@ -34,7 +34,10 @@ import 'package:dsanima/ui/shell.dart';
 import 'package:dsanima/ui/widgets/ds_theme_reveal.dart';
 import 'package:dsanima/ui/widgets/neo.dart';
 import 'package:dsanima/ui/widgets/search_sections.dart';
-import 'package:dsanima_core/sources/kv.dart' show InMemoryKeyValueStore;
+import 'package:dsanima/state/plugin_group.dart'
+    show kPluginGroupExpandedKey;
+import 'package:dsanima_core/sources/kv.dart'
+    show InMemoryKeyValueStore, KeyValueStore;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -341,11 +344,17 @@ Widget harness(
   AppSettings settings = const AppSettings(firstRunCompleted: true),
   DsTokens themeTokens = DsTokens.whiteInk,
   PackAvailability? availability,
+  Map<String, Object?> kvSeed = const <String, Object?>{},
+  KeyValueStore? kvStore,
 }) {
   return ProviderScope(
     overrides: [
       keyValueStoreProvider.overrideWithValue(
-        InMemoryKeyValueStore(<String, Object?>{SettingsController.storageKey: settings.toJson()}),
+        kvStore ??
+            InMemoryKeyValueStore(<String, Object?>{
+              SettingsController.storageKey: settings.toJson(),
+              ...kvSeed,
+            }),
       ),
       sourcePortProvider.overrideWithValue(source ?? FakeSourcePort(const <SourceItemView>[])),
       queuePortProvider.overrideWithValue(queue ?? FakeQueuePort(const <QueueJobView>[])),
@@ -480,6 +489,9 @@ void main() {
     // **1.1.0 M3/T15** 在「已完成」后面加了第 7 项「扩展」；
     // **2026-10-20** 又加了「画面调节」与「音效」—— 但这两项**装上对应的包才出现**，
     // 所以这条用例（没有包）要断言它们**不在**）。
+    // 没装任何包 ⇒ 连「插件」组头都不出现（整组不可用就不占行）。
+    expect(find.byKey(dsSidebarPluginGroupKey), findsNothing,
+        reason: '没有插件页可用时不该出现「插件」组头');
     for (final ShellTab tab in shellNavTabs) {
       if (tab == ShellTab.picture || tab == ShellTab.audioFx) {
         expect(find.byKey(dsSidebarNavRowKey(tab)), findsNothing,
@@ -612,15 +624,36 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // 2026-10-20：两个包页面不再各占一行，而是收进「插件」收纳组。
+    // 默认**收起**（用户：「默认收起，并记住你上次展开/收起」）。
+    final Finder group = find.byKey(dsSidebarPluginGroupKey);
+    expect(group, findsOneWidget, reason: '装了包就该出现「插件」组头');
+    expect(find.byKey(dsSidebarNavRowKey(ShellTab.picture)), findsNothing,
+        reason: '默认收起时子项不占行');
+    expect(find.byKey(dsSidebarNavRowKey(ShellTab.audioFx)), findsNothing);
+    expect(group, findsOneWidget);
+    // 组头排在「扩展」之后（它就是"插件给我的页面"）。
+    expect(tester.getRect(group).top,
+        greaterThan(tester.getRect(find.byKey(dsSidebarNavRowKey(ShellTab.extensions))).top),
+        reason: '「插件」组在「扩展」之后');
+
+    // 点组头 → 展开，两个子项出现，顺序是 画面调节 → 音效。
+    await tester.tap(group);
+    await tester.pumpAndSettle();
     final Finder picture = find.byKey(dsSidebarNavRowKey(ShellTab.picture));
     final Finder audio = find.byKey(dsSidebarNavRowKey(ShellTab.audioFx));
-    expect(picture, findsOneWidget, reason: '装了画面调节包就该多一行「画面调节」');
-    expect(audio, findsOneWidget, reason: '装了音效包就该多一行「音效」');
+    expect(picture, findsOneWidget, reason: '展开后应有「画面调节」');
+    expect(audio, findsOneWidget, reason: '展开后应有「音效」');
     expect(tester.getRect(audio).top, greaterThan(tester.getRect(picture).top),
         reason: '「音效」在「画面调节」下面');
-    expect(tester.getRect(picture).top,
-        greaterThan(tester.getRect(find.byKey(dsSidebarNavRowKey(ShellTab.extensions))).top),
-        reason: '两个包页面都排在「扩展」之后');
+    // 缩进看文字，不看 `_NavItem` 那层 Padding 的盒子（Padding 的盒子含内边距，
+    // 起点跟父级一样，量它等于没量）。
+    final double groupLabelLeft =
+        tester.getRect(find.descendant(of: group, matching: find.text('插件'))).left;
+    final double pictureLabelLeft =
+        tester.getRect(find.descendant(of: picture, matching: find.text('画面调节'))).left;
+    expect(pictureLabelLeft, greaterThan(groupLabelLeft),
+        reason: '子项要缩进（缩进表示"属于上面那组"）');
 
     // 点得进去：内容区下标 = `tab.index`（内容栈里那两页始终占着位置，否则下标会错位）。
     await tester.tap(picture);
@@ -631,6 +664,77 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget<IndexedStack>(find.byKey(dsShellContentKey)).index!,
         ShellTab.audioFx.index);
+
+    // 再收起：人在「音效」页里，组头必须标成选中（否则侧栏像停在上一页）。
+    await tester.tap(group);
+    await tester.pumpAndSettle();
+    expect(find.byKey(dsSidebarNavRowKey(ShellTab.audioFx)), findsNothing);
+    expect(find.byKey(dsSidebarNavRowKey(ShellTab.extensions)), findsOneWidget,
+        reason: '「扩展」永远是顶部一级项，不收进组里');
+  });
+
+  testWidgets('「插件」组记住上次的展开状态：KV 里存的是展开 → 一进来就是展开的', (
+    WidgetTester tester,
+  ) async {
+    _sizeTo(tester, const Size(1600, 1000));
+    await tester.pumpWidget(
+      harness(
+        const DsShell(),
+        source: FakeSourcePort(<SourceItemView>[]),
+        availability: PackAvailability(
+          picturePacks: <PicturePack>[_fakePicturePack()],
+          audioPresets: <shikiin.AudioFxPreset>[_fakeAudioPreset()],
+        ),
+        kvSeed: <String, Object?>{kPluginGroupExpandedKey: true},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(dsSidebarNavRowKey(ShellTab.picture)), findsOneWidget,
+        reason: '上次是展开的 ⇒ 这次一进来也该展开');
+    expect(find.byKey(dsSidebarNavRowKey(ShellTab.audioFx)), findsOneWidget);
+  });
+
+  testWidgets('收起时人在组内页面 → 组头标成选中；再点一下会落盘', (
+    WidgetTester tester,
+  ) async {
+    _sizeTo(tester, const Size(1600, 1000));
+    final InMemoryKeyValueStore store = InMemoryKeyValueStore(<String, Object?>{
+      SettingsController.storageKey: const AppSettings(firstRunCompleted: true).toJson(),
+      kPluginGroupExpandedKey: true,
+    });
+    await tester.pumpWidget(
+      harness(
+        const DsShell(),
+        source: FakeSourcePort(<SourceItemView>[]),
+        availability: PackAvailability(
+          picturePacks: <PicturePack>[_fakePicturePack()],
+          audioPresets: <shikiin.AudioFxPreset>[_fakeAudioPreset()],
+        ),
+        kvStore: store,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 进组内页面（画面调节）。
+    await tester.tap(find.byKey(dsSidebarNavRowKey(ShellTab.picture)));
+    await tester.pumpAndSettle();
+    // 收起：组头仍在，子项消失。
+    await tester.tap(find.byKey(dsSidebarPluginGroupKey));
+    await tester.pumpAndSettle();
+    expect(find.byKey(dsSidebarNavRowKey(ShellTab.picture)), findsNothing);
+
+    // 组头标成选中：字重加粗（`_PluginGroupRow` 的选中态，与 `_NavItem` 同一套规则）。
+    final Finder groupLabel = find.descendant(
+      of: find.byKey(dsSidebarPluginGroupKey),
+      matching: find.text('插件'),
+    );
+    expect(tester.widget<Text>(groupLabel).style?.fontWeight, FontWeight.w600,
+        reason: '人在组内页面里，收起的组头必须看得出"我在这儿"');
+
+    // 折叠状态真的写进 KV（不是只在内存里翻一下）。
+    expect(store.get(kPluginGroupExpandedKey), isFalse);
+    expect(store.putCount, greaterThan(0));
   });
 
   // ── 第二十五轮：导航项悬停不再「黑一下」，而是在上面就一直黑着 ────────────────
@@ -1796,6 +1900,9 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
+      // 2026-10-20：插件页收在「插件」组里，默认收起 —— 要点到它们得先展开。
+      await tester.tap(find.byKey(dsSidebarPluginGroupKey));
       await tester.pumpAndSettle();
 
       for (final ShellTab tab in ShellTab.values) {
