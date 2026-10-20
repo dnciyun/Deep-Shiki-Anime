@@ -46,6 +46,9 @@ ValueKey<String> dsLocalFolderRowKey(String folder) => ValueKey<String>('ds-loca
 /// 视频那一行的 key（同上）。
 ValueKey<String> dsLocalVideoRowKey(String path) => ValueKey<String>('ds-local-video-$path');
 
+/// 「手动输入路径」对话框里那个输入框的 key（选择器不可用时的兜底路）。
+const ValueKey<String> dsLocalPathFieldKey = ValueKey<String>('ds-local-path-field');
+
 class LocalPage extends ConsumerStatefulWidget {
   const LocalPage({super.key});
 
@@ -75,20 +78,50 @@ class _LocalPageState extends ConsumerState<LocalPage> {
     try {
       final String? added = await ref.read(localLibraryProvider.notifier).addFolder();
       if (!mounted) return;
-      if (added != null) {
-        final LocalLibraryState after = ref.read(localLibraryProvider);
-        final String? error = after.error;
-        if (error != null) {
-          showWarning(context, error);
-        } else {
-          showSuccess(context, '已添加文件夹：$added（扫到 ${after.videoCount} 个视频）', seconds: 4);
-        }
-      }
+      if (added != null) _reportAdded(added);
     } catch (error) {
-      if (mounted) showWarning(context, '选文件夹失败', hint: '$error');
+      if (!mounted) return;
+      // 系统目录选择器没打开（插件没装好 / RDP 会话）：**不要**把用户堵在一条
+      // 死路上 —— 退回"手动输入路径"。用户 2026-10-20 报的「系统目录选择器未接通」
+      // 就是这条路（根因是 provider 声明重复，见 `provider_identity_test.dart`），
+      // 但即便选择器真坏了，也不该让「本地」页完全用不了。
+      final String? typed = await _askPathByTyping(reason: '$error');
+      if (typed == null || !mounted) return;
+      final String? done = await ref.read(localLibraryProvider.notifier).addFolderPath(typed);
+      if (!mounted) return;
+      if (done == null) {
+        showWarning(context, ref.read(localLibraryProvider).error ?? '没加上：$typed');
+      } else {
+        _reportAdded(done);
+      }
     } finally {
       if (mounted) setState(() => _adding = false);
     }
+  }
+
+  /// 加成功之后的反馈（重复添加那一路 `addFolder` 会返回 null + 写 error，走不到这里）。
+  void _reportAdded(String added) {
+    final LocalLibraryState after = ref.read(localLibraryProvider);
+    final String? error = after.error;
+    if (error != null) {
+      showWarning(context, error);
+      return;
+    }
+    showSuccess(context, '已添加文件夹：$added（扫到 ${after.videoCount} 个视频）', seconds: 4);
+  }
+
+  /// 手动输入一个文件夹路径（选择器不可用时的兜底）。
+  ///
+  /// ⚠️ 输入框的 `TextEditingController` 由对话框**自己**持有（见 [_PathInputDialog]）：
+  /// 在这里 try/finally 里 dispose 会撞上"对话框退场动画还在重建 TextField"，
+  /// 抛 `A TextEditingController was used after being disposed`（实测踩过）。
+  Future<String?> _askPathByTyping({required String reason}) async {
+    final String? typed = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => _PathInputDialog(reason: reason),
+    );
+    final String clean = (typed ?? '').trim();
+    return clean.isEmpty ? null : clean;
   }
 
   Future<void> _refresh() async {
@@ -538,6 +571,74 @@ class _LocalVideoRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 「手动输入文件夹路径」对话框。
+///
+/// 为什么单独一个 StatefulWidget：输入框的 controller 必须活得比 `showDialog`
+/// 的 Future 长一点点（退场动画还在重建 TextField），放在调用方 try/finally 里
+/// dispose 会抛 `A TextEditingController was used after being disposed`（实测踩过）。
+class _PathInputDialog extends StatefulWidget {
+  const _PathInputDialog({required this.reason});
+
+  /// 为什么退回到手动输入（把选择器的报错原样带上，用户/排障看得懂）。
+  final String reason;
+
+  @override
+  State<_PathInputDialog> createState() => _PathInputDialogState();
+}
+
+class _PathInputDialogState extends State<_PathInputDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    final DsTokens t = context.ds;
+    return AlertDialog(
+      title: const Text('手动输入文件夹路径'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            '这次没能打开系统目录选择器，可以直接把文件夹路径粘进来。',
+            style: TextStyle(fontSize: DsTypeScale.secondary, color: t.text2),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            widget.reason,
+            style: TextStyle(fontSize: DsTypeScale.caption, color: t.text3),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: dsLocalPathFieldKey,
+            controller: _controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '文件夹路径',
+              hintText: r'例如 F:\Anime',
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('添加')),
+      ],
     );
   }
 }

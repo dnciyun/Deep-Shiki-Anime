@@ -145,6 +145,24 @@ void main() {
     expect(h.state.error, contains('已经加过了'));
   });
 
+  test('手动输入路径：加进来 + 落盘 + 立刻扫', () async {
+    final _Harness h = _Harness();
+    final String? added = await h.controller.addFolderPath('  ${_dir('Root')}  ');
+    expect(added, _dir('Root'), reason: '首尾空白要去掉');
+    expect(h.state.folders, <String>[_dir('Root')]);
+    expect(h.store.get(kLocalFoldersKey), <String>[_dir('Root')]);
+    expect(h.state.videoCount, 2);
+  });
+
+  test('手动输入路径：空串直接忽略；重复（大小写不同）报错不进去', () async {
+    final _Harness h = _Harness(folders: <String>[_dir('Root')]);
+    expect(await h.controller.addFolderPath('   '), isNull);
+    expect(h.state.error, isNull, reason: '空串是"什么都没做"，不是错误');
+    expect(await h.controller.addFolderPath(_dir('root')), isNull);
+    expect(h.state.folders.length, 1);
+    expect(h.state.error, contains('已经加过了'));
+  });
+
   test('取消选择 = 什么都不做（不报错、不落盘）', () async {
     final _Harness h = _Harness();
     h.picker.next = null;

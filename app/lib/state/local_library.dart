@@ -194,19 +194,30 @@ class LocalLibraryController extends Notifier<LocalLibraryState> {
   ///
   /// 返回加进来的路径（取消/重复 = null）。重复判定**不区分大小写**：
   /// Windows 上 `F:\Anime` 与 `f:\anime` 是同一个目录。
+  ///
+  /// 系统选择器本身可能不可用（插件没装好 / 远程桌面会话里拿不到对话框）：
+  /// 这时把异常抛给页面，由它退回「手动输入路径」（见 [addFolderPath]）——
+  /// 用户 2026-10-20 报的就是这条路上的报错（「系统目录选择器未接通」）。
   Future<String?> addFolder() async {
     final String? picked = await ref.read(pickerPortProvider).pickDirectory(title: '选择要加载的文件夹');
-    final String path = (picked ?? '').trim();
-    if (path.isEmpty) return null;
-    if (state.folders.any((String f) => f.toLowerCase() == path.toLowerCase())) {
-      state = state.copyWith(error: '这个文件夹已经加过了：$path');
+    return addFolderPath(picked ?? '');
+  }
+
+  /// 直接加一个路径（页面「手动输入路径」那条兜底路 / 将来拖进来也走它）。
+  ///
+  /// 返回加进来的路径；空串 / 重复返回 null（重复会写一条 `error` 给页面显示）。
+  Future<String?> addFolderPath(String path) async {
+    final String clean = path.trim();
+    if (clean.isEmpty) return null;
+    if (state.folders.any((String f) => f.toLowerCase() == clean.toLowerCase())) {
+      state = state.copyWith(error: '这个文件夹已经加过了：$clean');
       return null;
     }
-    final List<String> next = <String>[...state.folders, path];
+    final List<String> next = <String>[...state.folders, clean];
     state = state.copyWith(folders: next, error: null);
     await ref.read(keyValueStoreProvider).put(kLocalFoldersKey, next);
     await refresh();
-    return path;
+    return clean;
   }
 
   /// 移除一个文件夹（**只从列表里移除，磁盘上一个文件都不动**）。

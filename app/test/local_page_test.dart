@@ -48,12 +48,23 @@ class _FakeScanner implements LocalMediaScannerPort {
 }
 
 class _FakePicker implements PickerPort {
-  _FakePicker(this.next);
+  _FakePicker(this.next, {this.throws = false});
 
   String? next;
 
+  /// true = 模拟"系统目录选择器没打开"（组件测试里真的调不到原生对话框）。
+  bool throws;
+
   @override
-  Future<String?> pickDirectory({String? title}) async => next;
+  Future<String?> pickDirectory({String? title}) async {
+    if (throws) {
+      throw const PortUnavailableException(
+        '系统目录选择器未接通',
+        hint: r'请直接在手填路径（例如 F:\Anime）',
+      );
+    }
+    return next;
+  }
 
   @override
   Future<String?> pickFile({String? title, List<String> extensions = const <String>[]}) async => null;
@@ -87,6 +98,7 @@ class _Harness {
     List<String>? files,
     Set<String>? broken,
     String? picked,
+    bool pickerThrows = false,
   }) : store = InMemoryKeyValueStore(<String, Object?>{
           if (folders.isNotEmpty) kLocalFoldersKey: folders,
           if (progress.isNotEmpty) kLocalProgressKey: progress,
@@ -97,7 +109,7 @@ class _Harness {
       },
       broken: broken,
     );
-    picker = _FakePicker(picked);
+    picker = _FakePicker(picked, throws: pickerThrows);
   }
 
   final InMemoryKeyValueStore store;
@@ -191,6 +203,30 @@ void main() {
     final PlayerRequest req = h.player.opened.single;
     expect(req.streamUrl.toString(), localFileUriText(_ep1));
     expect(req.startAt, const Duration(milliseconds: 90000));
+  });
+
+  testWidgets('选择器打不开：退回「手动输入路径」，粘一个路径也能加进来', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final _Harness h = _Harness(pickerThrows: true);
+    await tester.pumpWidget(h.app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(dsLocalAddFolderKey));
+    // ⚠️ 这里不能 pumpAndSettle：对话框里的输入框 autofocus，光标闪烁是**永不结束**的动画。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 不是一句"失败"就完了：必须给出可走的路。
+    expect(find.text('手动输入文件夹路径'), findsOneWidget);
+    await tester.enterText(find.byKey(dsLocalPathFieldKey), _root);
+    await tester.tap(find.text('添加'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(dsLocalVideoRowKey(_ep1)), findsOneWidget);
+    expect(h.store.get(kLocalFoldersKey), <String>[_root]);
   });
 
   testWidgets('扫失败的文件夹：那一行红字说明原因，别的行照常', (WidgetTester tester) async {

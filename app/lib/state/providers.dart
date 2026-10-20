@@ -112,11 +112,18 @@ final Provider<LifecyclePort> lifecyclePortProvider = Provider<LifecyclePort>(
   (Ref ref) => EngineLifecyclePort(ref),
 );
 
-/// 目录/文件选择器（真实实现在 main.dart 注入 `FilePickerPort`）。
-final Provider<PickerPort> pickerPortProvider = Provider<PickerPort>(
-  (Ref ref) => const UnavailablePickerPort(),
-);
-
+/// ⚠️ **`pickerPortProvider` 不在这里定义**（2026-10-20 修）：
+/// 它在 `infra.dart` 里，本文件通过 `export 'infra.dart'` 转出去。
+///
+/// 原来这里**多声明了一份**同名 provider，而 `infra.dart` 里那份才是
+/// `local_library.dart` 这类直接 import infra 的文件读的 —— 于是装配根
+/// `main.dart` 的 `overrideWithValue(FilePickerPort())` 只换到了本文件这一份，
+/// 另一个文件拿到的是**永远没被 override 的默认实现**（`UnavailablePickerPort`），
+/// 用户点「本地 → 添加文件夹」看到的就是「系统目录选择器未接通」。
+/// 同一个东西两份声明 = 覆写只能命中其中一份，这种 bug 不会编译报错，只会静默失效；
+/// 连 `local_page_test` 也没抓到（测试里 import 时用了 `show`，只看见 infra 那份，
+/// 于是覆写与读取恰好是同一个）。现在只留一份，`provider_identity_test` 钉着。
+///
 /// 检查更新 / 直接更新（第三十九轮；真实实现在 main.dart 注入 `GitHubUpdatePort`）。
 ///
 /// 未接通时是 [UnavailableUpdatePort]：**抛异常**说"没接通"，绝不假装"已是最新"。
