@@ -65,6 +65,7 @@ import 'state/store_layout.dart';
 import 'state/tracker_refresh.dart';
 import 'state/update.dart';
 import 'state/update_adapter.dart';
+import 'state/win32_picker.dart';
 import 'state/window_close.dart';
 import 'ui/player_window_app.dart';
 
@@ -328,7 +329,10 @@ Future<void> main(List<String> args) async {
         skipFirstRun ? _debugStore(effectiveSettings, appStore) : appStore,
       ),
       supportDirProvider.overrideWithValue(runtime.supportDir),
-      pickerPortProvider.overrideWithValue(const FilePickerPort()),
+      // 目录选择器：**自己的 Win32 对话框**（`file_picker` 的 getDirectoryPath 在
+      // UI 线程上跑 COM，选完会在 comdlg32 里踩空——用户 2026-10-20「刚选完会闪退一下」）。
+      // 选文件仍走 file_picker。见 `state/win32_picker.dart` 的说明与事件日志证据。
+      pickerPortProvider.overrideWithValue(const DsDesktopPicker()),
       // 本地文件夹扫描（「本地」页）：真实实现 = dart:io 递归扫，跳过系统目录。
       localMediaScannerProvider.overrideWithValue(const IoLocalMediaScanner()),
       enginePortProvider.overrideWithValue(enginePort),
