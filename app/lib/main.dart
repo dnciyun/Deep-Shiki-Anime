@@ -47,7 +47,9 @@ import 'state/extension_schemes.dart';
 import 'state/audio_fx_settings.dart';
 import 'state/audio_presets.dart';
 import 'state/generic_packs.dart';
+import 'state/picture_editor.dart';
 import 'state/picture_menu_attach.dart';
+import 'state/picture_pack.dart' show PictureSettings;
 import 'state/subtitle_presets.dart';
 import 'state/extensions.dart';
 import 'state/extensions_adapter.dart';
@@ -434,6 +436,15 @@ Future<void> main(List<String> args) async {
     } catch (e) {
       shikiin.diag.warn('audio-fx', '播放窗口回推音效状态失败：$e');
     }
+  };
+
+  // 播放窗口里右键/面板调完画面 → 回推给主窗口的「画面调节」页。
+  //
+  // 只 `adopt`：那边已经生效并自己写了 `picture-settings.json`，主窗口**不写盘、不再 push**
+  //（否则两个窗口互相覆盖）。没有这一条，页面会一直显示旧值 —— 用户之后在页面上随便拖一下，
+  // 写下去的就是旧取值，把播放器刚调好的那套覆盖掉（spec §3 末段）。
+  playerWindow.onPictureSettingsChanged = (Map<String, Object?> settings) {
+    container.read(pictureEditorProvider.notifier).adopt(settings);
   };
 
   // 扩展页装/卸/启停成功 → 立刻通知**已经打开的**播放窗口重扫超分方案
@@ -847,10 +858,21 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
   // `kMethodExtensionsChanged` 过来，子窗口用它调同一个 `_ensurePictureMenu`
   // 现场补挂 —— 否则只能重启整个应用（关窗只是 hide，不会重扫）。
   final Directory supportDir = Directory(dataRoot.path);
+  // ⚠️ 本窗口的 controller 必须在装配画面调节菜单**之前**建出来：菜单那一侧要一个
+  // "下发之后回推主窗口"的回调（`kMethodPictureSettingsChanged`），而回推只能走它。
+  // 顺序反了的后果是具体的：用户在这扇窗里右键调完画面，主窗口页面仍显示旧值，
+  // 之后在页面上随便拖一下就把刚调好的覆盖回去（spec §3 末段）。
+  final WindowController controller = await WindowController.fromCurrentEngine();
+  trace('player window: controller ok');
   final shikiin.PictureMenu? attachedMenu = await _ensurePictureMenu(
     runtime: runtime,
     supportDir: supportDir,
     trace: trace,
+    // 每次真正下发之后把那一份设置回推主窗口（画面页 `adopt`，不写盘、不再 push）。
+    onSettingsChanged: (PictureSettings settings) => controller.invokeMethod<void>(
+      kMethodPictureSettingsChanged,
+      settings.toJson(),
+    ),
   );
   trace('player window: 画面调节${attachedMenu == null ? '未装配（没有包）' : '菜单已就位'}');
   // 通用扩展包：字幕样式预设（`preset-pack` / `player.subtitle` 面）。
@@ -894,9 +916,6 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
   // 所以每次开窗都把这两行写进日志（配套探针 `tool/probe_input.ps1`）。
   await _tracePlayerWindow(trace);
 
-  final WindowController controller = await WindowController.fromCurrentEngine();
-  trace('player window: controller ok');
-
   // 环境：外观 token 与剧集分组**由主窗口推过来**（这里没有主窗口那套 provider）。
   // 用薄 Notifier 桥接：值变了只让读它的 provider 重算，播放面（常驻）不重挂。
   windowTokensNotifier.value = decodeTokens(args.tokens);
@@ -936,6 +955,11 @@ Future<void> _runPlayerWindow(PlayerWindowArgs args, void Function(String) trace
           runtime: runtime,
           supportDir: supportDir,
           trace: trace,
+          // 补挂出来的菜单同样要回推（否则"装完包才补挂"这一路上调的取值主窗口看不到）。
+          onSettingsChanged: (PictureSettings settings) => controller.invokeMethod<void>(
+            kMethodPictureSettingsChanged,
+            settings.toJson(),
+          ),
         ),
       ),
     ),
@@ -953,6 +977,7 @@ Future<shikiin.PictureMenu?> _ensurePictureMenu({
   required shikiin.AppRuntime runtime,
   required Directory supportDir,
   required void Function(String) trace,
+  Future<void> Function(PictureSettings settings)? onSettingsChanged,
 }) async {
   try {
     final shikiin.PictureMenu? menu = await ensurePictureMenuAttached(
@@ -960,6 +985,7 @@ Future<shikiin.PictureMenu?> _ensurePictureMenu({
       supportDir: supportDir,
       current: runtime.pictureMenu,
       attach: runtime.attachPictureMenu,
+      onSettingsChanged: onSettingsChanged,
     );
     if (menu != null) trace('player window: 画面调节菜单已就位');
     return menu;

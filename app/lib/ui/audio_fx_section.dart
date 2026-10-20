@@ -11,7 +11,7 @@ import 'package:shikiin/shikiin.dart' as shikiin;
 
 import '../theme/tokens.dart';
 
-/// 音效区：当前档 + 频响曲线 + 档位 + 两个全局强度。
+/// 音效区：当前档 + 频响曲线 + 档位 + 总强度 + 两个全局强度。
 ///
 /// 没有音效包时调用方**不渲染它**（整区不出现）。
 class AudioFxSection extends StatelessWidget {
@@ -42,6 +42,9 @@ class AudioFxSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final DsTokens t = tokens;
     final shikiin.AudioFxPreset? current = _current;
+    // 总强度的缩放只作用于 10 段 EQ（与 `audioFxFilterSpec` 同一条口径），所以曲线也
+    // 用同一份缩放后的增益画：否则用户把强度拖到 0% 时，曲线还立在那儿、耳朵里已经平了。
+    final double scale = state.intensity.clamp(0, 100) / 100;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -71,7 +74,7 @@ class AudioFxSection extends StatelessWidget {
             painter: AudioFxCurvePainter(
               bands: <String, double>{
                 for (final String band in shikiin.kAudioFxBands)
-                  band: current?.bands[band] ?? 0,
+                  band: (current?.bands[band] ?? 0) * scale,
               },
               line: t.accent,
               grid: t.line,
@@ -99,6 +102,16 @@ class AudioFxSection extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
+        _intensityRow(t),
+        const SizedBox(height: 4),
+        // 0% 的语义必须写出来：「不动 EQ」很容易被读成「关掉音效」或「静音」，
+        // 而实际是压缩/均衡照旧（spec §4.1）。
+        Text(
+          '总强度只缩 EQ 的 10 段增益，不缩预增益、也不缩下面两个强度；'
+          '0% = 频响平直，压缩与音量均衡照常生效。',
+          style: TextStyle(color: t.text3, fontSize: DsTypeScale.caption, height: 1.4),
+        ),
+        const SizedBox(height: 8),
         _levelRow(t, '对白压缩', 'compression', state.compression,
             (int v) => onChange(state.copyWith(compression: v))),
         const SizedBox(height: 8),
@@ -115,6 +128,48 @@ class AudioFxSection extends StatelessWidget {
             ),
           ),
         ],
+      ],
+    );
+  }
+
+  /// 总强度滑块（0–100%，`divisions: 20` = 每 5% 一档）。
+  ///
+  /// 为什么是滑块而不是 4 档 chips：这是**连续**的力度（"再多一点/再少一点"），
+  /// 而下面两个强度是**互斥的档位语义**（关/轻/中/强，右键菜单里也是这四档）。
+  Widget _intensityRow(DsTokens t) {
+    final int value = state.intensity.clamp(0, 100);
+    return Row(
+      children: <Widget>[
+        SizedBox(
+          width: 68,
+          child: Text('总强度',
+              style: TextStyle(color: t.text, fontSize: DsTypeScale.caption)),
+        ),
+        Expanded(
+          child: Slider(
+            key: const ValueKey<String>('audio-fx-intensity'),
+            value: value.toDouble(),
+            min: 0,
+            max: 100,
+            divisions: 20,
+            label: '$value%',
+            onChanged: (double v) =>
+                onChange(state.copyWith(intensity: v.round())),
+          ),
+        ),
+        SizedBox(
+          width: 44,
+          child: Text(
+            '$value%',
+            key: const ValueKey<String>('audio-fx-intensity-value'),
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              color: t.text2,
+              fontSize: DsTypeScale.caption,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
       ],
     );
   }

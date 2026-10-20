@@ -86,4 +86,81 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('audio-fx-level-loudness-3')));
     expect(got!.loudness, 3);
   });
+
+  // ── 总强度（页面上的连续力度，spec §4.1）────────────────────────────────────
+
+  testWidgets('有档位时出现「总强度」滑块，显示当前百分比', (tester) async {
+    await tester.pumpWidget(_host(
+      state: const shikiin.AudioFxState(enabled: true, presetId: 'audio-a/vocal'),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('总强度'), findsOneWidget);
+    final Slider slider = tester.widget<Slider>(
+      find.byKey(const ValueKey<String>('audio-fx-intensity')),
+    );
+    expect(slider.min, 0);
+    expect(slider.max, 100);
+    expect(slider.divisions, 20);
+    // 老状态（没有 intensity 字段）默认 100%，不许一进来就是 0。
+    expect(slider.value, 100);
+    expect(find.text('100%'), findsOneWidget);
+  });
+
+  testWidgets('拖到中间 → 回传的 intensity 落在 45–55（连续值，不是只有四档）', (tester) async {
+    shikiin.AudioFxState? got;
+    await tester.pumpWidget(_host(
+      state: const shikiin.AudioFxState(enabled: true, presetId: 'audio-a/vocal'),
+      onChange: (shikiin.AudioFxState s) => got = s,
+    ));
+    await tester.pumpAndSettle();
+
+    final Finder slider = find.byKey(const ValueKey<String>('audio-fx-intensity'));
+    // 点滑块正中间 = 50%。不用 drag：那要按轨道像素算偏移，换个主题高度就飘。
+    await tester.tapAt(tester.getCenter(slider));
+    await tester.pump();
+
+    expect(got, isNotNull);
+    expect(got!.intensity, inInclusiveRange(45, 55));
+    // 改强度不该顺手改掉总开关或当前档（那是两件事）。
+    expect(got!.enabled, isTrue);
+    expect(got!.presetId, 'audio-a/vocal');
+  });
+
+  testWidgets('点「原声」→ 关掉但仍保留 intensity（强度不是开关键）', (tester) async {
+    shikiin.AudioFxState? got;
+    await tester.pumpWidget(_host(
+      state: const shikiin.AudioFxState(
+        enabled: true,
+        presetId: 'audio-a/vocal',
+        intensity: 40,
+      ),
+      onChange: (shikiin.AudioFxState s) => got = s,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('audio-fx-off')));
+    expect(got!.enabled, isFalse);
+    expect(got!.presetId, isNull);
+    expect(got!.intensity, 40);
+  });
+
+  testWidgets('曲线跟着强度缩：0% 时画出来的 10 个点全在 0 dB', (tester) async {
+    await tester.pumpWidget(_host(
+      state: const shikiin.AudioFxState(
+        enabled: true,
+        presetId: 'audio-a/vocal',
+        intensity: 0,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final CustomPaint paint = tester.widget<CustomPaint>(
+      find.byWidgetPredicate(
+        (Widget w) => w is CustomPaint && w.painter is AudioFxCurvePainter,
+      ),
+    );
+    final AudioFxCurvePainter painter = paint.painter! as AudioFxCurvePainter;
+    // 档位本身有 b2k +3 / b63 -1：0% 时曲线必须是平的，否则界面在撒谎。
+    expect(painter.bands.values.every((double v) => v == 0), isTrue);
+  });
 }

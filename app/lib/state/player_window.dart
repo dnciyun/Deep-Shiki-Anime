@@ -186,6 +186,27 @@ const String kMethodAudioFx = 'audioFx';
 /// 播放窗口 → 主窗口：右键切了音效，回推状态（扩展页是唯一配置入口）。
 const String kMethodAudioFxChanged = 'audioFxChanged';
 
+/// 主窗口 → 播放窗口：「画面设置变了，自己去重读」。
+///
+/// **不带数据**（2026-10-20，spec §3 方案 A「文件是唯一真相」）：
+/// 画面取值在 `picture-settings.json` 里，组合在 `picture-combos.json` 里，
+/// 播放窗口收到这一条之后重读两份文件、自己渲染并重挂链。为什么不像音效那样把状态
+/// 塞进通道：取值是一整组浮点 + 用户自定义组合列表，塞进通道就要在两边各维护一份
+/// 序列化口径；而且通道消息是**一次性**的（窗口刚建/处理器还没装好时那条就丢了），
+/// 文件则随时可重读 —— 重开窗、断掉一次通知都能自愈。
+///
+/// 不带参数也顺带避免了一个隐患：主窗口页面正在防抖时，通道里那一份可能比盘上的新，
+/// 对面按通道值渲染就会出现"盘上 A、画面 B"。
+const String kMethodPictureChanged = 'pictureChanged';
+
+/// 播放窗口 → 主窗口：**我这边刚真正下发了一次画面设置**，这是那一次的文件内容。
+///
+/// 为什么必须有反向这一条（spec §3 末段）：播放窗口右键/面板也能调画面，调完会自己
+/// 写 `picture-settings.json`。主窗口页面如果不知道，就会继续显示旧值 ——
+/// 用户接下来在页面上随便拖一下，写下去的就是**旧取值**，把播放器刚调好的覆盖掉。
+/// 主窗口收到它只做 `adopt`（同步显示），**不写盘、不再 push**（文件是对面写的）。
+const String kMethodPictureSettingsChanged = 'pictureSettingsChanged';
+
 /// 观看进度上报的最小间隔（毫秒）：每前进这么多就报一条（第二十七轮）。
 ///
 /// 5 秒是"够用且不吵"的档：再密就是每帧一条跨窗口消息，再疏则关掉播放器那一下
@@ -435,6 +456,16 @@ class PlayerWindowService {
   /// 但右键切档也算用户改配置，状态必须回到那一份里。
   void Function(Object? json)? onAudioFxChanged;
 
+  /// 播放窗口回推的画面设置（`kMethodPictureSettingsChanged` 的原始 JSON）。
+  ///
+  /// 装配根接它到 `pictureEditorProvider.notifier.adopt`：画面页是**主窗口**的配置台，
+  /// 但播放窗口里右键调画面也算用户改配置，页面显示的必须是最新那一份
+  ///（否则页面一拖就把播放窗口刚调好的覆盖掉，见通道常量处的说明）。
+  ///
+  /// 参数已经是 `Map<String, Object?>`（`adopt` 的签名要它）：非 Map 的坏参数在
+  /// 通道处理器里就丢掉了，不会走到这里。
+  void Function(Map<String, Object?> settings)? onPictureSettingsChanged;
+
   /// 环境推送的退避重试次数（成功即清零；见 [pushArgs]）。
   int _envRetries = 0;
 
@@ -466,6 +497,9 @@ class PlayerWindowService {
           case kMethodAudioFxChanged:
             // 播放窗口右键切档后回推：扩展页是唯一配置入口，这里只把状态留下。
             onAudioFxChanged?.call(call.arguments);
+          case kMethodPictureSettingsChanged:
+            // 播放窗口里右键/面板调完画面后回推：画面页在主窗口，显示的必须是最新那份。
+            _onPictureSettingsChanged(call.arguments);
         }
         return null;
       });
@@ -602,6 +636,29 @@ class PlayerWindowService {
       await handler(raw);
     } catch (e) {
       _log('播放列表选择失败：$e');
+    }
+  }
+
+  /// 播放窗口回推的画面设置：交给宿主（画面页同步显示）。
+  ///
+  /// 解析放在宿主这一侧（与 `decodeGeometry` / `_onWatchProgress` 同一口径：坏参数只是
+  /// 丢一条，绝不能因为一条解析失败影响播放）。非 Map 的参数直接丢弃 ——
+  /// `adopt` 收的是 `Map<String, Object?>`，这里顺手把非字符串键滤掉。
+  void _onPictureSettingsChanged(Object? raw) {
+    if (raw is! Map) {
+      _log('画面设置回推的参数不是 map（忽略）：$raw');
+      return;
+    }
+    final void Function(Map<String, Object?> settings)? handler = onPictureSettingsChanged;
+    if (handler == null) return;
+    final Map<String, Object?> settings = <String, Object?>{};
+    raw.forEach((Object? key, Object? value) {
+      if (key is String) settings[key] = value;
+    });
+    try {
+      handler(settings);
+    } catch (e) {
+      _log('画面设置回推处理失败（不影响播放）：$e');
     }
   }
 
@@ -762,6 +819,14 @@ class PlayerWindowService {
   /// 下次开窗会在启动参数里带上最新那份）。
   Future<void> sendAudioFx(Map<String, Object?> state) =>
       send(kMethodAudioFx, state);
+
+  /// 告诉**正在开着的**播放窗口「画面设置变了，去重读文件」（不带数据）。
+  ///
+  /// 没开窗是**正常路径**：页面改完只写盘，用户下次开播时播放窗口本来就是按文件
+  /// 恢复的（`ensurePictureMenuAttached` 里 `store.load()`）。所以这里不报错、不重试 ——
+  /// 与 [notifyExtensionsChanged] 同一套口径：通知是锦上添花，失败不该让"调画面"这件事
+  /// 看起来失败了。
+  Future<void> sendPictureChanged() => send(kMethodPictureChanged);
 
   /// 「关闭播放窗口」= **收起来**（默认关闭语义，见 [kMethodHideSelf]）。
   ///

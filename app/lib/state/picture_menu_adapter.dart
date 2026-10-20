@@ -12,6 +12,7 @@ import 'package:dsanima_core/dsanima_core.dart' as core;
 import 'package:flutter/foundation.dart';
 import 'package:shikiin/shikiin.dart';
 
+import '../domain/picture_combo.dart';
 import 'extension_settings.dart';
 import 'picture_pack.dart';
 
@@ -29,12 +30,21 @@ class PictureMenuAdapter implements PictureMenu {
   PictureMenuAdapter({
     required PictureController source,
     this.supportDir,
-  }) : _controller = source;
+    Map<String, List<PictureCombo>>? combos,
+  })  : _controller = source,
+        _combos = combos ?? const <String, List<PictureCombo>>{};
 
   final PictureController _controller;
 
   /// 数据根（`reload()` 要重新扫扩展目录 + 读用户设置）。null = 不重扫（测试/装配缺失）。
   final Directory? supportDir;
+
+  /// 「我的组合」（按包分组）。播放窗口在收到 `pictureChanged` 时重新读盘并
+  /// [setCombos] —— 主窗口里刚存的组合要能立刻出现在右键菜单里。
+  Map<String, List<PictureCombo>> _combos;
+
+  /// 换一批组合（不重扫包：组合文件与扩展目录是两件事）。
+  void setCombos(Map<String, List<PictureCombo>> combos) => _combos = combos;
 
   /// 菜单/面板绑定的包：优先当前选中的，没选中（关着）就用第一个。
   PicturePack? get _pack {
@@ -71,12 +81,20 @@ class PictureMenuAdapter implements PictureMenu {
     // 「清晰增强 · 」前缀纯属噪音。
     final bool multi = _controller.packs.length > 1;
     return <PicturePresetInfo>[
-      for (final PicturePack pack in _controller.packs)
+      for (final PicturePack pack in _controller.packs) ...<PicturePresetInfo>[
         for (final core.PicturePreset preset in pack.spec.presets)
           PicturePresetInfo(
             id: pictureCompositePresetId(pack.id, preset.id),
             name: multi ? '${pack.name} · ${preset.name}' : preset.name,
           ),
+        // 用户自己存的组合紧跟在**它那个包**的预设后面：菜单是一层扁平列表，
+        // 靠「我的 · 」前缀做分组（spec §6：不改 shikiin 的菜单接口、不加子菜单层级）。
+        for (final PictureCombo combo in _combos[pack.id] ?? const <PictureCombo>[])
+          PicturePresetInfo(
+            id: pictureComboIdOf(pack.id, combo.id),
+            name: multi ? '${pack.name} · 我的 · ${combo.name}' : '我的 · ${combo.name}',
+          ),
+      ],
     ];
   }
 
@@ -108,12 +126,47 @@ class PictureMenuAdapter implements PictureMenu {
     final ({String packId, String presetId})? parsed =
         parsePictureCompositeId(presetId);
     if (parsed == null) return;
+    // 自定义组合（`<包>/custom:<组合>`）：不是包自带预设，取值得去 combos 里找。
+    if (parsed.presetId.startsWith(kPictureComboPrefix)) {
+      await _selectCombo(parsed.packId, parsed.presetId.substring(kPictureComboPrefix.length));
+      return;
+    }
     if (_controller.currentPack?.id != parsed.packId) {
       await _controller.selectPack(parsed.packId, presetId: parsed.presetId);
       return;
     }
     await _controller.applyPreset(parsed.presetId);
   }
+
+  /// 套一个「我的组合」。
+  ///
+  /// 组合可能已经被主窗口删掉（菜单是上一次打开时建的）：那时**什么都不做**，
+  /// 既不能猜一套取值、也不能当成"关"（用户只是想套一个已经没了的搭配）。
+  Future<void> _selectCombo(String packId, String comboId) async {
+    PictureCombo? combo;
+    for (final PictureCombo candidate in _combos[packId] ?? const <PictureCombo>[]) {
+      if (candidate.id == comboId) {
+        combo = candidate;
+        break;
+      }
+    }
+    if (combo == null) return;
+    final PicturePack? pack = _controller.currentPackFor(packId);
+    if (pack == null) return;
+    // 走 `applySettings` 而不是 `selectPack`：后者会套上"第一个预设"，把组合的取值盖掉。
+    // `presetId` 记成 `custom:<id>`，菜单/面板才知道现在亮着的是这一套组合。
+    await _controller.applySettings(PictureSettings(
+      packId: pack.id,
+      presetId: '$kPictureComboPrefix$comboId',
+      values: pack.spec.normalizeValues(combo.values),
+    ));
+  }
+
+  /// 把一份设置直接下发（播放窗口收到 `pictureChanged` 时用）。
+  ///
+  /// 为什么不塞进 [reload]：那条会重扫扩展目录（装/卸包才需要），而这里只是"取值变了"，
+  /// 重扫是没有必要的开销，还会把正在播的那一帧重挂两次。
+  Future<void> applySettings(PictureSettings next) => _controller.applySettings(next);
 
   @override
   Future<void> selectPack(String packId, {String? presetId}) =>

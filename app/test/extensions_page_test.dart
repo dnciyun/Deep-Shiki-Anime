@@ -10,7 +10,9 @@
 /// * 安装中：名字 + 进度条（总量未知 = 不确定进度）+ 取消（cancelling 时禁用）；
 /// * notice 与 problem 是**两个落点**（problem 红字 + 怎么办）；
 /// * 卸载先弹确认框，并说明文件进回收站；
-/// * 在线目录：同 id 已装显示「重新安装」。
+/// * 在线目录：同 id 已装显示「重新安装」；
+/// * 这一页是**纯管理页**：音效 / 画面调节的配置面搬去了各自的侧栏页面，扩展页里
+///   不该再出现「音效」区，行内也不该留一个点了没用的「设置」入口。
 library;
 
 import 'dart:async';
@@ -59,7 +61,7 @@ core.ExtensionManifest _manifest({
   return parsed.manifest!;
 }
 
-/// 画面调节包夹具：三个预设（`设置` 按钮只给"有预设的包"）。
+/// 画面调节包夹具：三个预设（预设的显示 / 可见性归画面调节页管，扩展页只管装与启停）。
 core.ExtensionManifest _pictureManifest({
   String id = 'picture-demo',
   String name = '画面调节演示',
@@ -77,8 +79,9 @@ core.ExtensionManifest _pictureManifest({
     'payload': <String, Object?>{
       'picture': <String, Object?>{
         'template': 'shaders/picture.glsl',
-        // 包的一句说明：只在扩展页「设置」里显示（用户 2026-10-18：
-        // 「右键菜单内不要有太多介绍，全在扩展内就好了」）。
+        // 包的一句说明（payload.picture.hint）：扩展页不再展示它了 —— 那个「设置」
+        // 对话框已随配置面搬去画面调节页而删除。这里保留字段是为了夹具仍然是一份
+        // 合法的、字段齐全的清单。
         'hint': '演示包的说明：默认不改画面。',
         'params': <Object?>[
           <String, Object?>{
@@ -148,7 +151,8 @@ InstalledExtension _installed({
       bytes: bytes,
     );
 
-/// 音效包夹具：两档，用来测扩展页的「音效」区（用户 2026-10-19：放扩展里）。
+/// 音效包夹具：两档。音效的配置面已在侧栏「音效」页，这里只用来钉
+/// 「装着音效包，扩展页也不会再长出音效区」。
 InstalledExtension _audioInstalled({
   String id = 'dsanima-audio',
   bool enabled = true,
@@ -673,74 +677,7 @@ void main() {
     });
   });
 
-  group('扩展设置（画面调节包的预设开关）', () {
-    testWidgets('只有"有设置项"的扩展才显示「设置」按钮', (WidgetTester tester) async {
-      final _FakeExtensionsPort port = _FakeExtensionsPort()
-        ..installed = <InstalledExtension>[_installed(), _installedPicture()];
-      await _pump(tester, port);
-
-      expect(find.byKey(dsExtensionSettingsKey('picture-demo')), findsOneWidget);
-      expect(find.byKey(dsExtensionSettingsKey('demo-pack')), findsNothing,
-          reason: 'shader-pack 没有可设置的项，不许放一个点进去空白的入口');
-    });
-
-    testWidgets('设置对话框：关掉一个预设 → 保存 → 提示说清关了几个；再打开勾选状态还在',
-        (WidgetTester tester) async {
-      final _FakeExtensionsPort port = _FakeExtensionsPort()
-        ..installed = <InstalledExtension>[_installedPicture()];
-      await _pump(tester, port);
-
-      await tester.tap(find.byKey(dsExtensionSettingsKey('picture-demo')));
-      await tester.pumpAndSettle();
-      // 三个预设都在（默认全开）
-      expect(find.text('清晰'), findsWidgets);
-      expect(find.text('柔和'), findsWidgets);
-      expect(find.text('暖色'), findsWidgets);
-
-      // 关掉「柔揉」…（按 key 点，避免撞上页面别处的同名文字）
-      await tester.tap(find.byKey(dsExtensionPresetToggleKey('picture-demo', 'soft')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(dsExtensionSettingsSaveKey));
-      await tester.pumpAndSettle();
-
-      expect(_noticeText(tester), contains('关掉了 1 个预设'));
-
-      // 重新打开：勾选状态被记住（读的是 provider 里的设置）
-      await tester.tap(find.byKey(dsExtensionSettingsKey('picture-demo')));
-      await tester.pumpAndSettle();
-      final CheckboxListTile soft = tester.widget<CheckboxListTile>(
-        find.byKey(dsExtensionPresetToggleKey('picture-demo', 'soft')),
-      );
-      expect(soft.value, isFalse);
-      final CheckboxListTile crisp = tester.widget<CheckboxListTile>(
-        find.byKey(dsExtensionPresetToggleKey('picture-demo', 'crisp')),
-      );
-      expect(crisp.value, isTrue);
-    });
-
-    testWidgets('设置对话框：说明文字都在扩展页里（包一句 + 每档预设一行）',
-        (WidgetTester tester) async {
-      final _FakeExtensionsPort port = _FakeExtensionsPort()
-        ..installed = <InstalledExtension>[_installedPicture()];
-      await _pump(tester, port);
-
-      await tester.tap(find.byKey(dsExtensionSettingsKey('picture-demo')));
-      await tester.pumpAndSettle();
-
-      // 用户 2026-10-18：「右键菜单内不要有太多介绍，全在扩展内就好了」——
-      // 说明从播放器右键菜单搬到了这里，就必须真的在这里看得见。
-      expect(
-        find.text('演示包的说明：默认不改画面。'),
-        findsOneWidget,
-        reason: '包的一句说明（payload.picture.hint）要在设置对话框顶部',
-      );
-      expect(
-        find.text('推荐：线条细而实，不糊。'),
-        findsOneWidget,
-        reason: '每档预设的说明要挂在它自己那一行下（subtitle）',
-      );
-    });
-
+  group('官方插件库', () {
     testWidgets('官方插件库：出厂就指向 dnciyun/DSAnima-plungin（用户不用先粘地址）',
         (WidgetTester tester) async {
       final _FakeExtensionsPort port = _FakeExtensionsPort()
@@ -762,25 +699,46 @@ void main() {
     });
   });
 
-  group('音效区（装音效包才有）', () {
-    testWidgets('装了音效包 → 页面出现「音效」区与它的档位', (WidgetTester tester) async {
+  group('扩展页只留管理（音效 / 画面包的配置面在各自的侧栏页面）', () {
+    testWidgets('装着音效包与画面包：不再有音效区，行内也只剩 启用/卸载', (WidgetTester tester) async {
       final _FakeExtensionsPort port = _FakeExtensionsPort()
-        ..installed = <InstalledExtension>[_audioInstalled()];
+        ..installed = <InstalledExtension>[_audioInstalled(), _installedPicture()];
       await _pump(tester, port);
 
-      expect(find.text('音效'), findsWidgets);
-      expect(find.text('人声增强'), findsOneWidget);
-      expect(find.text('低音增强'), findsOneWidget);
-      expect(find.text('对白压缩'), findsOneWidget);
-    });
-
-    testWidgets('没装音效包 → 不出现音效区（不留空标题）', (WidgetTester tester) async {
-      final _FakeExtensionsPort port = _FakeExtensionsPort()
-        ..installed = <InstalledExtension>[_installed()];
-      await _pump(tester, port);
-
-      expect(find.text('对白压缩'), findsNothing);
+      // 1) 音效区没了：小节标题、档位名、音效区的控件锚点都不该出现。
+      //    装着音效包也一样 —— 音效的配置面在侧栏「音效」页。
+      expect(find.text('音效'), findsNothing, reason: '扩展页不再有「音效」小节');
+      expect(
+        find.byWidgetPredicate(
+          (Widget w) =>
+              w.key is ValueKey<String> &&
+              (w.key! as ValueKey<String>).value.startsWith('audio-fx'),
+        ),
+        findsNothing,
+        reason: '音效区的控件（audio-fx-preset-* / audio-fx-off 等）不该留在扩展页',
+      );
       expect(find.text('人声增强'), findsNothing);
+      expect(find.text('对白压缩'), findsNothing, reason: '「对白压缩」是音效区里的压缩档');
+
+      // 2) 行内动作只有「禁用/启用」+「卸载」：画面包的「设置」对话框删了，
+      //    按钮也不能留成点了没用的半死 UI。
+      for (final String id in <String>['dsanima-audio', 'picture-demo']) {
+        final Finder row = find.byKey(dsExtensionRowKey(id));
+        expect(row, findsOneWidget);
+        expect(find.descendant(of: row, matching: find.text('设置')), findsNothing);
+        final List<NeoButton> buttons = tester
+            .widgetList<NeoButton>(find.descendant(of: row, matching: find.byType(NeoButton)))
+            .toList();
+        expect(
+          buttons.map((NeoButton b) => b.label),
+          <String>['禁用', '卸载'],
+          reason: '行内只剩 启用/禁用 与 卸载（$id）',
+        );
+      }
+
+      // 3) 管理入口都还在：这一页仍然是装 / 卸 / 启停 / 导入 / 在线目录。
+      expect(find.text('已安装扩展'), findsOneWidget);
+      expect(find.text('在线目录'), findsOneWidget);
     });
   });
 

@@ -421,14 +421,11 @@ class PictureController extends ChangeNotifier {
     final Map<String, double> base = preset == null
         ? pack.spec.defaults
         : pack.spec.valuesOf(preset);
-    _settings = PictureSettings(
+    await applySettings(PictureSettings(
       packId: pack.id,
       presetId: preset?.id,
       values: base,
-    );
-    _values = _valuesOf(_settings);
-    notifyListeners();
-    await apply();
+    ));
   }
 
   /// 套预设（同一包内的档位）。
@@ -437,14 +434,32 @@ class PictureController extends ChangeNotifier {
     if (pack == null) return;
     final core.PicturePreset? preset = _presetOf(pack, presetId);
     if (preset == null) return;
-    _settings = PictureSettings(
+    await applySettings(PictureSettings(
       packId: pack.id,
       presetId: preset.id,
       values: pack.spec.valuesOf(preset),
-    );
-    _values = _valuesOf(_settings);
-    notifyListeners();
-    await apply();
+    ));
+  }
+
+  /// 把一份设置**一次性**落到"状态 + 取值 + 渲染 + 挂链"。
+  ///
+  /// 这是播放窗口唯一的下发入口：`selectPack` / `applyPreset` / `turnOff` 全部收敛到它
+  /// 上面（spec §6：不新增第二套下发路径）。播放窗口收到主窗口的 `pictureChanged` 时
+  /// 读出来的也是 `PictureSettings`，走同一个函数 —— 于是"页面调的"和"右键调的"落在
+  /// 同一条链上，不会出现两种行为。
+  ///
+  /// **永久不抛**：调用方是跨窗口消息处理器与界面动作，任何一次失败都只该"什么都不挂"
+  /// （画面回到只有超分），绝不能让播放窗口崩掉。
+  Future<void> applySettings(PictureSettings next) async {
+    try {
+      // 包没了 / 参数变了：一律按当前清单对齐（与 `setPacks` 同一套 `_normalize`）。
+      _settings = _normalize(next, _packs);
+      _values = _valuesOf(_settings);
+      notifyListeners();
+      await apply();
+    } catch (error, stack) {
+      debugPrint('[picture] 应用画面设置失败（这次算了，画面回到只有超分）：$error\n$stack');
+    }
   }
 
   /// 改一个滑杆（夹值 + 量化在 `PictureParam.clampValue` 里，界面不用自己算）。
@@ -508,14 +523,10 @@ class PictureController extends ChangeNotifier {
   }
 
   /// 关掉画面调节**并且**把状态回到 off（界面上的「关」）。
-  Future<void> turnOff() async {
-    _settings = PictureSettings.off;
-    _values = const <String, double>{};
-    notifyListeners();
-    await clear();
-    // 「关」也要存：下次开播放窗口不该把用户刚关掉的画面调节又挂回去。
-    await _persist();
-  }
+  ///
+  /// 与另外两条一样收敛到 [applySettings]：`apply()` 在没有当前包时会清链，
+  /// 所以"关"= 一份空的设置 + 一次下发 + 一次落盘。
+  Future<void> turnOff() => applySettings(PictureSettings.off);
 
   /// 把当前设置交给宿主（写盘）。回调失败只记日志 —— 存不下来不该让画面调节崩掉。
   Future<void> _persist() async {

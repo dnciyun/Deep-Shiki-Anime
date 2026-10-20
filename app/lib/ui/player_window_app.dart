@@ -25,9 +25,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shikiin/shikiin.dart' as shikiin;
 import 'package:window_manager/window_manager.dart' as wm;
 
+import '../domain/picture_combo.dart';
 import '../state/extension_schemes.dart';
 import '../state/audio_presets.dart';
 import '../state/generic_packs.dart';
+import '../state/picture_combos.dart';
+import '../state/picture_menu_adapter.dart';
+import '../state/picture_pack.dart' show PictureSettings;
+import '../state/picture_settings_io.dart';
 import '../state/player_window.dart';
 import '../state/store_layout.dart';
 import '../state/subtitle_presets.dart';
@@ -155,6 +160,10 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
         case kMethodAudioFx:
           // 扩展页改了音效：配置入口在主窗口，这里只负责立刻生效。
           await _applyAudioFxState(call.arguments);
+        case kMethodPictureChanged:
+          // 主窗口的画面页改完了（选包/预设/滑杆/组合/关）：重读文件与组合，重新下发。
+          // 通道里不带数据（文件是唯一真相），见 `kMethodPictureChanged` 的说明。
+          await _applyPictureChanged();
         case kMethodPlayOrPause:
           await ref.read(shikiin.playerProvider).playOrPause();
         case kMethodSeek:
@@ -544,6 +553,43 @@ class _PlayerWindowAppState extends ConsumerState<PlayerWindowApp>
     // 音效（配置入口在扩展页）：开窗/换集时随参数带过来的那份。
     final Map<Object?, Object?>? fx = args.audioFx;
     if (fx != null) unawaited(_applyAudioFxState(fx));
+  }
+
+  /// 主窗口的画面页改完了 → 这一侧重读两份文件，重新渲染并重挂链。
+  ///
+  /// 为什么必须重读文件而不是用通道里的值：通道**只带"变了"**（spec §3 方案 A），
+  /// 文件才是唯一真相 —— 这样"窗口刚建、处理器还没装好时丢掉一条通知"也不会永久落后
+  /// （下次任何一条通知 / 重开窗口都按文件恢复）。
+  ///
+  /// 顺序是先换组合再下发：`applySettings` 之后右键菜单会立刻按新组合重建，
+  /// 反过来会让菜单短暂列出旧组合。
+  ///
+  /// **永不抛**：坏文件只退化（`load` 自己兜住），这里再兜一层 —— 正在播的窗口比
+  /// "画面参数慢一拍"重要得多。
+  Future<void> _applyPictureChanged() async {
+    try {
+      final DataRoot dataRoot = await resolveDataRoot();
+      final Directory supportDir = Directory(dataRoot.path);
+      final PictureSettings settings = await PictureSettingsStore(supportDir).load();
+      final Map<String, List<PictureCombo>> combos =
+          await PictureCombosStore(supportDir).load();
+      final shikiin.PictureMenu? menu = ref.read(shikiin.pictureMenuProvider);
+      if (menu is PictureMenuAdapter) {
+        menu.setCombos(combos);
+        await menu.applySettings(settings);
+        _trace(
+          '画面变更：已按盘上的设置重新下发（包=${settings.packId}，'
+          '预设=${settings.presetId}，我的组合 ${combos.length} 组）',
+        );
+        return;
+      }
+      // 取不到宿主实现（组件测试替身 / 装配缺失）：退回"重扫现有菜单"，
+      // 至少不会永远停在旧取值上。`reload()` 自己永不抛。
+      await menu?.reload();
+      _trace('画面变更：菜单不是宿主实现（只重扫，未按文件重下发）');
+    } catch (e) {
+      _trace('画面变更：重读/重下发失败（保持当前画面）：$e');
+    }
   }
 
   /// 把一份音效状态交给播放器（跨 isolate 传来的是 `Map<Object?, Object?>`）。

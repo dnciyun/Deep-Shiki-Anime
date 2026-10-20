@@ -453,10 +453,13 @@ class PlayerController {
     final int code = await runMpvCommand(audioFxFiltersCommand(spec));
     // 回读：只能证明「设上了」，不能证明初始化成功（见本段开头的探针结论）。
     final String afNow = await readMpvProperty('af');
+    // 强度也记进去：用户报「没效果」时，先看是不是 intensity=0（EQ 平直）——
+    // 那是页面上的设置而非故障，日志里不写就分不清这两种情况。
     diag.info(
       'debug-af',
       'enabled=${_audioFxState.enabled} preset=${_audioFxState.presetId} '
       'compression=${_audioFxState.compression} loudness=${_audioFxState.loudness} '
+      'intensity=${_audioFxState.intensity} '
       'set=$code af-now="$afNow"',
     );
     if (spec.isNotEmpty && !afNow.contains('lavfi')) {

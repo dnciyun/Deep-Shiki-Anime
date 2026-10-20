@@ -119,6 +119,67 @@ void main() {
       expect(audioFxFilterSpec(null), '');
     });
 
+    // ── 总强度（intensity，页面上的「总强度」滑块）────────────────────────────
+    //
+    // 语义（spec §4.1）：只缩放 10 段 EQ 的增益，**预增益不缩**。
+    // 预增益一起缩就是 2026-10-19 那个「改的音效没效果，都是把声音变小了」的事故。
+
+    test('不传 intensity 与传 100 是同一条链（老调用方行为不变）', () {
+      final Map<String, double> bands = _zeros()
+        ..['b250'] = 6
+        ..['b2k'] = -6;
+      final AudioFxPreset p =
+          _preset(bands: bands, preamp: -3, crossfeed: 0.35);
+      expect(
+        audioFxFilterSpec(p),
+        audioFxFilterSpec(p, intensity: 100),
+      );
+    });
+
+    test('50%：10 段增益都乘一半（-6 变 -3），预增益原样', () {
+      final Map<String, double> bands = _zeros()..['b500'] = -6;
+      final String spec = audioFxFilterSpec(
+        _preset(bands: bands, preamp: -3),
+        intensity: 50,
+      );
+      expect(spec, contains('equalizer=f=500:width_type=o:width=1:g=-3'));
+      // 预增益不参与缩放：否则 50% 时音量也跟着掉一半，「强度」会变成音量旋钮。
+      expect(spec, contains('volume=-3dB'));
+    });
+
+    test('0%：EQ 全部平直（0 dB），但压缩/均衡/限幅仍在 —— 不是静音', () {
+      final Map<String, double> bands = _zeros()..['b2k'] = 9;
+      final String spec = audioFxFilterSpec(
+        _preset(bands: bands),
+        compression: 2,
+        loudness: 1,
+        intensity: 0,
+      );
+      for (final String band in kAudioFxBands) {
+        final int freq = kAudioFxBandFrequencies[band]!;
+        expect(
+          spec,
+          contains('equalizer=f=$freq:width_type=o:width=1:g=0'),
+          reason: '$band 在 0% 时不是 0 dB',
+        );
+      }
+      expect(spec, contains('acompressor='));
+      expect(spec, contains('dynaudnorm='));
+      expect(spec, endsWith('alimiter=limit=0.97]'));
+    });
+
+    test('intensity 越界被夹到 0 / 100（滑块之外的来源也不会拼出怪链）', () {
+      final Map<String, double> bands = _zeros()..['b2k'] = 4;
+      expect(
+        audioFxFilterSpec(_preset(bands: bands), intensity: 250),
+        contains('equalizer=f=2000:width_type=o:width=1:g=4'),
+      );
+      expect(
+        audioFxFilterSpec(_preset(bands: bands), intensity: -5),
+        contains('equalizer=f=2000:width_type=o:width=1:g=0'),
+      );
+    });
+
     test('缺项按 0 处理，不抛', () {
       final String spec = audioFxFilterSpec(_preset(bands: <String, double>{'b1k': 3}));
       expect(spec, contains('equalizer=f=31:width_type=o:width=1:g=0'));
@@ -189,6 +250,61 @@ void main() {
       expect(s.copyWith().presetId, 'a');
       expect(s.copyWith(clearPreset: true).presetId, isNull);
       expect(s.copyWith(enabled: false).enabled, isFalse);
+    });
+
+    test('状态里的 intensity 会透传到链上（页面改的强度必须真的落到 af）', () {
+      final String spec = audioFxActiveSpec(
+        presets: presets,
+        state: const AudioFxState(
+          enabled: true,
+          presetId: 'p',
+          intensity: 50,
+        ),
+      );
+      // 档位本身是 b2k +6 dB → 半强度 3 dB。
+      expect(spec, contains('equalizer=f=2000:width_type=o:width=1:g=3'));
+    });
+  });
+
+  group('AudioFxState.intensity', () {
+    test('缺省 100（老配置不会因为多了这个字段就变小）', () {
+      expect(const AudioFxState().intensity, 100);
+    });
+
+    test('toJson 带上 intensity（跨窗口传值靠它）', () {
+      expect(const AudioFxState(intensity: 40).toJson()['intensity'], 40);
+      expect(const AudioFxState().toJson()['intensity'], 100);
+    });
+
+    test('fromJson：缺字段 = 100，认得 42，越界回落 0/100', () {
+      expect(AudioFxState.fromJson(<String, Object?>{}).intensity, 100);
+      expect(
+        AudioFxState.fromJson(<String, Object?>{'intensity': 42}).intensity,
+        42,
+      );
+      expect(
+        AudioFxState.fromJson(<String, Object?>{'intensity': 250}).intensity,
+        100,
+      );
+      expect(
+        AudioFxState.fromJson(<String, Object?>{'intensity': -5}).intensity,
+        0,
+      );
+    });
+
+    test('copyWith 不传 intensity = 保持（右键切档不许把强度冲回 100）', () {
+      const AudioFxState s = AudioFxState(intensity: 40);
+      expect(s.copyWith(compression: 2).intensity, 40);
+      expect(s.copyWith(enabled: true, presetId: 'x').intensity, 40);
+      expect(s.copyWith(intensity: 80).intensity, 80);
+    });
+
+    test('强度参与判等：只差 intensity 的两个状态不相等', () {
+      expect(const AudioFxState(intensity: 40), const AudioFxState(intensity: 40));
+      expect(
+        const AudioFxState(intensity: 40),
+        isNot(const AudioFxState(intensity: 41)),
+      );
     });
   });
 }

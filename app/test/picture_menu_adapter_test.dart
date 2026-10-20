@@ -2,12 +2,15 @@
 ///
 /// 守的是"菜单里点一下，播放器真的换了画面"这条端到端最小的缝：
 /// 组合 id（`<包>/<预设>`）能不能拆回来、切包与同包换预设走的是不是不同的路、
-/// 关掉之后叠加链是不是真的清空（而不是只把菜单勾选改了）。
+/// 关掉之后叠加链是不是真的清空（而不是只把菜单勾选改了），以及「我的组合」
+/// 有没有按 `<包>/custom:<组合>` 的约定追加在包自带预设之后、点了是不是真的落到
+/// 那一套取值（而不是退回"第一个预设"）。
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dsanima/domain/picture_combo.dart';
 import 'package:dsanima/state/extension_schemes.dart'
     show kExtensionsDirName, kExtensionsStateFileName;
 import 'package:dsanima/state/picture_menu_adapter.dart';
@@ -198,5 +201,91 @@ void main() {
     await menu.selectPreset('pack-b/soft');
     expect(controller.currentPack?.id, 'pack-b');
     expect(menu.activePresetId, 'pack-b/soft');
+  });
+
+  group('「我的组合」进菜单', () {
+    late Directory support;
+    late Anime4kController player;
+    late PictureController controller;
+    late PictureMenuAdapter menu;
+
+    const PictureCombo night = PictureCombo(
+      id: 'c1',
+      name: '夜间',
+      values: <String, double>{'sharpen': 0.3, 'line': 0.2},
+    );
+    const PictureCombo day = PictureCombo(
+      id: 'c2',
+      name: '白天',
+      values: <String, double>{'sharpen': 1.8},
+    );
+
+    setUp(() async {
+      support = Directory.systemTemp.createTempSync('dsanima-pic-menu-');
+      addTearDown(() => support.deleteSync(recursive: true));
+      _install(support, 'demo', '演示包');
+      player = Anime4kController(runner: (List<String> args) async {});
+      controller = PictureController(
+        player: player,
+        shaderCacheDir: pictureCacheDirOf(support),
+        packs: await loadPicturePacks(support),
+      );
+      menu = PictureMenuAdapter(
+        source: controller,
+        combos: const <String, List<PictureCombo>>{
+          'demo': <PictureCombo>[night, day],
+        },
+      );
+    });
+
+    test('追加在包自带预设之后，名字是「我的 · <名字>」，id 是 <包>/custom:<id>', () {
+      expect(menu.presets.map((PicturePresetInfo x) => x.name),
+          <String>['清晰', '柔和', '我的 · 夜间', '我的 · 白天']);
+      expect(menu.presets.map((PicturePresetInfo x) => x.id),
+          <String>['demo/crisp', 'demo/soft', 'demo/custom:c1', 'demo/custom:c2']);
+    });
+
+    test('selectPreset(custom id) → 落到那套组合的取值（不是"第一个预设"）', () async {
+      await menu.selectPreset('demo/custom:c1');
+
+      expect(menu.isOff, isFalse);
+      expect(controller.values, <String, double>{'sharpen': 0.3, 'line': 0.2});
+      expect(menu.activePresetId, 'demo/custom:c1', reason: '菜单据此把这一项勾上');
+      expect(File(player.extraChain.single).readAsStringSync(),
+          contains('#define SHARPEN 0.3000'));
+    });
+
+    test('组合已被删掉（菜单里还留着旧项）→ 什么都不做，不崩', () async {
+      await menu.selectPreset('demo/custom:nope');
+
+      expect(controller.isOff, isTrue);
+      expect(controller.values, isEmpty);
+      expect(player.extraChain, isEmpty);
+    });
+
+    test('setCombos 换一批 → 菜单立刻按新的那批重建', () {
+      menu.setCombos(const <String, List<PictureCombo>>{
+        'demo': <PictureCombo>[day],
+      });
+      expect(menu.presets.map((PicturePresetInfo x) => x.name),
+          <String>['清晰', '柔和', '我的 · 白天']);
+    });
+
+    test('未知参数键在套用组合时被丢掉（包不认识的键不许进渲染/状态）', () async {
+      menu.setCombos(const <String, List<PictureCombo>>{
+        'demo': <PictureCombo>[
+          PictureCombo(
+            id: 'c3',
+            name: '带垃圾键',
+            values: <String, double>{'sharpen': 1.0, 'not_a_param': 9},
+          ),
+        ],
+      });
+
+      await menu.selectPreset('demo/custom:c3');
+
+      expect(controller.values.keys.toSet(), <String>{'sharpen', 'line'});
+      expect(controller.values['sharpen'], 1.0);
+    });
   });
 }

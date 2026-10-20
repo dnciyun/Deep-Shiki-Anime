@@ -5,12 +5,17 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
+
+import 'package:dsanima_core/dsanima_core.dart' as core;
 
 import 'package:dsanima/domain/episode_group.dart';
 import 'package:dsanima/domain/models.dart';
 import 'package:dsanima/domain/ports.dart';
 import 'package:dsanima/domain/unavailable.dart';
 import 'package:dsanima/app.dart';
+import 'package:dsanima/state/packs_available.dart';
+import 'package:dsanima/state/picture_pack.dart';
 import 'package:dsanima/state/playback.dart';
 import 'package:dsanima/state/providers.dart';
 import 'package:dsanima/theme/app_theme.dart';
@@ -20,7 +25,9 @@ import 'package:dsanima/ui/queue_page.dart';
 import 'package:dsanima/ui/first_run.dart';
 import 'package:dsanima/ui/following_page.dart';
 import 'package:dsanima/ui/home_page.dart';
+import 'package:dsanima/ui/audio_fx_page.dart';
 import 'package:dsanima/ui/library_page.dart';
+import 'package:dsanima/ui/picture_page.dart';
 import 'package:dsanima/ui/search_page.dart';
 import 'package:dsanima/ui/settings_page.dart';
 import 'package:dsanima/ui/shell.dart';
@@ -333,6 +340,7 @@ Widget harness(
   LifecyclePort? lifecycle,
   AppSettings settings = const AppSettings(firstRunCompleted: true),
   DsTokens themeTokens = DsTokens.whiteInk,
+  PackAvailability? availability,
 }) {
   return ProviderScope(
     overrides: [
@@ -346,6 +354,12 @@ Widget harness(
       playerPortProvider.overrideWithValue(const UnavailablePlayerPort()),
       lifecyclePortProvider.overrideWithValue(lifecycle ?? const UnavailableLifecyclePort()),
       pickerPortProvider.overrideWithValue(const UnavailablePickerPort()),
+      // 2026-10-20：侧栏「画面调节 / 音效」两行的显示与否由可用性决定。默认走真控制器
+      // （没注入数据根 ⇒ 两项都不可用 ⇒ 两行不出现）；要测"装了包才出现"就传一份假的。
+      if (availability != null)
+        packAvailabilityProvider.overrideWith(
+          () => _FixedPackAvailability(availability),
+        ),
     ],
     child: MaterialApp(
       theme: buildDsanimaTheme(tokens: themeTokens),
@@ -353,6 +367,47 @@ Widget harness(
     ),
   );
 }
+
+/// 固定值的可用性控制器（只给测试用）。
+///
+/// `ensureLoaded` / `refresh` 必须一起改成空操作：侧栏 `initState` 的 postFrame 一定会
+/// 调一次 `ensureLoaded()`，真实现会去读数据根（测试里没有 ⇒ 扫出"没有包"）
+/// 从而把这里钉死的值**覆盖掉** —— 那会让"装了包才出现"这条用例静默失效。
+class _FixedPackAvailability extends PackAvailabilityController {
+  _FixedPackAvailability(this.fixed);
+
+  final PackAvailability fixed;
+
+  @override
+  PackAvailability build() => fixed;
+
+  @override
+  Future<void> ensureLoaded() async {}
+
+  @override
+  Future<void> refresh() async {}
+}
+
+/// 一个能进侧栏/页面的假画面调节包（不落盘：只满足"列表非空"这一个判据）。
+PicturePack _fakePicturePack() => PicturePack(
+      id: 'picture-demo',
+      name: '演示画面包',
+      version: '1.0.0',
+      spec: const core.PictureSpec(
+        template: 'shaders/picture.glsl',
+        params: <core.PictureParam>[],
+        presets: <core.PicturePreset>[],
+      ),
+      template: '#define SHARPEN 0.0\n',
+      dir: Directory.systemTemp,
+    );
+
+shikiin.AudioFxPreset _fakeAudioPreset() => const shikiin.AudioFxPreset(
+      id: 'audio-demo/vocal',
+      name: '人声增强',
+      packId: 'audio-demo',
+      packName: '演示音效包',
+    );
 
 void _sizeTo(WidgetTester tester, Size size) {
   tester.view.physicalSize = size;
@@ -422,8 +477,15 @@ void main() {
 
     // 顶部导航区每个目的地都在（`shellNavTabs` = ShellTab 去掉 settings 与 history，
     // 第三十三轮之后是 主页/动漫库/搜索/正在追/队列/已完成 6 项；
-    // **1.1.0 M3/T15** 在「已完成」后面加了第 7 项「扩展」）。
+    // **1.1.0 M3/T15** 在「已完成」后面加了第 7 项「扩展」；
+    // **2026-10-20** 又加了「画面调节」与「音效」—— 但这两项**装上对应的包才出现**，
+    // 所以这条用例（没有包）要断言它们**不在**）。
     for (final ShellTab tab in shellNavTabs) {
+      if (tab == ShellTab.picture || tab == ShellTab.audioFx) {
+        expect(find.byKey(dsSidebarNavRowKey(tab)), findsNothing,
+            reason: '没装包时「${tab.label}」不该占一行（不是灰的、不是空页）');
+        continue;
+      }
       expect(find.text(tab.label), findsWidgets, reason: '缺少导航项：${tab.label}');
     }
     // 用户 2026-10-12 第十四轮：「主窗口的设置改为……左下角」（原话先说右下角、随后更正）
@@ -442,21 +504,29 @@ void main() {
     // 第二十一轮：「已缓存」页按用户要求整页删掉（侧栏随之少一项）。
     // `ShellTab.values` 是侧栏与 IndexedStack 的**唯一出处**（`tab.index` 就是下标），
     // 所以这里钉住它的形状 —— 以后谁要加回来，必须同时补 IndexedStack 里的那一页。
-    expect(ShellTab.values.length, 10,
-        reason: '主页/动漫库/搜索/正在追/队列/已完成/本地/扩展/观看记录/设置 = 10'
+    expect(ShellTab.values.length, 12,
+        reason: '主页/动漫库/搜索/正在追/队列/已完成/本地/扩展/画面调节/音效/观看记录/设置 = 12'
             '（第三十三轮新增「动漫库」，排在主页下面；第二十七轮：订阅页删掉、新增观看记录；'
             '**1.1.0 M3/T15**：新增「扩展」，排在「已完成」之后；'
-            '**2026-10-20**：新增「本地」，排在「已完成」之后、「扩展」之前）');
+            '**2026-10-20**：新增「本地」，排在「已完成」之后、「扩展」之前；'
+            '同一轮再加两个"包页面"「画面调节」「音效」，排在「扩展」之后、「观看记录」之前）');
     expect(ShellTab.values.map((ShellTab t) => t.label), isNot(contains('已缓存')),
         reason: '侧栏不该再有「已缓存」这一项');
     expect(ShellTab.values.map((ShellTab t) => t.label), isNot(contains('订阅')),
         reason: '第二十七轮：「订阅」页整页删掉，订阅功能搬进「正在追」');
     // M3/T15：第 9 项「扩展」在顶部导航最后（`shellNavTabs.last`），位置在「已完成」之后。
-    expect(shellNavTabs.last, ShellTab.extensions,
-        reason: '「扩展」是顶部导航的最后一项（观看记录/设置都在左下角那一块）');
+    // ⚠️ 2026-10-20：`shellNavTabs.last` 现在是「音效」（两个"包页面"排在「扩展」之后）。
+    expect(shellNavTabs.last, ShellTab.audioFx,
+        reason: '「音效」是顶部导航的最后一项（它和「画面调节」都排在「扩展」之后）');
     expect(shellNavTabs.indexOf(ShellTab.extensions),
         greaterThan(shellNavTabs.indexOf(ShellTab.completed)),
         reason: '「扩展」要排在「已完成」之后');
+    expect(shellNavTabs.indexOf(ShellTab.picture),
+        greaterThan(shellNavTabs.indexOf(ShellTab.extensions)),
+        reason: '「画面调节」排在「扩展」之后（装了包才出现）');
+    expect(shellNavTabs.indexOf(ShellTab.audioFx),
+        greaterThan(shellNavTabs.indexOf(ShellTab.picture)),
+        reason: '「音效」排在「画面调节」之后');
     // 导航行的 key 生成函数也要覆盖新 tab（测试按 key 定位，不靠文字 `.first`）。
     expect(find.byKey(dsSidebarNavRowKey(ShellTab.extensions)), findsOneWidget,
         reason: '顶部导航缺「扩展」那一行');
@@ -522,6 +592,45 @@ void main() {
     await tester.tap(find.text(ShellTab.settings.label));
     await tester.pumpAndSettle();
     expect(contentIndex(), ShellTab.settings.index, reason: '点「设置」两个字也该切到设置页');
+  });
+
+  // ── 2026-10-20：「画面调节 / 音效」= 装上对应的包才出现的两个"包页面" ────────────
+
+  testWidgets('侧栏：装了包之后「画面调节」「音效」各自出现一行，都排在「扩展」之后', (
+    WidgetTester tester,
+  ) async {
+    _sizeTo(tester, const Size(1600, 1000));
+    await tester.pumpWidget(
+      harness(
+        const DsShell(),
+        source: FakeSourcePort(<SourceItemView>[]),
+        availability: PackAvailability(
+          picturePacks: <PicturePack>[_fakePicturePack()],
+          audioPresets: <shikiin.AudioFxPreset>[_fakeAudioPreset()],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder picture = find.byKey(dsSidebarNavRowKey(ShellTab.picture));
+    final Finder audio = find.byKey(dsSidebarNavRowKey(ShellTab.audioFx));
+    expect(picture, findsOneWidget, reason: '装了画面调节包就该多一行「画面调节」');
+    expect(audio, findsOneWidget, reason: '装了音效包就该多一行「音效」');
+    expect(tester.getRect(audio).top, greaterThan(tester.getRect(picture).top),
+        reason: '「音效」在「画面调节」下面');
+    expect(tester.getRect(picture).top,
+        greaterThan(tester.getRect(find.byKey(dsSidebarNavRowKey(ShellTab.extensions))).top),
+        reason: '两个包页面都排在「扩展」之后');
+
+    // 点得进去：内容区下标 = `tab.index`（内容栈里那两页始终占着位置，否则下标会错位）。
+    await tester.tap(picture);
+    await tester.pumpAndSettle();
+    expect(tester.widget<IndexedStack>(find.byKey(dsShellContentKey)).index!,
+        ShellTab.picture.index);
+    await tester.tap(audio);
+    await tester.pumpAndSettle();
+    expect(tester.widget<IndexedStack>(find.byKey(dsShellContentKey)).index!,
+        ShellTab.audioFx.index);
   });
 
   // ── 第二十五轮：导航项悬停不再「黑一下」，而是在上面就一直黑着 ────────────────
@@ -1674,9 +1783,19 @@ void main() {
       expect(find.byType(HomePage, skipOffstage: false), findsOneWidget);
     });
 
-    testWidgets('十个 tab 逐个点一遍：每一页第一次进都能挂载，且进过之后都在树里', (WidgetTester tester) async {
+    testWidgets('十二个 tab 逐个点一遍：每一页第一次进都能挂载，且进过之后都在树里', (WidgetTester tester) async {
       _sizeTo(tester, const Size(1600, 1400));
-      await tester.pumpWidget(harness(const DsShell()));
+      // 2026-10-20：「画面调节 / 音效」两行只有装了包才出现，这条用例要点遍**全部**目的
+      // 地，所以显式给一份"两个包都装着"的可用性（否则那两行不存在，点不到）。
+      await tester.pumpWidget(
+        harness(
+          const DsShell(),
+          availability: PackAvailability(
+            picturePacks: <PicturePack>[_fakePicturePack()],
+            audioPresets: <shikiin.AudioFxPreset>[_fakeAudioPreset()],
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
 
       for (final ShellTab tab in ShellTab.values) {
@@ -1694,8 +1813,8 @@ void main() {
         expect(tester.takeException(), isNull, reason: '「${tab.label}」首次挂载抛异常了');
       }
 
-      // 十页都进过了 → 十页全在树里（懒挂载只在"第一次进"花一次钱）。
-      // 此刻可见的是设置页，其余八页在 `Offstage` 里，所以要 `skipOffstage: false`。
+      // 十二页都进过了 → 十二页全在树里（懒挂载只在"第一次进"花一次钱）。
+      // 此刻可见的是设置页，其余十一页在 `Offstage` 里，所以要 `skipOffstage: false`。
       expect(find.byType(HomePage, skipOffstage: false), findsOneWidget);
       expect(find.byType(LibraryPage, skipOffstage: false), findsOneWidget);
       expect(find.byType(SearchPage, skipOffstage: false), findsOneWidget);
@@ -1703,6 +1822,10 @@ void main() {
       expect(find.byType(QueuePage, skipOffstage: false), findsOneWidget);
       expect(find.byType(ExtensionsPage, skipOffstage: false), findsOneWidget,
           reason: '进过的扩展页要常驻（切走不销毁）');
+      expect(find.byType(PicturePage, skipOffstage: false), findsOneWidget,
+          reason: '2026-10-20：进过的「画面调节」页要常驻');
+      expect(find.byType(AudioFxPage, skipOffstage: false), findsOneWidget,
+          reason: '2026-10-20：进过的「音效」页要常驻');
       expect(find.byType(SettingsPage), findsOneWidget, reason: '当前可见的就是它');
     });
   });

@@ -120,17 +120,28 @@ class AudioFxSelection {
 ///
 /// 形如：
 /// `lavfi=[equalizer=f=31:width_type=o:width=1:g=-2,…,volume=-3.5dB,alimiter=limit=0.97]`
+///
+/// [intensity]（0–100，100 = 包里的原值）：只按比例缩放 10 段 EQ 的增益。
+/// **预增益不参与缩放** —— 那正是 2026-10-19「改的音效没效果，都是把声音变小了」
+/// 那个事故的形状；这里再跟着缩一次，用户把强度从 100% 拖到 60% 就会听到
+/// 音效没变多少、音量先掉下去，旋钮的语义就退化成"音量"了。
 String audioFxFilterSpec(
   AudioFxPreset? preset, {
   int compression = 0,
   int loudness = 0,
+  int intensity = 100,
 }) {
   if (preset == null) return '';
+  // 夹一次再除：滑杆之外的来源（老配置手改、跨窗口传值）也可能给出 250 / -5，
+  // 让越界值在这里停下，比在链里拼出 g=52.5 再由 mpv 报错要稳。
+  final double scale = intensity.clamp(0, 100) / 100;
   final List<String> parts = <String>[];
   for (final String band in kAudioFxBands) {
     final int freq = kAudioFxBandFrequencies[band]!;
     final double gain = _clamp(preset.bands[band] ?? 0, kAudioFxBandMin, kAudioFxBandMax);
-    parts.add('equalizer=f=$freq:width_type=o:width=1:g=${_num(gain)}');
+    // 只缩 EQ：0% 时 EQ 平直（0 dB）但压缩 / 均衡 / 限幅照旧，所以"0%"不是静音。
+    // 同时缩放仍落在 ±12 dB 内，不需要二次夹值。
+    parts.add('equalizer=f=$freq:width_type=o:width=1:g=${_num(gain * scale)}');
   }
   final double preamp = _clamp(preset.preamp, kAudioFxPreampMin, kAudioFxPreampMax);
   // 0 dB 不写 `volume`：链短一条、也避免「预增益吃掉抬升」那种听感事故
@@ -156,7 +167,7 @@ List<String> audioFxFiltersCommand(String spec) => <String>['set', 'af', spec];
 
 // ── 状态（总开关 / 当前档 / 两个全局强度）─────────────────────────────────────
 
-/// 音效的四项状态：总开关、当前档 id、对白压缩强度、音量均衡强度。
+/// 音效的五项状态：总开关、当前档 id、对白压缩强度、音量均衡强度、总强度。
 ///
 /// 全局一档（用户 2026-10-19 决定）：不是每部番各自记，切一次全局生效。
 class AudioFxState {
@@ -165,6 +176,7 @@ class AudioFxState {
     this.presetId,
     this.compression = 0,
     this.loudness = 0,
+    this.intensity = 100,
   });
 
   final bool enabled;
@@ -172,11 +184,18 @@ class AudioFxState {
   final int compression;
   final int loudness;
 
+  /// 总强度 0–100（100 = 包里的原值，只缩 EQ、不缩预增益；0 = EQ 平直但压缩照旧）。
+  ///
+  /// 默认 100 而不是 0：老的 `audio-fx.json` 没有这个字段时读成 100，
+  /// 否则升级一次所有人的音效都会"突然变小"（spec Review Focus 第 5 条）。
+  final int intensity;
+
   AudioFxState copyWith({
     bool? enabled,
     String? presetId,
     int? compression,
     int? loudness,
+    int? intensity,
     bool clearPreset = false,
   }) =>
       AudioFxState(
@@ -184,6 +203,9 @@ class AudioFxState {
         presetId: clearPreset ? null : (presetId ?? this.presetId),
         compression: compression ?? this.compression,
         loudness: loudness ?? this.loudness,
+        // 不传 = 保持：播放窗口右键切档走的是 copyWith，强度是主窗口页面上的设置，
+        // 切一档就把它冲回 100% 会让"页面调的"和"右键切的"互相打架。
+        intensity: intensity ?? this.intensity,
       );
 
   @override
@@ -192,15 +214,16 @@ class AudioFxState {
       other.enabled == enabled &&
       other.presetId == presetId &&
       other.compression == compression &&
-      other.loudness == loudness;
+      other.loudness == loudness &&
+      other.intensity == intensity;
 
   @override
-  int get hashCode => Object.hash(enabled, presetId, compression, loudness);
+  int get hashCode => Object.hash(enabled, presetId, compression, loudness, intensity);
 
   @override
   String toString() =>
       'AudioFxState(enabled=$enabled, preset=$presetId, compression=$compression, '
-      'loudness=$loudness)';
+      'loudness=$loudness, intensity=$intensity)';
 
   /// 跨窗口传值用（主窗口 → 播放窗口走 args / method channel，都是纯 JSON）。
   Map<String, Object?> toJson() => <String, Object?>{
@@ -208,6 +231,7 @@ class AudioFxState {
         if (presetId != null) 'presetId': presetId,
         'compression': compression,
         'loudness': loudness,
+        'intensity': intensity,
       };
 
   static AudioFxState fromJson(Object? raw) {
@@ -216,11 +240,14 @@ class AudioFxState {
     final Object? presetId = raw['presetId'];
     final Object? compression = raw['compression'];
     final Object? loudness = raw['loudness'];
+    final Object? intensity = raw['intensity'];
     return AudioFxState(
       enabled: enabled is bool && enabled,
       presetId: presetId is String && presetId.isNotEmpty ? presetId : null,
       compression: compression is int ? compression.clamp(0, 3) : 0,
       loudness: loudness is int ? loudness.clamp(0, 3) : 0,
+      // 缺字段 ⇒ 100（老配置语义不变）；越界 ⇒ 夹到 0–100 而不是丢掉整份设置。
+      intensity: intensity is num ? intensity.round().clamp(0, 100) : 100,
     );
   }
 }
@@ -243,6 +270,9 @@ String audioFxActiveSpec({
     preset,
     compression: state.compression,
     loudness: state.loudness,
+    // 总强度是**状态的一部分**：调用方（页面 / 播放器）不该各自记得再传一次，
+    // 少传一处就会变成"页面显示 40%，实际按 100% 放"。
+    intensity: state.intensity,
   );
 }
 

@@ -23,7 +23,9 @@ import '../../theme/tokens.dart';
 /// 排序刻意让相邻 tab 不同色：主页橙 / 动漫库紫 / 搜索青 / 追番粉 / 队列蓝 /
 /// 已完成绿 / 本地青绿（2026-10-20 插在「已完成」后面：下完的和自己盘上的相邻，
 /// 但用不同色相区分两套数据源）/ 扩展玫红（1.1.0 M3/T15：挑一个既不撞上面的绿、
-/// 也不撞左下角「观看记录」金的色相；紫色系留给「动漫库」，不抢）/ 观看记录金 / 设置灰。
+/// 也不撞左下角「观看记录」金的色相；紫色系留给「动漫库」，不抢）/
+/// 画面调节靛 / 音效琥珀（2026-10-20：两个"包页面"，此前没有 tab 用这两个色相，
+/// 所以 12 个目的地仍是 12 个互不相同的标识）/ 观看记录金 / 设置灰。
 DsHue hueOfTab(ShellTab tab) => switch (tab) {
       ShellTab.home => DsHue.orange,
       ShellTab.library => DsHue.violet,
@@ -35,6 +37,8 @@ DsHue hueOfTab(ShellTab tab) => switch (tab) {
       // 也不撞「搜索」的青与「扩展」的玫红。
       ShellTab.local => DsHue.teal,
       ShellTab.extensions => DsHue.rose,
+      ShellTab.picture => DsHue.indigo,
+      ShellTab.audioFx => DsHue.amber,
       ShellTab.history => DsHue.gold,
       ShellTab.settings => DsHue.slate,
     };

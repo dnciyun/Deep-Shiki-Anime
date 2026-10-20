@@ -26,17 +26,13 @@ import 'dart:io';
 import 'package:dsanima_core/dsanima_core.dart' as core;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shikiin/shikiin.dart' as shikiin;
 
 import '../domain/extensions.dart';
-import '../state/audio_fx_settings.dart';
 import '../state/extension_settings.dart';
 import '../state/infra.dart' show supportDirProvider;
-import '../state/providers.dart' show playerWindowServiceProvider;
 import '../domain/format.dart';
 import '../state/extensions.dart';
 import '../theme/tokens.dart';
-import 'audio_fx_section.dart';
 import 'widgets/ds_cards.dart';
 import 'widgets/neo.dart';
 
@@ -70,18 +66,6 @@ Key dsExtensionsCatalogRowKey(String id) => ValueKey<String>('ds-extensions-cata
 /// 「官方插件库」一键拉取（用户 2026-10-18：「加入官方插件库，可以直接下载我加进去的插件」）。
 const Key dsExtensionsOfficialKey = ValueKey<String>('ds-extensions-official');
 
-/// 某一行的「设置」按钮（只给**有设置项**的扩展：目前是画面调节包的预设开关）。
-Key dsExtensionSettingsKey(String id) => ValueKey<String>('ds-extension-settings-$id');
-
-/// 设置对话框里某个预设的勾选框（勾上 = 该预设出现在播放器右键菜单里）。
-Key dsExtensionPresetToggleKey(String id, String presetId) =>
-    ValueKey<String>('ds-extension-preset-$id-$presetId');
-
-/// 设置对话框：全部开启 / 全部关闭 / 保存 / 取消。
-const Key dsExtensionSettingsAllKey = ValueKey<String>('ds-extension-settings-all');
-const Key dsExtensionSettingsNoneKey = ValueKey<String>('ds-extension-settings-none');
-const Key dsExtensionSettingsSaveKey = ValueKey<String>('ds-extension-settings-save');
-const Key dsExtensionSettingsCancelKey = ValueKey<String>('ds-extension-settings-cancel');
 Key dsExtensionsCatalogInstallKey(String id) =>
     ValueKey<String>('ds-extensions-catalog-install-$id');
 
@@ -172,7 +156,10 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
     await _controller.remove(item.id);
   }
 
-  /// 扩展用户设置（关掉的预设 / 上次的目录地址）：进页面读一次，顺手把输入框填上。
+  /// 扩展用户设置（上次的目录地址）：进页面读一次，把输入框填上。
+  ///
+  /// 预设可见性（`hiddenPresets`）不归这一页管了 —— 它属于"我的组合/预设"，
+  /// 入口在画面调节页；这里只读它不写它，读盘统一走同一个 provider。
   ///
   /// 读盘失败只当"没有设置"（`loadExtensionUserSettings` 永不抛）：这一页的第一职责
   /// 是让用户看见装了什么，不该因为一份偏好文件把页面卡住。
@@ -180,8 +167,6 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
     final Directory? dir = ref.read(supportDirProvider);
     if (dir == null) return; // 装配问题：设置页/首启向导会报，这里静默
     await ref.read(extensionUserSettingsProvider.notifier).ensureLoaded(dir);
-    // 音效设置（扩展页是唯一配置入口）：进页面读一次盘。
-    await ref.read(audioFxSettingsProvider.notifier).ensureLoaded(dir);
     if (!mounted) return;
     final String? saved = ref.read(extensionUserSettingsProvider).catalogUrl;
     if (saved != null && saved.trim().isNotEmpty && _catalog.text.trim().isEmpty) {
@@ -226,130 +211,6 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
     await _fetchCatalog(url);
   }
 
-  /// 这个扩展有没有可设置的项。
-  ///
-  /// 用户 2026-10-18：「在扩展页，一些扩展有设置按钮」—— **有设置项的才有按钮**，
-  /// 没有的别放一个点进去空白的入口。目前有设置的是画面调节包（预设开关）。
-  bool _hasSettings(core.ExtensionManifest manifest) =>
-      manifest.kind == core.ExtensionKind.picturePack &&
-      (manifest.picture?.presets.isNotEmpty ?? false);
-
-  /// 「设置」对话框：画面调节包的预设开关（关掉的预设不进播放器右键菜单）。
-  Future<void> _openSettings(InstalledExtension item) async {
-    final core.PictureSpec? spec = item.manifest.picture;
-    final List<core.PicturePreset> presets = spec?.presets ?? const <core.PicturePreset>[];
-    if (presets.isEmpty) return;
-    final core.ExtensionUserSettings settings = ref.read(extensionUserSettingsProvider);
-    final Set<String> draft = <String>{...settings.hiddenPresetsOf(item.id)};
-    final bool? saved = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext dialogContext) => StatefulBuilder(
-        builder: (BuildContext context, StateSetter setLocal) => AlertDialog(
-          title: Text('「${item.name}」设置'),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  // 用户 2026-10-18：「右键菜单内不要有太多介绍，全在扩展内就好了」——
-                  // 包自己的说明（`payload.picture.hint`）和每档预设的 `description`
-                  // 都放这里（预设说明是下面每一项的 subtitle），播放器菜单只留名称。
-                  if ((spec?.chainHint ?? '').trim().isNotEmpty) ...<Widget>[
-                    Text(
-                      spec!.chainHint,
-                      style: TextStyle(
-                        color: context.ds.text2,
-                        fontSize: DsTypeScale.caption,
-                        height: 1.6,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  Text(
-                    '取消勾选的预设不会再出现在播放器右键菜单里（「调节…」滑杆面板不受影响）。'
-                    '保存后，已经打开的播放窗口会重试一次；没重试过来的话重开播放窗口即可。',
-                    style: TextStyle(
-                      color: context.ds.text3,
-                      fontSize: DsTypeScale.caption,
-                      height: 1.6,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  for (final core.PicturePreset preset in presets)
-                    CheckboxListTile(
-                      key: dsExtensionPresetToggleKey(item.id, preset.id),
-                      value: !draft.contains(preset.id),
-                      onChanged: (bool? on) => setLocal(() {
-                        if (on == true) {
-                          draft.remove(preset.id);
-                        } else {
-                          draft.add(preset.id);
-                        }
-                      }),
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      title: Text(
-                        preset.name,
-                        style: TextStyle(
-                          color: context.ds.text,
-                          fontSize: DsTypeScale.secondary,
-                        ),
-                      ),
-                      subtitle: preset.description.isEmpty
-                          ? null
-                          : Text(
-                              preset.description,
-                              style: TextStyle(
-                                color: context.ds.text3,
-                                fontSize: DsTypeScale.caption,
-                              ),
-                            ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              key: dsExtensionSettingsAllKey,
-              onPressed: () => setLocal(draft.clear),
-              child: const Text('全部开启'),
-            ),
-            TextButton(
-              key: dsExtensionSettingsNoneKey,
-              onPressed: () => setLocal(() => draft.addAll(presets.map((core.PicturePreset p) => p.id))),
-              child: const Text('全部关闭'),
-            ),
-            TextButton(
-              key: dsExtensionSettingsCancelKey,
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              key: dsExtensionSettingsSaveKey,
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (saved != true || !mounted) return;
-    await ref.read(extensionUserSettingsProvider.notifier).setHiddenPresets(item.id, draft);
-    if (!mounted) return;
-    // 立刻让已打开的播放窗口重扫（走同一条"扩展变了"的通道）：预设开关存在
-    // 数据根里，子窗口收到通知后自己读 —— 用户不用关掉播放器再看。
-    _controller.bumpRevision();
-    _controller.note(
-      draft.isEmpty
-          ? '已保存「${item.name}」：全部预设在播放器菜单里'
-          : '已保存「${item.name}」：关掉了 ${draft.length} 个预设',
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final DsTokens t = context.ds;
@@ -367,7 +228,6 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
         if (s.notice != null) _notice(s.notice!),
         if (s.phase == ExtensionsPhase.installing) _installing(t, s),
         _installedSection(t, s, busy),
-        _audioFxSection(t, s),
         _catalogSection(t, s, busy),
       ],
     );
@@ -763,16 +623,8 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
                 ),
               ),
               const SizedBox(width: 8),
-              if (_hasSettings(item.manifest)) ...<Widget>[
-                NeoButton(
-                  key: dsExtensionSettingsKey(item.id),
-                  label: '设置',
-                  icon: Icons.tune,
-                  compact: true,
-                  onPressed: busy ? null : () => unawaited(_openSettings(item)),
-                ),
-                const SizedBox(width: 6),
-              ],
+              // 行内只有「启用/禁用」与「卸载」两个动作：配置面（音效 / 画面调节）
+              // 已经各自搬去侧栏页面，这一页不留下点开没用的入口。
               NeoButton(
                 key: dsExtensionToggleKey(item.id),
                 label: item.enabled ? '禁用' : '启用',
@@ -797,63 +649,6 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
   }
 
   // ── 在线目录 ──────────────────────────────────────────────────────────────
-
-  /// 「音效」区：装了（且启用）音效包才出现。
-  ///
-  /// 用户 2026-10-19：「放设置里没用，就放扩展里，扩展不一定只有开关」——
-  /// 所以这一区不是开关，是完整的选档 + 两个强度 + 频响曲线。
-  Widget _audioFxSection(DsTokens t, ExtensionsState s) {
-    final List<shikiin.AudioFxPreset> presets = <shikiin.AudioFxPreset>[];
-    for (final InstalledExtension item in s.installed) {
-      if (!item.enabled) continue;
-      if (item.manifest.kind != core.ExtensionKind.audioPack) continue;
-      final core.GenericPayload? payload = item.manifest.generic;
-      if (payload == null) continue;
-      for (final core.GenericPreset preset in payload.presets) {
-        double numOf(String key) {
-          final Object? raw = preset.values[key];
-          return raw is num ? raw.toDouble() : 0;
-        }
-
-        presets.add(shikiin.AudioFxPreset(
-          // 与消费端同一个拼法：包 id + 预设 id。
-          id: '${item.manifest.id}/${preset.id}',
-          name: preset.name,
-          description: preset.description,
-          packId: item.manifest.id,
-          packName: item.manifest.name,
-          bands: <String, double>{
-            for (final String band in shikiin.kAudioFxBands) band: numOf(band),
-          },
-          preamp: numOf('preamp'),
-          crossfeed: numOf('crossfeed'),
-        ));
-      }
-    }
-    if (presets.isEmpty) return const SizedBox.shrink();
-    final shikiin.AudioFxState state = ref.watch(audioFxSettingsProvider);
-    return Padding(
-      padding: EdgeInsets.only(top: t.spacing),
-      child: DsSection(
-        title: '音效',
-        hue: _hue,
-        icon: Icons.graphic_eq,
-        subtitle: '音效来自装好的音效包；选档后立刻生效（播放窗口开着时当场切换），'
-            '播放窗口右键也能快速切档。',
-        trailing: DsChip(label: '${presets.length} 档', hue: _hue),
-        child: AudioFxSection(
-          tokens: t,
-          presets: presets,
-          state: state,
-          onChange: (shikiin.AudioFxState next) {
-            unawaited(ref.read(audioFxSettingsProvider.notifier).update(next));
-            // 播放窗口开着就当场生效；没开窗下次开窗会随启动参数带过去。
-            unawaited(ref.read(playerWindowServiceProvider).sendAudioFx(next.toJson()));
-          },
-        ),
-      ),
-    );
-  }
 
   Widget _catalogSection(DsTokens t, ExtensionsState s, bool busy) {
     final Set<String> installedIds = <String>{

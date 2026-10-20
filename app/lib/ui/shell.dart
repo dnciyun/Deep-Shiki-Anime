@@ -36,9 +36,11 @@ import '../domain/format.dart' show formatDuration;
 import '../domain/models.dart';
 import '../domain/ports.dart';
 import '../state/last_playback.dart';
+import '../state/packs_available.dart';
 import '../state/playback.dart';
 import '../state/providers.dart';
 import '../theme/tokens.dart';
+import 'audio_fx_page.dart';
 import 'completed_page.dart';
 import 'extensions_page.dart';
 import 'following_page.dart';
@@ -46,6 +48,7 @@ import 'history_page.dart';
 import 'home_page.dart';
 import 'library_page.dart';
 import 'local_page.dart';
+import 'picture_page.dart';
 import 'queue_page.dart';
 import 'search_page.dart';
 import 'settings_page.dart';
@@ -116,6 +119,14 @@ class _DsShellState extends ConsumerState<DsShell> {
     // 点系统通知 → 跳到播放：payload 是 `job:<id>`（spec §7.3 Q16）。
     // 通知端口未接通时是空流，什么都不做。
     _notificationClicks = ref.read(notificationPortProvider).clicks.listen(_onNotificationClick);
+    // 2026-10-20：侧栏要决定「画面调节 / 音效」这两行显示不显示，判据是"装上对应的包了
+    // 吗"。这一步必须**在启动时**做：用户完全可能一次都不进扩展页，而入口得先出现。
+    // 放 postFrame 里而不是 initState 里直接调：扫描会写 provider，build 期改状态会撞
+    // Riverpod 的断言（与 `LocalPage` / `ExtensionsPage` 同一套写法）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(ref.read(packAvailabilityProvider.notifier).ensureLoaded());
+    });
   }
 
   @override
@@ -262,6 +273,11 @@ const List<Widget> _tabPages = <Widget>[
   CompletedPage(),
   LocalPage(),
   ExtensionsPage(),
+  // 2026-10-20：两个"包页面"，排在与 `ShellTab` 枚举完全一致的位置
+  //（extensions 之后、history 之前）。它们不是常驻目的地：没装对应的包时侧栏不显示，
+  // 但内容栈里的下标必须**恒在**，否则 `tab.index` 会指到隔壁那一页。
+  PicturePage(),
+  AudioFxPage(),
   HistoryPage(),
   SettingsPage(),
 ];
@@ -335,6 +351,15 @@ class _Sidebar extends ConsumerWidget {
     final ShellTab active = ref.watch(navProvider);
     final QueueSummary summary = ref.watch(queueSummaryProvider);
     final int followingCount = ref.watch(followingCountProvider);
+    // 2026-10-20：「画面调节 / 音效」两行**装上对应的包才出现**（没装就没有这一行，
+    // 不是灰的、也不是空页）。`shellNavTabs` 仍然是"全部顶部目的地"的唯一出处，
+    // 这里只按运行期状态筛掉那两个"包页面"——其余项无条件显示。
+    final PackAvailability available = ref.watch(packAvailabilityProvider);
+    final List<ShellTab> navTabs = <ShellTab>[
+      for (final ShellTab tab in shellNavTabs)
+        if (tab != ShellTab.picture || available.hasPicture)
+          if (tab != ShellTab.audioFx || available.hasAudioFx) tab,
+    ];
     return Container(
       width: 184,
       // 侧栏与内容的分区不用 1px 硬边框（规范 §5）：凸起面 + 柔光内边 + 右侧浅阴影。
@@ -388,7 +413,7 @@ class _Sidebar extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  for (final ShellTab tab in shellNavTabs)
+                  for (final ShellTab tab in navTabs)
                     _NavItem(
                       key: dsSidebarNavRowKey(tab),
                       tab: tab,
@@ -620,6 +645,8 @@ class _NavItemState extends State<_NavItem> {
       ShellTab.completed => Icons.task_alt,
       ShellTab.local => Icons.folder_open,
       ShellTab.extensions => Icons.extension_outlined,
+      ShellTab.picture => Icons.tune,
+      ShellTab.audioFx => Icons.graphic_eq,
       ShellTab.history => Icons.history,
       ShellTab.settings => Icons.settings_outlined,
     };
