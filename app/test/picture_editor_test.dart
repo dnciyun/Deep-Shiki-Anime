@@ -428,6 +428,35 @@ void main() {
       expect(harness.state.settings.presetId, 'custom:$comboId');
     });
 
+    test('关着的时候点组合也要生效（2026-10-20 用户报的 bug）', () async {
+      // 复现：先关（`currentPack == null`）→ 点「我的 · x」没反应，必须先点别的预设
+      // 或拖一下滑杆把它打开才点得动。根因是 `applyCombo` 用了 `state.currentPack`
+      // 而 `applyPreset` 用的是"正在调的那个包"（关着时回退到第一个包）—— 两条路
+      // 对"关"的语义不一致。用户原话：「选择在关的时候，无法选择保存的预设，
+      // 只有点其他的才能再点到」。
+      final Directory support = _newSupportDir();
+      addTearDown(() => support.deleteSync(recursive: true));
+      _installPack(support, 'picture-demo');
+      final _Harness harness = _Harness(support, await _load(support));
+      addTearDown(harness.dispose);
+      await harness.controller.ensureLoaded();
+
+      harness.controller.setValue('sharpen', 0.35);
+      await harness.controller.commit();
+      final String comboId = (await harness.controller.saveCombo('夜间'))!.split('custom:').last;
+
+      await harness.controller.turnOff();
+      expect(harness.state.isOff, isTrue, reason: '前置条件：现在是关着的');
+
+      await harness.controller.applyCombo(comboId);
+
+      expect(harness.state.settings.packId, 'picture-demo',
+          reason: '点组合就该把它打开（点一项 = 就这样看，与 `applyPreset` 同一条规矩）');
+      expect(harness.state.isOff, isFalse);
+      expect(harness.state.values['sharpen'], 0.35);
+      expect(harness.state.settings.presetId, 'custom:$comboId');
+    });
+
     test('deleteCombo → 组合没了、文件里也没了，且不抛', () async {
       final Directory support = _newSupportDir();
       addTearDown(() => support.deleteSync(recursive: true));

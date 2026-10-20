@@ -269,11 +269,18 @@ class PictureEditorController extends Notifier<PictureEditorState> {
   }
 
   /// 套本包的一个「我的组合」（[comboId] 是组合自己的 id，不是菜单里的全局 id）。
+  ///
+  /// ⚠️ 用 [_targetPack]（"正在调的那个包"，关着时回退到第一个包）而**不是**
+  /// `state.currentPack`：2026-10-20 用户报「选择在关的时候，无法选择保存的预设，
+  /// 只有点其他的才能再点到」—— 关着时 `currentPack` 是 null，旧实现在这里直接 return，
+  /// 于是点「我的 · x」毫无反应；点个包自带预设（它走 `_targetPack`，能生效并顺手打开）
+  /// 之后就又能点了。两条路的"关"语义必须一致：**点一项就是"就这样看"**。
   Future<void> applyCombo(String comboId) async {
-    final PicturePack? pack = state.currentPack;
+    final PicturePack? pack = _targetPack;
     if (pack == null) return;
     PictureCombo? combo;
-    for (final PictureCombo candidate in state.currentCombos) {
+    // 在本包自己的组合里找（与其他动作同一个包口径；跨包的同名 id 不会互相串）。
+    for (final PictureCombo candidate in state.combos[pack.id] ?? const <PictureCombo>[]) {
       if (candidate.id == comboId) {
         combo = candidate;
         break;

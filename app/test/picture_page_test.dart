@@ -273,6 +273,46 @@ void main() {
     expect(host.editor.settings.presetId, startsWith('custom:'));
   });
 
+  testWidgets('关掉之后点「我的 · 夜间」→ 直接生效（2026-10-20 用户报的 bug）', (
+    WidgetTester tester,
+  ) async {
+    // 用户原话：「选择在关的时候，无法选择保存的预设，只有点其他的才能再点到」。
+    // 页面这一层要钉的是"从关 → 点组合"这条真实点击路径，而不只是控制器单测。
+    final Directory support = _newSupportDir();
+    addTearDown(() => support.deleteSync(recursive: true));
+    _install(support, 'picture-demo');
+    final _PageHost host = _PageHost(support, await loadPicturePacks(support));
+    addTearDown(host.dispose);
+    await _pumpPage(tester, host);
+
+    // 先存一套「夜间」。
+    await tester.tap(find.byKey(dsPictureSaveComboKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.enterText(find.byKey(dsPictureComboNameKey), '夜间');
+    await tester.tap(find.byKey(dsPictureComboSaveKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump();
+
+    final String comboId = host.editor.currentCombos.single.id;
+    final Map<String, double> comboValues = host.editor.currentCombos.single.values;
+
+    // 关 → 现在 currentPack 是 null（旧实现在这里点组合没反应）。
+    await tester.tap(find.byKey(dsPictureOffKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(host.editor.isOff, isTrue, reason: '前置条件：现在是关着的');
+
+    await tester.tap(find.byKey(dsPictureComboKey(comboId)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(host.editor.isOff, isFalse, reason: '点组合就该把它打开');
+    expect(host.editor.settings.presetId, 'custom:$comboId');
+    expect(host.editor.values['sharpen'], comboValues['sharpen']);
+  });
+
   testWidgets('删掉当前组合 → chips 消失、文件里的那一项没了', (WidgetTester tester) async {
     final Directory support = _newSupportDir();
     addTearDown(() => support.deleteSync(recursive: true));
